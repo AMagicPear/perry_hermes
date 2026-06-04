@@ -64,6 +64,21 @@ pub enum FinishReason {
     Error,
 }
 
+impl FinishReason {
+    /// Parse a provider's `finish_reason` string into our enum.
+    /// Unknown values default to `Stop`.
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "stop" => FinishReason::Stop,
+            "tool_calls" | "tool_use" => FinishReason::ToolUse,
+            "length" => FinishReason::Length,
+            "content_filter" => FinishReason::ContentFilter,
+            "error" => FinishReason::Error,
+            _ => FinishReason::Stop,
+        }
+    }
+}
+
 /// A stream of incremental deltas. Implementations should yield each
 /// `CompletionDelta` as soon as the corresponding chunk arrives.
 pub type CompletionStream =

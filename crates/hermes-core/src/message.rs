@@ -38,6 +38,17 @@ pub enum Role {
     Tool,
 }
 
+impl Role {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Role::System => "system",
+            Role::User => "user",
+            Role::Assistant => "assistant",
+            Role::Tool => "tool",
+        }
+    }
+}
+
 /// Message body. Untagged so the same field accepts both `"hello"` (string)
 /// and `[{"type": "text", ...}, ...]` (multimodal array). LLM APIs accept
 /// both shapes.

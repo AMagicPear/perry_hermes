@@ -170,12 +170,7 @@ impl Provider for OpenAiProvider {
                         .collect()
                 });
                 OaiMessage {
-                    role: match m.role {
-                        Role::System => "system",
-                        Role::User => "user",
-                        Role::Assistant => "assistant",
-                        Role::Tool => "tool",
-                    },
+                    role: m.role.as_str(),
                     content: match &m.content {
                         Content::Text(s) => Some(s.as_str()),
                         Content::Parts(_) => None,
@@ -220,9 +215,7 @@ impl Provider for OpenAiProvider {
         };
 
         if resp.status() == 401 {
-            return Err(ProviderError::Auth(
-                resp.text().await.unwrap_or_default(),
-            ));
+            return Err(ProviderError::Auth(resp.text().await.unwrap_or_default()));
         }
         if resp.status() == 429 {
             // Phase 2 minimum: assume 1s backoff. A future phase
