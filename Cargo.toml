@@ -45,6 +45,9 @@ clap = { version = "4", features = ["derive"] }
 # HTTP (used by hermes-providers)
 reqwest = { version = "0.12", features = ["json", "stream"] }
 
+# HTTP mock server (dev-dep on hermes-providers)
+httpmock = "0.7"
+
 # Time
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 

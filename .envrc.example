@@ -1,0 +1,16 @@
+# Copy this to .envrc and fill in real values, then run `direnv allow .`
+# The .envrc file itself is gitignored.
+
+# Required: your OpenAI-compatible API key.
+export OPENAI_API_KEY=sk-...
+
+# Optional: defaults to https://api.openai.com/v1.
+# Examples:
+#   DeepSeek:  https://api.deepseek.com/v1
+#   Moonshot:  https://api.moonshot.cn/v1
+#   Ollama:    http://localhost:11434/v1
+#   MiniMax:   https://api.minimaxi.com/v1
+export OPENAI_BASE_URL=https://api.openai.com/v1
+
+# Optional: defaults to gpt-4o-mini. Use the model name your provider expects.
+export OPENAI_MODEL=gpt-4o-mini
