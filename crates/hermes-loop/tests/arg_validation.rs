@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason, Provider};
 use hermes_core::registry::{InMemoryRegistry, ToolSchema};
+use hermes_core::tool::ToolContext;
 use hermes_core::ProviderError;
 use hermes_loop::{AgentLoop, LoopConfig};
 use hermes_tools::BashTool;
@@ -90,6 +91,12 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
         },
     );
 
+    let ctx = ToolContext {
+        session_id: "test".into(),
+        working_dir: std::env::current_dir().unwrap_or_default(),
+        permissions: Default::default(),
+    };
+
     let result = loop_
         .run(
             vec![Message {
@@ -99,6 +106,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
                 tool_call_id: None,
                 tool_calls: None,
             }],
+            ctx,
             CancellationToken::new(),
             |_| {},
         )

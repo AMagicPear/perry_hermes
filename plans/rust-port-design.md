@@ -763,7 +763,7 @@ hermes-runtime = { path = "crates/hermes-runtime" }
 | **1. Echo 循环** | Mock provider 返回 `Stop`,循环跑一次,测试通过 | `crates/hermes-loop/src/agent.rs` + 测试 | ~300 |
 | **2. OpenAI provider** | 真实 `gpt-4o-mini` 调用可用 | `crates/hermes-providers/src/openai.rs` | ~600 |
 | **3. 一个真实工具** | `BashTool` 能跑 shell 命令 | `crates/hermes-tools/src/bash.rs` | ~400 |
-| **4. CLI** | 输入消息,看到 agent 完成 | `crates/hermes-cli/src/main.rs` | ~500 |
+| **4. CLI** ✅ | 输入消息,看到 agent 完成(交互式 REPL + clap + 多轮历史 + 事件渲染 + 工具集过滤) | `crates/hermes-cli/src/main.rs` | ~500 |
 | **5. 流式** | token 到达时立即打印 | 覆盖 `Provider::stream` | +300 |
 | **6. 中断** | Ctrl-C 在流式中途能停下 | 在各处接入 `CancellationToken` | +200 |
 | **7. 上下文压缩** | 消息过长时做摘要 | `ContextCompressor` trait | ~500 |

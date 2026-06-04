@@ -11,6 +11,11 @@ name = "hermes"
 path = "src/main.rs"
 
 [dependencies]
-# Stub for phase 0. Real deps land in phase 4 (REPL) when the loop,
-# providers, and tools all have something to compose.
+hermes-core.workspace = true
+hermes-providers.workspace = true
+hermes-tools.workspace = true
+hermes-loop.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+tokio-util.workspace = true
+anyhow.workspace = true
 clap = { workspace = true, features = ["derive"] }

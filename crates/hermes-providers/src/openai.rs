@@ -50,7 +50,8 @@ struct ChatRequest<'a> {
     messages: Vec<OaiMessage<'a>>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     tools: Vec<OaiTool<'a>>,
-    tool_choice: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -193,11 +194,12 @@ impl Provider for OpenAiProvider {
             })
             .collect();
 
+        let has_tools = !oai_tools.is_empty();
         let req = ChatRequest {
             model: &self.model,
             messages: oai_msgs,
             tools: oai_tools,
-            tool_choice: "auto",
+            tool_choice: if has_tools { Some("auto") } else { None },
         };
 
         let url = format!("{}/chat/completions", self.base_url);
@@ -240,13 +242,11 @@ impl Provider for OpenAiProvider {
             .next()
             .ok_or_else(|| ProviderError::InvalidResponse("no choices".into()))?;
 
-        let finish_reason = match choice.finish_reason.as_deref() {
-            Some("stop") => FinishReason::Stop,
-            Some("tool_calls") => FinishReason::ToolUse,
-            Some("length") => FinishReason::Length,
-            Some("content_filter") => FinishReason::ContentFilter,
-            _ => FinishReason::Stop,
-        };
+        let finish_reason = choice
+            .finish_reason
+            .as_deref()
+            .map(FinishReason::from_provider_str)
+            .unwrap_or(FinishReason::Stop);
 
         let tool_calls = choice.message.tool_calls.map(|calls| {
             calls

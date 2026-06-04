@@ -16,6 +16,24 @@ use tokio::process::Command;
 use tokio_util::sync::CancellationToken;
 use tokio::time::Duration;
 
+/// Truncate output keeping a head+tail strategy (aligned with Python Hermes).
+/// Preserves the first 40% and last 60% of the character budget, since error
+/// messages often appear early and recent output is usually more relevant.
+fn truncate_output(s: &str, max_chars: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count <= max_chars {
+        return s.to_string();
+    }
+    let head_chars = max_chars * 2 / 5; // 40%
+    let tail_chars = max_chars - head_chars; // 60%
+    let head: String = s.chars().take(head_chars).collect();
+    let tail: String = s.chars().skip(char_count - tail_chars).collect();
+    let omitted = char_count - head_chars - tail_chars;
+    format!(
+        "{head}\n\n... [OUTPUT TRUNCATED - {omitted} chars omitted out of {char_count} total] ...\n\n{tail}"
+    )
+}
+
 pub struct BashTool;
 
 impl BashTool {
@@ -102,16 +120,33 @@ impl Tool for BashTool {
                 let _ = child.kill().await;
                 return Err(ToolError::Timeout(timeout_secs));
             }
-            status = child.wait() => {
-                let status = status.map_err(|e| ToolError::Execution(e.to_string()))?;
-                let mut out = String::new();
-                if let Some(mut s) = child.stdout.take() {
-                    let _ = s.read_to_string(&mut out).await;
-                }
-                let mut err = String::new();
-                if let Some(mut s) = child.stderr.take() {
-                    let _ = s.read_to_string(&mut err).await;
-                }
+            // Concurrently drain stdout and stderr to avoid pipe deadlock:
+            // if the child fills one pipe buffer while we're blocked reading
+            // the other, both sides stall and we hit the timeout.
+            result = async {
+                let (stdout_bytes, stderr_bytes) = tokio::join!(
+                    async {
+                        let mut buf = Vec::new();
+                        if let Some(mut s) = child.stdout.take() {
+                            let _ = s.read_to_end(&mut buf).await;
+                        }
+                        buf
+                    },
+                    async {
+                        let mut buf = Vec::new();
+                        if let Some(mut s) = child.stderr.take() {
+                            let _ = s.read_to_end(&mut buf).await;
+                        }
+                        buf
+                    }
+                );
+                let status = child.wait().await
+                    .map_err(|e| ToolError::Execution(e.to_string()))?;
+                Ok::<_, ToolError>((stdout_bytes, stderr_bytes, status))
+            } => {
+                let (stdout_bytes, stderr_bytes, status) = result?;
+                let out = String::from_utf8_lossy(&stdout_bytes).into_owned();
+                let err = String::from_utf8_lossy(&stderr_bytes).into_owned();
                 let combined = if err.is_empty() {
                     out
                 } else if out.is_empty() {
@@ -119,16 +154,7 @@ impl Tool for BashTool {
                 } else {
                     format!("{out}\n--- stderr ---\n{err}")
                 };
-                // Truncate very large outputs to keep the context window sane.
-                let truncated = if combined.len() > 50_000 {
-                    format!(
-                        "{}\n... [truncated, full output {} bytes] ...",
-                        &combined[..25_000],
-                        combined.len()
-                    )
-                } else {
-                    combined
-                };
+                let truncated = truncate_output(&combined, 50_000);
                 let exit_note = if status.success() {
                     String::new()
                 } else {

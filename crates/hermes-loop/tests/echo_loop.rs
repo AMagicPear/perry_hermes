@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::registry::InMemoryRegistry;
+use hermes_core::tool::ToolContext;
 use hermes_loop::{AgentLoop, LoopConfig};
 use hermes_providers::EchoProvider;
 use tokio_util::sync::CancellationToken;
@@ -36,9 +37,14 @@ async fn echo_provider_runs_one_iteration_and_stops() {
 
     let cancel = CancellationToken::new();
     let events = std::sync::Mutex::new(Vec::new());
+    let ctx = ToolContext {
+        session_id: "test".into(),
+        working_dir: std::env::current_dir().unwrap_or_default(),
+        permissions: Default::default(),
+    };
 
     let result = loop_
-        .run(messages, cancel, |e| {
+        .run(messages, ctx, cancel, |e| {
             events.lock().unwrap().push(format!("{e:?}"));
         })
         .await

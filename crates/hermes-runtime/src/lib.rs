@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::registry::InMemoryRegistry;
+use hermes_core::tool::ToolContext;
 use hermes_loop::{AgentLoop, LoopConfig, LoopEvent, RunResult};
 use hermes_providers::OpenAiProvider;
 use hermes_tools::BashTool;
@@ -71,6 +72,11 @@ impl AIAgent {
             tool_call_id: None,
             tool_calls: None,
         }];
-        self.loop_.run(messages, cancel, &mut on_event).await
+        let ctx = ToolContext {
+            session_id: "default".into(),
+            working_dir: std::env::current_dir().unwrap_or_default(),
+            permissions: Default::default(),
+        };
+        self.loop_.run(messages, ctx, cancel, &mut on_event).await
     }
 }

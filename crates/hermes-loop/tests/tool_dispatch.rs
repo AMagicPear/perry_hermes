@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason, Provider};
 use hermes_core::registry::{InMemoryRegistry, ToolSchema};
+use hermes_core::tool::ToolContext;
 use hermes_core::ProviderError;
 use hermes_loop::{AgentLoop, LoopConfig};
 use hermes_tools::BashTool;
@@ -125,8 +126,14 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
     let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let events_for_cb = Arc::clone(&events);
 
+    let ctx = ToolContext {
+        session_id: "test".into(),
+        working_dir: std::env::current_dir().unwrap_or_default(),
+        permissions: Default::default(),
+    };
+
     let result = loop_
-        .run(vec![user_message("please run something")], CancellationToken::new(), |e| {
+        .run(vec![user_message("please run something")], ctx, CancellationToken::new(), |e| {
             events_for_cb.lock().unwrap().push(format!("{e:?}"));
         })
         .await

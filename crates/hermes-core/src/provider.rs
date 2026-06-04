@@ -67,7 +67,7 @@ pub enum FinishReason {
 impl FinishReason {
     /// Parse a provider's `finish_reason` string into our enum.
     /// Unknown values default to `Stop`.
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_provider_str(s: &str) -> Self {
         match s {
             "stop" => FinishReason::Stop,
             "tool_calls" | "tool_use" => FinishReason::ToolUse,

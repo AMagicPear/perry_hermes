@@ -28,7 +28,7 @@ use hermes_core::error::{LoopError, ProviderError};
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{FinishReason, Provider};
 use hermes_core::registry::ToolRegistry;
-use hermes_core::tool::ToolOutput;
+use hermes_core::tool::{ToolContext, ToolOutput};
 
 /// The agent loop. Generic over `P: Provider` and `R: ToolRegistry` so
 /// tests can swap in mocks. The loop holds a reference to the registry
@@ -121,6 +121,7 @@ impl<P: Provider, R: ToolRegistry> AgentLoop<P, R> {
     pub async fn run(
         &self,
         initial_messages: Vec<Message>,
+        ctx: ToolContext,
         cancel: CancellationToken,
         mut on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, LoopError> {
@@ -225,7 +226,7 @@ impl<P: Provider, R: ToolRegistry> AgentLoop<P, R> {
                             iteration: metrics.iterations,
                         });
 
-                        let result = self.dispatch_tool(&call, cancel.clone()).await;
+                        let result = self.dispatch_tool(&call, &ctx, cancel.clone()).await;
 
                         // Tool errors are NOT fatal — they become
                         // `role: tool` content "Error: …" messages
@@ -264,6 +265,7 @@ impl<P: Provider, R: ToolRegistry> AgentLoop<P, R> {
     async fn dispatch_tool(
         &self,
         call: &ToolCall,
+        ctx: &ToolContext,
         cancel: CancellationToken,
     ) -> Result<ToolOutput, hermes_core::error::ToolError> {
         let tool = self
@@ -278,13 +280,7 @@ impl<P: Provider, R: ToolRegistry> AgentLoop<P, R> {
         let args = validate_args(&call.arguments, tool.parameters_schema())
             .map_err(|e| hermes_core::error::ToolError::InvalidArgs(e.to_string()))?;
 
-        let ctx = hermes_core::tool::ToolContext {
-            session_id: "default".into(), // runtime layer wires this up later
-            working_dir: std::env::current_dir().unwrap_or_default(),
-            permissions: Default::default(),
-        };
-
-        tool.execute(args, ctx, cancel).await
+        tool.execute(args, ctx.clone(), cancel).await
     }
 }
 
