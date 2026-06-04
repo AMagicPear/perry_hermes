@@ -1,236 +1,284 @@
-# Hermes Python vs Rust 移植 — 实现路径与模块抽象偏差分析
+# Hermes Python vs Rust 移植 — phase 3 现状对照与 phase 4 前置审查
 
 > 调研日期:2026-06-04
-> 对照对象:`/Users/amagicpear/.hermes/hermes-agent/` (Hermes Python v0.15.1,~200k+ LOC)
-> 对照基线:`/Users/amagicpear/projects/perry_hermes/` (Rust 移植,phase 0 已完成)
+>
+> 对照对象:`/Users/amagicpear/.hermes/hermes-agent/` (Hermes Python v0.15.1,约 20 万+ LOC)
+>
+> 对照基线:`/Users/amagicpear/projects/perry_hermes/` 当前 Rust 实现
+>
+> 当前阶段:phase 0-3 已基本实现,下一步准备 phase 4 CLI
 
-## 1. 总结:偏差分级
+## 1. 当前结论
 
-| 级别 | 含义 | 本次发现 |
-|---|---|---|
-| 🟢 **对齐** | 抽象边界一致,Rust 版本用类型系统比 Python 更严格 | 7 处 |
-| 🟡 **简化** | Rust 版本砍掉了 Python 的某些能力,phase 0 范围内可接受 | 5 处 |
-| 🔴 **缺失** | Hermes 有明确概念但 Rust 版本完全没建模 | 3 处 |
-| 🟣 **新设计** | Rust 版本主动引入 Python 没有的概念 | 4 处 |
+Rust 版本已经不再是 phase 0 skeleton。当前实现已经具备一个最小可运行 agent 的核心路径:
 
-## 2. 核心抽象对照表
+1. `hermes-core`:消息、provider、tool、registry、usage、错误类型。
+2. `hermes-loop`:完整工具调用循环,支持 `ToolUse` 后派发工具、追加 `role=tool` 消息、继续请求 LLM。
+3. `hermes-providers`:Echo provider 和 OpenAI-compatible Chat Completions provider。
+4. `hermes-tools`:真实 `BashTool`。
+5. `hermes-runtime`:面向用户的 `AIAgent` facade,可组合 OpenAI-compatible provider + BashTool + AgentLoop。
+6. 测试覆盖了 echo loop、OpenAI provider 基础解析、tool call 解析、tool call round-trip、参数校验失败后继续循环、bash 基础执行。
 
-### 2.1 三 trait 对照
+下一步 phase 4 不应该再围绕“是否有核心抽象”展开,而应围绕 **CLI 可用性、工具范围控制、权限语义、进程稳定性、provider 边界行为** 收口。
 
-| 我们的设计 (Rust) | Hermes (Python) | 评估 |
-|---|---|---|
-| `Provider` trait(`crates/hermes-core/src/provider.rs`) | 没有 trait。`AIAgent` 在 init 时直接 import `OpenAI` SDK,选 backend 靠 if/elif 链 | 🟣 新设计 — 更干净,Rust 多态 vs Python 鸭子类型 |
-| `Tool` trait(`crates/hermes-core/src/tool.rs`) | 模块级 `registry.register(name, schema, handler, ...)` 单例 + auto-import | 🟡 简化 — 失去 "drop a file in tools/,auto-discovered" 行为,但 Rust 的显式 model 不会导致隐藏副作用 |
-| `ToolRegistry` trait + `InMemoryRegistry` | 没有 trait。`tools/registry.py` 是 module-level singleton,所有工具通过全局 `registry` 对象访问 | 🟣 新设计 — 多 registry(测试隔离、子 agent 隔离)成为可能 |
+## 2. 已实现内容对照
 
-### 2.2 类型对照
-
-| 我们的 `Message` | Hermes 内部消息 | 评估 |
-|---|---|---|
-| `role: Role { System, User, Assistant, Tool }` | `{"role": "system/user/assistant/tool", ...}` OpenAI 格式 | 🟢 对齐 |
-| `content: Content`(untagged enum,text 或 Parts) | 同上 | 🟢 对齐 |
-| `reasoning: Option<String>` 在 message 上 | `assistant_msg["reasoning"]` 也在 message 上(AGENTS.md 强调"不要做错") | 🟢 对齐 — 设计文档已经吸取了 Hermes 的教训 |
-| `tool_call_id: Option<String>` | 同样 | 🟢 对齐 |
-| `tool_calls: Option<Vec<ToolCall>>` | 同样 | 🟢 对齐 |
-
-### 2.3 错误对照
-
-| 我们的设计 | Hermes | 评估 |
-|---|---|---|
-| `ProviderError { RateLimited{retry_after_secs}, ContextLengthExceeded, Auth, Transport, InvalidResponse, Cancelled, Other }` | 异常 + `agent/error_classifier.py` 里的 `FailoverReason` 枚举 | 🟣 新设计 — Rust 用 `thiserror` 强类型 enum 比 Python 的字符串 + 分类器更安全 |
-| `ToolError { NotFound, InvalidArgs, Execution, Permission, Cancelled, Timeout }` | 工具自己 raise,被 `model_tools.handle_function_call` 包成 JSON 字符串返回 | 🟣 新设计 — Rust 把 cancel/timeout 显式化,Python 依赖 GIL |
-| `LoopError { MaxIterations, Timeout, Cancelled, ContentFilter, Provider, Compression }` | 循环内 `break` + 设标志位 | 🟣 新设计 |
-
-### 2.4 取消机制对照
-
-| 我们的设计 | Hermes | 评估 |
-|---|---|---|
-| `CancellationToken` 贯穿每个 async 方法,`tokio::select!` 监听 | `_interrupt_requested: bool` 标志位,Python GIL 偶然确保 Ctrl-C 能送达 | 🟣 新设计 — 文档 §8 第 1 条正确指出了这一点 |
-
-## 3. Hermes 独有但我们没建模的概念
-
-### 3.1 🔴 Toolset 概念(完全缺失)
-
-Hermes 的核心组织单位是 **toolset**(`toolsets.py` 的 `TOOLSETS` dict):
-- 每个工具属于一个 toolset(`"terminal"`, `"messaging"`, `"browser"`, `"mcp"`, …)
-- 平台选择 base toolset(Telegram 用 `"messaging"`,CLI 用全量)
-- `_HERMES_CORE_TOOLS` 是默认 bundle,所有 platform 继承
-- 启用/禁用通过 `enabled_toolsets` / `disabled_toolsets` config
-
-```python
-# toolsets.py 的核心结构
-TOOLSETS = {
-    "terminal": {...},
-    "messaging": {...},
-    "browser": {...},
-    ...
-}
-_HERMES_CORE_TOOLS = [...]  # 默认 bundle
-```
-
-我们的 `Tool` trait **完全没有 toolset 字段**。`InMemoryRegistry` 是平铺的。
-
-**为什么重要**:Hermes 的平台抽象(messaging / CLI / cron / kanban)全靠 toolset 实现。如果我们要做 hermes-gateway(phase 11),没有 toolset 概念,就要么每个 platform 重复 `InMemoryRegistry.register(...)`、要么发明新概念。
-
-**建议**:在 `Tool` trait 加 `fn toolset(&self) -> &'static str` 字段;在 `ToolRegistry` 加 `toolsets() -> HashMap<&'static str, Vec<&str>>` 方法;在 `LoopConfig` 加 `enabled_toolsets: Option<Vec<String>>`。
-
-### 3.2 🔴 Tool 元数据(完全缺失)
-
-Hermes 的 `registry.register()` 接受大量元数据:
-```python
-registry.register(
-    name="terminal",
-    toolset="terminal",
-    schema={"name": "terminal", "description": "...", "parameters": {...}},
-    handler=lambda args, **kw: ...,
-    check_fn=lambda: bool(os.getenv("EXAMPLE_API_KEY")),  # 可用性检查
-    requires_env=["EXAMPLE_API_KEY"],
-    emoji="⚡",  # 显示提示
-)
-```
-
-我们的 `Tool` trait 只有 `name` / `description` / `parameters_schema` / `execute`。**没有**:
-- `check_fn: fn() -> bool` — 用于"这个工具现在能用吗?需要 API key 吗?"
-- `requires_env: &[&str]` — 配置缺失时给用户友好提示
-- `emoji: Option<&str>` — 显示
-- `toolset` 字段(见上)
-
-**影响**:`hermes-cli` 第 4 阶段需要 `hermes tools` 子命令列出可用工具、显示 ✗/✓ 状态 — 这就要求 `check_fn`。`display.py::get_tool_emoji()` 同理。
-
-**建议**:在 `Tool` trait 加:
-```rust
-fn check(&self) -> Result<(), ToolCheckError> { Ok(()) }  // 默认永远可用
-fn emoji(&self) -> Option<&str> { None }
-fn requires_env(&self) -> &[&str] { &[] }
-```
-
-### 3.3 🟡 IterationBudget 过于简陋
-
-Hermes 的 `agent/iteration_budget.py`:
-```python
-class IterationBudget:
-    """Thread-safe iteration counter for an agent."""
-    def __init__(self, max_total: int): ...
-    def consume(self) -> bool: ...   # 原子 +1,满了返回 False
-    def refund(self) -> None: ...    # 用 execute_code 编程调用时退回
-    @property
-    def used(self) -> int: ...
-    @property
-    def remaining(self) -> int: ...
-```
-
-关键能力:
-- **refund** — 程序化工具调用(`execute_code`)不算 iteration
-- **每个 subagent 独立 budget** — parent 90,subagent 50(从 `delegation.max_iterations`)
-- **grace call** — budget 用完后允许再调一次 LLM 来"收尾"
-- **thread-safe** — subagent 在另一线程跑
-
-我们 `LoopConfig.max_iterations: u32` 是个字段,不是对象。**无法**:
-- 表达 refund 语义
-- 在 delegation 场景给 subagent 独立预算
-- 表达 grace call
-
-**建议**:phase 1 写 `AgentLoop` 时,把 `LoopConfig.max_iterations` 升级为 `LoopConfig.budget: Arc<IterationBudget>`,或者在 `AgentLoop` 上加 `pub fn with_budget(budget: Arc<IterationBudget>) -> Self`。budget 至少要有 `consume()` / `refund()` 方法。
-
-**优先级**:中。phase 0–3 用 `u32` 够,phase 11+(delegation)会需要。
-
-## 4. Hermes 有但我们在 phase 0 故意推迟的概念
-
-这些都在设计文档的 phase 5+ 路线图里,偏差是有意为之:
-
-| 概念 | Hermes 文件 | 我们的 phase | 评估 |
+| 领域 | Rust 当前实现 | Hermes Python 对应 | 评估 |
 |---|---|---|---|
-| 上下文压缩 | `agent/context_compressor.py` (2078 行) + `conversation_compression.py` (758 行) | phase 7 | 🟡 简化 — 我们只有 `LoopError::Compression` 变体,没有 `ContextCompressor` trait |
-| Skills | `skills/`、`optional-skills/`、`tools/skills_hub.py`、`agent/skill_commands.py` | phase 9 | 🟡 简化 — 设计文档只规划了 "load .md files as system-prompt content",缺失 SKILL.md frontmatter、tag、category、激活机制 |
-| 内存/Memory Provider | `agent/memory_provider.py` + `plugins/memory/{honcho,mem0,...}` | 远期 | 🟡 简化 — 整体缺失 |
-| Session DB | `hermes_state.py` SQLite + FTS5 | phase 4+ 需要时再加 | 🟡 简化 — `RunResult.messages` 已经把数据给我们了,只是没存 |
-| Curator | `agent/curator.py` (1843 行) + `curator_backup.py` | phase 12 | 🟡 简化 |
-| Plugins | `hermes_cli/plugins.py` + `plugins/<name>/` | 远期 | 🟡 简化 |
-| Skin 引擎 | `hermes_cli/skin_engine.py` | 远期 | 🟡 简化 |
-| ACP adapter | `acp_adapter/` | 远期 | 🟡 简化 |
-| 17 messaging platforms | `gateway/platforms/` | phase 11+ | 🟡 简化 |
-| Cron | `cron/jobs.py` + `scheduler.py` | 远期 | 🟡 简化 |
-| Kanban | `plugins/kanban/` | 远期 | 🟡 简化 |
-| Prompt caching | `agent/prompt_caching.py` | 远期 | 🟡 简化 |
-| Checkpointing | AIAgent 的 `checkpoints_enabled` 标志 | 远期 | 🟡 简化 |
-| Fallback model | AIAgent 的 `fallback_model` 字段 | 远期 | 🟡 简化 |
-| Credential pool | `agent/credential_pool.py` (2183 行) | 远期 | 🟡 简化 |
+| 消息模型 | `Message { role, content, reasoning, tool_call_id, tool_calls }` | OpenAI 风格 dict,message 上携带 reasoning/tool_calls | 对齐。reasoning 放在 message 上是正确方向 |
+| Provider 抽象 | `Provider` trait + `EchoProvider` + `OpenAiProvider` | Python 中主要由 `AIAgent` 初始化时按 backend 分支选择 SDK/adapter | Rust 新设计,边界更清晰 |
+| Tool 抽象 | `Tool` trait: `name` / `description` / `parameters_schema` / `toolset` / `execute` | `tools/registry.py` 注册 schema、handler、toolset、metadata | 已覆盖核心执行面,metadata 仍缺 |
+| ToolRegistry | `InMemoryRegistry`,支持 `get` / `names` / `schemas` / `toolsets` / `tools_in_toolset` | Python module-level singleton registry | Rust 新设计,测试隔离更好 |
+| Agent loop | `AgentLoop::run` 处理 Stop/Length/ContentFilter/Error/ToolUse | `run_agent.py` / `agent/conversation_loop.py` 的 ReAct 循环 | phase 3 核心路径已对齐 |
+| 工具错误恢复 | 工具错误格式化成 `role=tool` 消息,循环继续 | `model_tools.handle_function_call()` 将异常转为工具结果文本 | 对齐,这是 agent 鲁棒性的关键 |
+| OpenAI 工具调用 | 解析 `tool_calls`,下一轮 request round-trip assistant tool_calls | OpenAI Chat Completions 工具协议 | 已补上关键 round-trip |
+| 参数校验 | dispatch 前用 JSON Schema 校验工具参数 | Python 主要依赖工具 handler/registry schema | Rust 实现更显式 |
+| 取消 | `CancellationToken` 传入 provider/tool | Python `_interrupt_requested` 标志位 | Rust 新设计,方向正确 |
+| runtime facade | `AIAgent::openai_compatible()` + `run_turn()` | `run_agent.py` 的用户入口 | phase 3 可用,但仍非常薄 |
+| CLI | `hermes-cli` 仍是 phase 0 stub | Hermes CLI/TUI 已很完整 | phase 4 目标 |
 
-## 5. Rust 版本主动引入的 Python 没有的概念(优势)
+## 3. 当前 crate 状态
 
-| 概念 | 设计意图 | 评估 |
-|---|---|---|
-| `Send + Sync` bounds on traits | 允许 `Arc<dyn Provider>` 跨线程,子 agent 在 `tokio::spawn` 里跑 | 🟢 Rust 独有优势 |
-| `CancellationToken` 贯穿 | 替代 Python 偶然能用的 GIL 中断 | 🟢 设计文档 §8 显式承认这是 Rust 设计的核心动机 |
-| `FinishReason` 5 态 enum | Python 隐式用 `response.tool_calls is not None` 区分 | 🟢 强类型更安全 |
-| `ToolContext { session_id, working_dir, permissions }` | Python 用 process-global + 隐式 cwd | 🟢 显式上下文,容易测试 |
-| `Attachment` / `ContentPart` 多模态 | Python 通过 sanitize_strip_images 走 fallback 路径 | 🟢 v0 不急,但 v0 就建模是对的 |
+### 3.1 `hermes-core`
 
-## 6. 实现路径对照
+已实现:
 
-| 阶段 | 我们的 roadmap | Hermes 实际历史 | 偏差 |
+- `Message`, `Role`, `Content`, `ContentPart`, `ToolCall`
+- `Provider`, `Completion`, `CompletionDelta`, `CompletionStream`, `FinishReason`
+- `Tool`, `ToolContext`, `ToolPermissions`, `ToolOutput`, `Attachment`
+- `ToolRegistry`, `InMemoryRegistry`, `ToolSchema`
+- `ProviderError`, `ToolError`, `LoopError`
+- `Usage`
+
+需要更新设计认知:
+
+- toolset 已经存在,不应再说“Toolset 概念缺失”。
+- 真正缺的是 toolset 的 **session scope 生效路径**。
+- `ToolPermissions` 已建模,但当前还没有强制执行语义。
+
+### 3.2 `hermes-loop`
+
+已实现:
+
+- system prompt 注入。
+- max iteration / wall-clock timeout / cancellation 检查。
+- 每轮从 registry 获取 tool schema。
+- provider complete 调用。
+- assistant message 持久化。
+- `FinishReason::ToolUse` 时执行工具并追加 tool result。
+- 工具找不到、参数错误、执行错误都转为 `role=tool` 错误消息,不终止循环。
+- `LoopEvent` 事件流。
+
+与官方 Hermes 的差距:
+
+- `LoopConfig.max_iterations: u32` 还不是 Hermes 那种 `IterationBudget` 对象,没有 refund / grace call / subagent budget。
+- `parallel_tool_calls` 字段已公开但当前明确不生效。
+- `dispatch_tool()` 没有按 enabled/disabled toolsets 限制可执行工具。
+- `ToolContext` 里的 `session_id` / `working_dir` / `permissions` 仍由 loop 写死或默认,还没有由 runtime/CLI 注入。
+
+### 3.3 `hermes-providers`
+
+已实现:
+
+- `EchoProvider` 用于离线 loop 测试。
+- `OpenAiProvider` 支持 OpenAI-compatible `/chat/completions`。
+- 支持 base_url 覆盖,可用于 MiniMax/Ollama/vLLM/proxy 等兼容端点。
+- 解析 `stop` / `tool_calls` / `length` / `content_filter`。
+- 解析 OpenAI 返回的 JSON 字符串形式 tool arguments。
+- 序列化 assistant `tool_calls` 到下一轮请求体。
+- 处理 401/429/非成功状态。
+
+需要在 phase 4/5 前修:
+
+- 未知 `finish_reason` 当前被当作 Stop,应改为 `InvalidResponse` 或 `FinishReason::Error`。
+- `Content::Parts` 当前被静默丢成 `content: None`,应显式报错或正确映射多模态 content array。
+- 空工具列表仍发送 `tool_choice: "auto"`,部分兼容端点可能拒绝。
+- 429 暂时固定 retry-after=1,没有读取 header。
+- 还没有 streaming。
+
+### 3.4 `hermes-tools`
+
+已实现:
+
+- `BashTool`。
+- JSON Schema 参数: `command`, `timeout_secs`。
+- 支持 cancellation 和 timeout。
+- 非零 exit code 以文本形式反馈给 LLM,不作为工具执行错误。
+- 输出截断到上下文友好的大小。
+- `toolset()` 返回 `"core"`。
+
+必须修:
+
+- 当前先 `child.wait().await`,再读取 stdout/stderr pipe。大输出可能填满 pipe 导致子进程阻塞,父进程等待退出,最终卡到 timeout。
+- 输出截断使用 `&combined[..25_000]`,非 ASCII 边界可能 panic。
+- 未检查 `ctx.permissions.subprocess`,权限模型没有真正生效。
+
+### 3.5 `hermes-runtime`
+
+已实现:
+
+- `AIAgent::openai_compatible(api_key, model, base_url)`。
+- 默认注册 `BashTool`。
+- 默认 system prompt 提醒模型可用 bash。
+- `run_turn(user_text, cancel, on_event)` 返回完整 `RunResult`。
+- `examples/live_tool_use.rs` 可做 OpenAI-compatible + BashTool 的端到端 smoke。
+
+phase 4 前需要补:
+
+- runtime 构造参数需要表达工作目录、session id、权限策略、enabled/disabled toolsets。
+- 目前 `AIAgent` 固定 provider 类型为 `OpenAiProvider`,后续 CLI 如果要支持 echo/openai 可先在 CLI 层分支,或让 runtime 提供 enum/factory。
+
+### 3.6 `hermes-cli`
+
+当前仍是 phase 0 stub:
+
+- 只打印版本和 phase 0 提示。
+- 没有接入 `hermes-runtime`。
+- 没有 REPL。
+- 没有 provider/model/base-url/api-key 参数。
+- 没有工具列表/工具范围控制。
+
+phase 4 的主要工作就在这里。
+
+## 4. 官方 Hermes 设计中仍未覆盖的关键概念
+
+这些不是 phase 4 全部要实现,但需要知道哪些会影响 CLI 设计。
+
+### 4.1 Toolset session scope
+
+官方 Hermes 中 toolset 不只是 metadata,而是 schema 暴露和 dispatcher 执行的共同过滤条件:
+
+- `get_tool_definitions(enabled_toolsets, disabled_toolsets, quiet_mode)` 决定模型能看到哪些工具。
+- `handle_function_call(..., enabled_toolsets, disabled_toolsets, ...)` 用同一组 toolsets 限制实际执行。
+- 插件注册的工具也走同一条 toolset 解析路径。
+
+Rust 当前已经有:
+
+- `Tool::toolset()`
+- `ToolRegistry::toolsets()`
+- `ToolRegistry::tools_in_toolset()`
+
+Rust 当前还缺:
+
+- `ToolScope` 或 `LoopConfig.enabled_toolsets/disabled_toolsets`
+- 按 scope 生成 schema 的接口
+- dispatch 前验证 tool 是否在当前 scope 中
+- CLI 参数: `--enabled-toolsets`, `--disabled-toolsets`, 或更简单的 `--tools safe/core/all`
+
+### 4.2 Tool metadata
+
+官方 registry entry 包含:
+
+- `toolset`
+- `schema`
+- `handler`
+- `check_fn`
+- `requires_env`
+- `emoji`
+- async/sync 信息
+- description
+
+Rust 当前已有 toolset/schema/handler 等核心执行信息,但缺:
+
+- `check()`
+- `requires_env()`
+- `emoji()`
+- tool/toolset availability 查询
+
+如果 phase 4 CLI 只做最小 REPL,metadata 可以先不做;如果要做 `hermes tools` 或友好错误提示,metadata 应在 phase 4 前半补上。
+
+### 4.3 IterationBudget
+
+官方 `agent/iteration_budget.py` 是独立对象,支持:
+
+- consume
+- refund
+- used/remaining
+- thread-safe
+- subagent 独立预算
+- budget 用完后的收尾调用语义
+
+Rust 当前 `LoopConfig.max_iterations` 对 phase 3/4 足够,但 phase 7+ compression、phase 9 skills、phase 11 delegation/subagent 前应升级。
+
+### 4.4 Session / persistence
+
+官方 Hermes 有 SQLite/FTS5 session、历史搜索、checkpointing 等。Rust 当前只在 `RunResult.messages` 中返回轨迹,没有落盘。
+
+phase 4 最小 CLI 可以不做持久化,但如果做多轮 REPL,至少需要在内存中维护 `Vec<Message>`。否则每次 `run_turn()` 都是单轮新会话。
+
+## 5. phase 4 前必须处理的问题
+
+按“会不会影响 CLI 可用性和安全语义”排序。
+
+| 优先级 | 问题 | 影响 | 建议 |
 |---|---|---|---|
-| 0 — Skeleton | 8 crate stub + traits | 早期 monolith(单 `run_agent.py`) | 🟢 类似(我们拆分更早) |
-| 1 — Echo loop | Mock provider,loop 跑 1 次 | Hermes 早期也是先 mock 测试 | 🟢 对齐 |
-| 2 — OpenAI | 写 OpenAI provider | Hermes 早期只支持 OpenAI | 🟢 对齐 |
-| 3 — Bash tool | BashTool | Hermes 早期 `terminal_tool.py` | 🟢 对齐 |
-| 4 — CLI | REPL | HermesCLI = `cli.py` (现在 11k+ LOC) | 🟡 我们低估了 CLI 的复杂度,实际需要更长时间 |
-| 5–7 — Streaming, Interrupt, Compression | 单独 phase | Hermes 早期一次性引入,迭代成熟 | 🟡 Hermes 把这些"基本功"做得更深 |
-| 8 — Anthropic provider | 单独 phase | Hermes 有专门 adapter 文件 (2303 行 `anthropic_adapter.py`) | 🟢 对齐 |
-| 9 — Skills | "load .md files" | Hermes 有完整 skills 生态(`SKILL.md` frontmatter、`~/.hermes/skills/`、`optional-skills/`、自动激活、usage tracking、curator 自动归档) | 🔴 **设计文档严重低估** — phase 9 的工作量至少是其他 phase 的 3 倍 |
-| 10 — TUI | ratatui | Hermes 有完整 Ink (React) TUI + tui_gateway JSON-RPC 进程 | 🟡 范围对齐,但实现方式不同 |
-| 11 — First platform | Telegram via `grammY-rs` | Hermes 有 17 个 platform | 🟢 对齐,选 1 个先做是对的 |
-| 12 — Curator | "learning loop" | Hermes 的 curator 包含:auto-review LLM 调用、stale-after-days、auto-archive、backup、rollback、CLI verbs | 🟡 我们只画了 trait,实际工作量远大于 2000 LOC |
+| P0 | `BashTool` pipe 死锁风险 | CLI 用户执行大输出命令可能卡到 timeout | 改用 `wait_with_output()` 或并发读取 stdout/stderr |
+| P0 | `ToolContext.permissions` 未强制执行 | CLI 暴露 shell 工具时权限语义不可信 | `BashTool` 检查 `subprocess`;loop/runtime 注入权限 |
+| P0 | CLI 尚未接 runtime | phase 4 主目标 | `hermes run` 或默认 REPL 接 `AIAgent` |
+| P1 | toolset scope 未接入 schema/dispatch | CLI 无法限制工具范围 | 引入 `ToolScope`;schema 和 dispatch 共用 |
+| P1 | OpenAI unknown finish_reason 默认为 Stop | provider 异常可能伪装成正常答案 | 未知值返回 InvalidResponse |
+| P1 | 空 tools 仍发送 tool_choice | 兼容端点可能失败 | 无工具时省略 `tools` 和 `tool_choice` |
+| P1 | `Content::Parts` 静默丢弃 | 多模态输入会无声丢失 | 不支持时显式报错 |
+| P2 | byte index 截断输出 | 中文/emoji 输出可能 panic | 使用 UTF-8 安全截断 |
+| P2 | `parallel_tool_calls` 暴露但不生效 | API 误导 | phase 4 前删除或实现 |
+| P2 | tool metadata 缺失 | `hermes tools`/友好提示不好做 | 增加 `check/requires_env/emoji` 默认方法 |
 
-**特别注意 phase 9 (Skills)** — Hermes 把 Skills 做成了一等公民:
-- `skills/<category>/<name>/SKILL.md` + frontmatter(`name`, `description`, `version`, `platforms`, `tags`, `category`, `config` 依赖)
-- `optional-skills/` — 重型 / 利基 skill 不默认激活
-- `scan_skill_commands()` — skill 自带 slash command
-- `skill_manage(action="delete"/"create"/...)` — agent 可以管理 skill
-- `agent/skill_preprocessing.py` — 加载时预处理
-- `skill_usage.py` + curator — usage tracking 和 auto-archive
+## 6. phase 4 CLI 建议范围
 
-我们的 phase 9 只规划"load .md files as system-prompt content"。这个范围可能需要拆成 phase 9a / 9b / 9c。
+不要直接追 Hermes CLI/TUI 的完整复杂度。phase 4 最小可用范围建议是:
 
-## 7. 优先级调整建议
+1. `hermes --provider echo` 本地 smoke。
+2. `hermes --provider openai --model ... --base-url ...` 单轮运行。
+3. 默认从 `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL` 读取配置。
+4. 支持 `--no-bash` 或 `--enabled-toolsets core/none` 的最小工具开关。
+5. 支持 `--cwd` 设置工具工作目录。
+6. Ctrl-C 触发 `CancellationToken`。
+7. 输出 `LoopEvent`:thinking、tool start、tool finish、final answer。
+8. 单元/集成测试覆盖 echo provider CLI path;OpenAI path 用 mock server 或 provider 层已有测试兜底。
 
-如果按偏差严重度排,**实际落地时建议这样排序**:
+暂不建议 phase 4 做:
 
-| 优先级 | 偏差 | 推荐时机 |
-|---|---|---|
-| **P0** | toolset 概念缺失 | phase 4(CLI 需要 `--tools` flag 时) |
-| **P0** | tool 元数据(`check_fn` / `emoji` / `requires_env`) | phase 4(CLI `hermes tools` 命令) |
-| **P1** | `IterationBudget` 升级为对象 | phase 1(写 `AgentLoop` 时直接做) |
-| **P1** | `ContextCompressor` trait | phase 7 之前引入 trait,phase 7 写实现 |
-| **P1** | `Session` / `SessionStore` 概念 | phase 4 后半(CLI 想保留历史) |
-| **P2** | skills 范围重估 | phase 9 之前重新设计 |
-| **P2** | curator 范围重估 | phase 12 之前重新设计 |
-| **P3** | `enabled_toolsets` config | phase 11(第一个 platform) |
+- 持久化 session DB。
+- 完整 TUI。
+- skills。
+- curator。
+- 多平台 gateway。
+- 插件系统。
+- 完整 tool metadata UI。
 
-## 8. 与设计文档原文的偏差
+## 7. 当前验证状态
 
-我们 phase 0 的实现**严格遵循**了设计文档第 2、3、5、7 节。所以本文的偏差分析有两层:
+已观察到的验证结果:
 
-1. **设计文档本身的偏差**(与 Hermes Python 的真实结构相比) — 见上 P0/P1 的内容
-2. **我们当前实现 vs 设计文档** — 零偏差,全部按 doc 实施
+- `cargo clippy --all-targets --all-features -- -D warnings` 通过。
+- `cargo test` 在普通环境通过。
+- 沙箱内 `cargo test` 失败原因是测试绑定 `127.0.0.1:0` 启动 mock server 被限制,不是业务断言失败。
 
-**最值得回头更新设计文档的点**:
-- §3.2 `Tool` trait 缺 `toolset` / `check_fn` / `emoji` / `requires_env` 字段
-- §3.3 `ToolRegistry` 缺 `by_toolset()` 视图
-- §4 `LoopConfig` 用 `max_iterations: u32`,应该升级为 `budget: IterationBudget`
-- §6 路线图 phase 9 (Skills) 的范围严重低估
-- §6 路线图 phase 12 (Curator) 的范围低估
-- §6 路线图 phase 4 (CLI) 的工作量可能也比 ~500 LOC 大,实际 HermesCLI ~11k LOC
+这说明 phase 3 的基础测试是健康的,但上述 P0/P1 问题仍是设计/实现缺口,不能因为测试通过而忽略。
 
-## 9. 资源链接
+## 8. 资源链接
 
-- Hermes Python 源码: `/Users/amagicpear/.hermes/hermes-agent/`
-- 关键文件:
-  - `run_agent.py` (5115 行) — AIAgent 类,60+ 构造参数
-  - `model_tools.py` (1174 行) — `get_tool_definitions()` + `handle_function_call()`
-  - `toolsets.py` (882 行) — toolset 字典
-  - `agent/conversation_loop.py` (4836 行) — 抽离的循环
-  - `agent/display.py` (1033 行) — 纯展示(spinner、emoji、preview)
-  - `agent/iteration_budget.py` (62 行) — 线程安全 budget 对象
-  - `AGENTS.md` (1172 行) — Hermes 自己的架构文档
-  - `tools/registry.py` — 全局 tool registry singleton
+- Hermes Python 源码:`/Users/amagicpear/.hermes/hermes-agent/`
+- Rust 移植源码:`/Users/amagicpear/projects/perry_hermes/`
+- Rust 设计文档:`plans/rust-port-design.md`
+
+关键 Hermes Python 文件:
+
+- `run_agent.py` — AIAgent 入口
+- `agent/conversation_loop.py` — 抽离后的 conversation loop
+- `model_tools.py` — tool definitions 与 function call dispatch
+- `toolsets.py` — toolset 定义、alias、组合解析
+- `tools/registry.py` — tool registry、metadata、availability
+- `agent/iteration_budget.py` — iteration budget
+
+关键 Rust 文件:
+
+- `crates/hermes-core/src/message.rs`
+- `crates/hermes-core/src/provider.rs`
+- `crates/hermes-core/src/tool.rs`
+- `crates/hermes-core/src/registry.rs`
+- `crates/hermes-loop/src/agent.rs`
+- `crates/hermes-providers/src/openai.rs`
+- `crates/hermes-tools/src/bash.rs`
+- `crates/hermes-runtime/src/lib.rs`
+- `crates/hermes-cli/src/main.rs`

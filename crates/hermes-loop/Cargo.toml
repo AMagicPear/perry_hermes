@@ -13,8 +13,12 @@ tokio-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+jsonschema.workspace = true
 
 [dev-dependencies]
-# Integration tests use these to compose a real Provider + AgentLoop.
+# Integration tests use these to compose a real Provider + AgentLoop +
+# BashTool and observe the full dispatch flow.
 hermes-providers.workspace = true
+hermes-tools.workspace = true
+async-trait.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -60,6 +60,26 @@ struct OaiMessage<'a> {
     content: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<&'a str>,
+    /// Round-trip the LLM's `tool_calls` so the next request
+    /// remembers which tools it invoked. OpenAI expects each entry as
+    /// `{ id, type: "function", function: { name, arguments } }`.
+    /// `arguments` is sent as a JSON *string* (matching how OpenAI
+    /// returns it), not a nested object.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_calls: Option<Vec<OaiToolCallRef<'a>>>,
+}
+
+#[derive(Serialize)]
+struct OaiToolCallRef<'a> {
+    id: &'a str,
+    r#type: &'static str, // "function"
+    function: OaiFunctionCallRef<'a>,
+}
+
+#[derive(Serialize)]
+struct OaiFunctionCallRef<'a> {
+    name: &'a str,
+    arguments: String,
 }
 
 #[derive(Serialize)]
@@ -128,21 +148,41 @@ impl Provider for OpenAiProvider {
     ) -> Result<Completion, ProviderError> {
         let oai_msgs: Vec<OaiMessage> = messages
             .iter()
-            .map(|m| OaiMessage {
-                role: match m.role {
-                    Role::System => "system",
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                    Role::Tool => "tool",
-                },
-                content: match &m.content {
-                    Content::Text(s) => Some(s.as_str()),
-                    Content::Parts(_) => None,
-                },
-                tool_call_id: m.tool_call_id.as_deref(),
-                // TODO(phase 3): round-trip assistant `tool_calls`
-                // back to OpenAI. Phase 2 tests don't echo back
-                // tool calls so we skip the field for now.
+            .map(|m| {
+                let tool_calls = m.tool_calls.as_ref().map(|calls| {
+                    calls
+                        .iter()
+                        .map(|c| {
+                            // OpenAI expects `arguments` as a JSON
+                            // *string*, not a nested object — same
+                            // shape the response uses.
+                            let arguments = serde_json::to_string(&c.arguments)
+                                .unwrap_or_else(|_| "null".into());
+                            OaiToolCallRef {
+                                id: &c.id,
+                                r#type: "function",
+                                function: OaiFunctionCallRef {
+                                    name: &c.name,
+                                    arguments,
+                                },
+                            }
+                        })
+                        .collect()
+                });
+                OaiMessage {
+                    role: match m.role {
+                        Role::System => "system",
+                        Role::User => "user",
+                        Role::Assistant => "assistant",
+                        Role::Tool => "tool",
+                    },
+                    content: match &m.content {
+                        Content::Text(s) => Some(s.as_str()),
+                        Content::Parts(_) => None,
+                    },
+                    tool_call_id: m.tool_call_id.as_deref(),
+                    tool_calls,
+                }
             })
             .collect();
 

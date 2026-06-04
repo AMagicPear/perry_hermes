@@ -6,7 +6,18 @@ rust-version.workspace = true
 license.workspace = true
 description = "User-facing AIAgent facade — the product API"
 
-# Stub for phase 0. See plans/rust-port-design.md §5 (crate structure):
-#   AIAgent facade will live here; users do `use hermes_runtime::AIAgent;`.
-#   Real implementation lands when hermes-loop, hermes-providers, and
-#   hermes-tools have something to compose.
+[dependencies]
+# Runtime is the composition point — it depends on the loop, providers,
+# and tools so it can wire them together. See plans/rust-port-design.md §5.
+hermes-core.workspace = true
+hermes-loop.workspace = true
+hermes-providers.workspace = true
+hermes-tools.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[[example]]
+name = "live_tool_use"
+path = "examples/live_tool_use.rs"
