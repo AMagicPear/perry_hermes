@@ -22,7 +22,7 @@ pub enum ProviderError {
 }
 
 /// Errors that can occur when executing a tool.
-#[derive(Debug, Error)]
+#[derive(Debug, Clone, Error)]
 pub enum ToolError {
     #[error("tool not found: {0}")]
     NotFound(String),

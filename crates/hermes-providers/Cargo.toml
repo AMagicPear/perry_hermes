@@ -6,8 +6,9 @@ rust-version.workspace = true
 license.workspace = true
 description = "LLM provider implementations (echo mock, OpenAI, Anthropic, ...)"
 
-# Stub for phase 0. See plans/rust-port-design.md §6 (roadmap):
-#   phase 1 → EchoProvider
-#   phase 2 → OpenAiProvider
-#   phase 8 → Anthropic provider
-#   phase 11+ → gateway-facing providers
+[dependencies]
+hermes-core.workspace = true
+async-trait.workspace = true
+tokio-util.workspace = true
+serde.workspace = true
+serde_json.workspace = true
