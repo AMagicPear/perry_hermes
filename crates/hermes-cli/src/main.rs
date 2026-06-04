@@ -39,8 +39,8 @@ struct Args {
     #[arg(long)]
     base_url: Option<String>,
 
-    /// Max iterations per turn
-    #[arg(long, default_value_t = 20)]
+    /// Max iterations per turn (default: 10, matching Python Hermes CLI)
+    #[arg(long, default_value_t = 10)]
     max_iterations: u32,
 
     /// Disabled toolsets (e.g. "terminal" to disable bash, "core" for all)

@@ -41,7 +41,7 @@ impl AIAgent {
             provider,
             registry,
             LoopConfig {
-                max_iterations: 20,
+                max_iterations: 90,
                 system_prompt: Some(
                     "You are a careful assistant with access to a `bash` tool. \
                      Use it to inspect the system or run shell commands when \
