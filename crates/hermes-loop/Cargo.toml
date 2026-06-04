@@ -1,0 +1,13 @@
+[package]
+name = "hermes-loop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "The agent loop — assembles context, calls the LLM, dispatches tools"
+
+# Stub for phase 0. See plans/rust-port-design.md §6 (roadmap):
+#   phase 1 → AgentLoop skeleton with EchoProvider test
+#   phase 5 → streaming variant
+#   phase 6 → cancellation
+#   phase 7 → context compression

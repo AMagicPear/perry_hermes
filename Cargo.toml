@@ -1,6 +1,56 @@
-[package]
-name = "perry-hermes"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [
+    "crates/hermes-core",
+    "crates/hermes-providers",
+    "crates/hermes-tools",
+    "crates/hermes-loop",
+    "crates/hermes-runtime",
+    "crates/hermes-cli",
+    # "crates/hermes-gateway",  # phase 11+
+    # "crates/hermes-tui",      # phase 10+
+]
 
-[dependencies]
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+
+[workspace.dependencies]
+# Async
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+futures = "0.3"
+
+# Serde
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Errors
+thiserror = "1"
+anyhow = "1"
+
+# Observability
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# JSON Schema validation (used by hermes-loop at dispatch time)
+jsonschema = "0.18"
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# HTTP (used by hermes-providers)
+reqwest = { version = "0.12", features = ["json", "stream"] }
+
+# Time
+chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+
+# Internal
+hermes-core = { path = "crates/hermes-core" }
+hermes-providers = { path = "crates/hermes-providers" }
+hermes-tools = { path = "crates/hermes-tools" }
+hermes-loop = { path = "crates/hermes-loop" }
+hermes-runtime = { path = "crates/hermes-runtime" }

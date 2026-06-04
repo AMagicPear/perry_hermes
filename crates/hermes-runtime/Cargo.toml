@@ -1,0 +1,12 @@
+[package]
+name = "hermes-runtime"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "User-facing AIAgent facade — the product API"
+
+# Stub for phase 0. See plans/rust-port-design.md §5 (crate structure):
+#   AIAgent facade will live here; users do `use hermes_runtime::AIAgent;`.
+#   Real implementation lands when hermes-loop, hermes-providers, and
+#   hermes-tools have something to compose.

@@ -1,0 +1,16 @@
+[package]
+name = "hermes-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Hermes CLI — a minimal Hermes-style agent in Rust"
+
+[[bin]]
+name = "hermes"
+path = "src/main.rs"
+
+[dependencies]
+# Stub for phase 0. Real deps land in phase 4 (REPL) when the loop,
+# providers, and tools all have something to compose.
+clap = { workspace = true, features = ["derive"] }
