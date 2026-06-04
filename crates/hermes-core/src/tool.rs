@@ -20,6 +20,12 @@ pub trait Tool: Send + Sync {
     /// the LLM verbatim so it can emit valid tool calls.
     fn parameters_schema(&self) -> Value;
 
+    /// Which toolset this tool belongs to. Toolsets are the unit of
+    /// enable/disable (`"core"` tools are always on, `"mcp"` tools are
+    /// platform-gated, etc.). Required — every tool must declare its
+    /// toolset so the loop and CLI can apply `enabled_toolsets` filtering.
+    fn toolset(&self) -> &'static str;
+
     async fn execute(
         &self,
         args: Value,
