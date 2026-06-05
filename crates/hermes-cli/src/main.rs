@@ -19,6 +19,9 @@ use hermes_loop::{AgentLoop, LoopConfig, LoopEvent};
 use hermes_tools::BashTool;
 use tokio_util::sync::CancellationToken;
 
+mod ctrl_c;
+use ctrl_c::{CtrlCAction, CtrlCHandler};
+
 #[derive(Parser)]
 #[command(
     name = "hermes",
@@ -105,7 +108,7 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
     working_dir: PathBuf,
 ) -> anyhow::Result<()> {
     eprintln!(
-        "hermes v{} — type a message, Ctrl-D or Ctrl-C to quit",
+        "hermes v{} — type a message, Ctrl-D to quit, Ctrl-C to cancel a turn or (when idle) quit",
         env!("CARGO_PKG_VERSION")
     );
     eprintln!();
@@ -113,6 +116,32 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut history: Vec<Message> = Vec::new();
+
+    // Persistent Ctrl+C listener for the entire REPL. Behavior matches the
+    // Python Hermes CLI: in-turn Ctrl+C cancels the current turn via
+    // CancellationToken; idle Ctrl+C exits the process. This shape is
+    // forward-compatible with Phase 5 streaming — the same cancel token
+    // already aborts in-flight HTTP reads in the provider layer.
+    let ctrl_c = Arc::new(CtrlCHandler::new());
+    let ctrl_c_signal = Arc::clone(&ctrl_c);
+    let signal_handle = tokio::spawn(async move {
+        loop {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                match ctrl_c_signal.handle() {
+                    CtrlCAction::Exit => {
+                        eprintln!();
+                        std::process::exit(0);
+                    }
+                    CtrlCAction::Cancel => {
+                        // Stay in the REPL; the in-flight turn sees the
+                        // cancelled token and returns. The listener keeps
+                        // running so the NEXT Ctrl+C (now back at the
+                        // prompt) can exit.
+                    }
+                }
+            }
+        }
+    });
 
     for line in stdin.lock().lines() {
         let line = line.context("failed to read line")?;
@@ -139,17 +168,7 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
             permissions: Default::default(),
         };
         let cancel = CancellationToken::new();
-
-        // Ctrl-C: first cancels the current turn, second exits REPL.
-        let cancel_clone = cancel.clone();
-        let ctrl_c_handle = tokio::spawn(async move {
-            loop {
-                if tokio::signal::ctrl_c().await.is_ok() {
-                    cancel_clone.cancel();
-                    return;
-                }
-            }
-        });
+        ctrl_c.enter_turn(cancel.clone());
 
         let result = loop_
             .run(history.clone(), ctx, cancel.clone(), |event| match event {
@@ -183,7 +202,7 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
             })
             .await;
 
-        ctrl_c_handle.abort();
+        ctrl_c.exit_turn();
 
         match result {
             Ok(run_result) => {
@@ -214,6 +233,11 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
 
         let _ = stdout.flush();
     }
+
+    // The /exit /quit / Ctrl-D paths all reach here; abort the persistent
+    // signal task so it doesn't outlive the REPL. (Ctrl+C idle-exit calls
+    // std::process::exit and skips this — that's fine, the OS reaps it.)
+    signal_handle.abort();
 
     Ok(())
 }
