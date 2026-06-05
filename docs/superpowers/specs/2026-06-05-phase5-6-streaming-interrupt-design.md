@@ -1,9 +1,9 @@
 # Phase 5 + Phase 6 — Streaming & Interrupt
 
 **Date:** 2026-06-05
-**Status:** Design approved, awaiting implementation plan
-**Scope:** `hermes-core`, `hermes-providers`, `hermes-loop`, `hermes-cli`
-**Out of scope:** `hermes-runtime` (public facade unchanged in this round), all other crates
+**Status:** Implemented. Historical design note; current code is authoritative.
+**Scope implemented:** `hermes-core`, `hermes-providers`, `hermes-loop`, `hermes-runtime`, `hermes-cli`
+**Post-implementation note:** runtime was later made the shared CLI/gateway composition point, so older sections saying runtime was out of scope are stale.
 
 ## 1. Goals
 

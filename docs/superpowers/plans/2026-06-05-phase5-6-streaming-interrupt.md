@@ -1,5 +1,7 @@
 # Phase 5 + Phase 6 — Streaming & Interrupt Implementation Plan
 
+> **Status:** Implemented. Historical execution plan; check current code before following exact API snippets.
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make `AgentLoop::run` always consume a streaming LLM response, emit per-token events to the CLI, and cleanly cancel on Ctrl+C with partial content preserved.
@@ -1626,12 +1628,12 @@ Expected: see the smoke output from Task 12 step 4.
 Run: `printf 'say hi in 5 words\n/exit\n' | cargo run -p hermes-cli --quiet -- --provider openai`
 Expected: tokens appear on stderr one by one (or in small chunks); final text appears; metrics line.
 
-- [ ] **Step 5: Update CLAUDE.md "Known Issues" section**
+- [ ] **Step 5: Update CLAUDE.md "Known Issues" section** (historical task; CLAUDE.md has since been updated again after the runtime/registry simplification)
 
 Edit the "Still open (before phase 5)" list — both items are now resolved:
-- `ToolContext.permissions` not enforced — still open, no change.
-- Unknown `finish_reason` defaults to Stop — still open.
-- `Content::Parts` silently dropped — still open.
+- Permission model is still coarse — `BashTool` checks `subprocess`, but runtime currently always enables it.
+- Unknown `finish_reason` maps to `FinishReason::Error`, but provider diagnostics are still coarse.
+- `Content::Parts` only sends the first text part to OpenAI-compatible providers; real multimodal mapping is still missing.
 - `BashTool` does not kill concurrent children — still open.
 - **Resolved:** "No streaming yet (Phase 5) — CLI blocks until full completion." → remove.
 

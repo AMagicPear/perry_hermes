@@ -13,11 +13,7 @@ use clap::Parser;
 
 use hermes_core::error::LoopError;
 use hermes_core::message::{Content, Message, Role};
-use hermes_core::provider::Provider;
-use hermes_core::registry::{InMemoryRegistry, ToolRegistry};
-use hermes_core::tool::{ToolContext, ToolPermissions};
-use hermes_loop::{AgentLoop, LoopConfig, LoopEvent};
-use hermes_tools::BashTool;
+use hermes_runtime::{AIAgent, AgentOptions, LoopEvent, DEFAULT_SYSTEM_PROMPT};
 use tokio_util::sync::CancellationToken;
 
 mod ctrl_c;
@@ -58,27 +54,27 @@ struct Args {
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let disabled = args.disabled_toolsets.clone();
     let tokio_rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
-    tokio_rt.block_on(async { dispatch(args, disabled).await })
+    tokio_rt.block_on(async { dispatch(args).await })
 }
 
-/// Build provider + registry, then branch on provider type to enter the REPL.
-/// Each branch instantiates `AgentLoop` with a concrete provider type, avoiding
-/// the need for `Arc<dyn Provider>` (which doesn't satisfy `P: Provider`).
-async fn dispatch(args: Args, disabled_toolsets: Vec<String>) -> anyhow::Result<()> {
-    let config = loop_config(&args);
+async fn dispatch(args: Args) -> anyhow::Result<()> {
     let working_dir = args
         .cwd
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    let options = AgentOptions {
+        max_iterations: args.max_iterations,
+        system_prompt: Some(DEFAULT_SYSTEM_PROMPT.into()),
+        disabled_toolsets: args.disabled_toolsets.clone(),
+        working_dir: working_dir.clone(),
+        session_id: "cli".into(),
+    };
 
     match args.provider.as_str() {
         "echo" => {
-            let provider = hermes_providers::EchoProvider::new();
-            let registry = build_registry(&disabled_toolsets);
-            let loop_ = AgentLoop::new(provider, Arc::new(registry), config);
-            run_repl(loop_, working_dir).await
+            let agent = AIAgent::echo(options);
+            run_repl(agent).await
         }
         "openai" => {
             let api_key = std::env::var("OPENAI_API_KEY")
@@ -93,21 +89,14 @@ async fn dispatch(args: Args, disabled_toolsets: Vec<String>) -> anyhow::Result<
                 .clone()
                 .or_else(|| std::env::var("OPENAI_BASE_URL").ok())
                 .unwrap_or_else(|| "https://api.openai.com/v1".into());
-            let provider =
-                hermes_providers::OpenAiProvider::new(api_key, model).with_base_url(base_url);
-            let registry = build_registry(&disabled_toolsets);
-            let loop_ = AgentLoop::new(provider, Arc::new(registry), config);
-            run_repl(loop_, working_dir).await
+            let agent = AIAgent::openai_compatible(api_key, model, base_url, options);
+            run_repl(agent).await
         }
         other => bail!("unknown provider: {other}. Use 'openai' or 'echo'."),
     }
 }
 
-/// Generic REPL loop — works with any `AgentLoop<P, R>`.
-async fn run_repl<P: Provider, R: ToolRegistry>(
-    loop_: AgentLoop<P, R>,
-    working_dir: PathBuf,
-) -> anyhow::Result<()> {
+async fn run_repl(agent: AIAgent) -> anyhow::Result<()> {
     eprintln!(
         "hermes v{} — type a message, Ctrl-D to quit, Ctrl-C to cancel a turn or (when idle) quit",
         env!("CARGO_PKG_VERSION")
@@ -163,16 +152,11 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
             tool_calls: None,
         });
 
-        let ctx = ToolContext {
-            session_id: "cli".into(),
-            working_dir: working_dir.clone(),
-            permissions: ToolPermissions { subprocess: true, ..Default::default() },
-        };
         let cancel = CancellationToken::new();
         ctrl_c.enter_turn(cancel.clone());
 
-        let result = loop_
-            .run(history.clone(), ctx, cancel.clone(), |event| match event {
+        let result = agent
+            .run_messages(history.clone(), cancel.clone(), |event| match event {
                 LoopEvent::Thinking => {
                     eprint!("… ");
                     let _ = stdout.flush();
@@ -274,30 +258,6 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
     signal_handle.abort();
 
     Ok(())
-}
-
-fn build_registry(disabled_toolsets: &[String]) -> InMemoryRegistry {
-    let mut registry = InMemoryRegistry::new();
-    if !disabled_toolsets.contains(&"core".to_string())
-        && !disabled_toolsets.contains(&"terminal".to_string())
-    {
-        registry = registry.register(Arc::new(BashTool::new()));
-    }
-    registry
-}
-
-fn loop_config(args: &Args) -> LoopConfig {
-    LoopConfig {
-        max_iterations: args.max_iterations,
-        system_prompt: Some(
-            "You are a careful assistant with access to a `bash` tool. \
-             Use it to inspect the system or run shell commands when \
-             needed. When you have enough information to answer, give \
-             a concise final response — do not call tools again."
-                .into(),
-        ),
-        ..Default::default()
-    }
 }
 
 fn truncate_str(s: &str, max_chars: usize) -> String {

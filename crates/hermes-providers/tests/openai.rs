@@ -36,8 +36,7 @@ async fn openai_provider_maps_401_to_auth_error() {
         })
         .await;
 
-    let provider = OpenAiProvider::new("bad-key", "gpt-4o-mini")
-        .with_base_url(server.url("/v1"));
+    let provider = OpenAiProvider::new("bad-key", "gpt-4o-mini").with_base_url(server.url("/v1"));
     let cancel = CancellationToken::new();
     let err = match provider.stream(&[user_message("hi")], &[], cancel).await {
         Err(e) => e,
@@ -60,8 +59,7 @@ async fn openai_provider_maps_429_to_rate_limited() {
         })
         .await;
 
-    let provider = OpenAiProvider::new("k", "gpt-4o-mini")
-        .with_base_url(server.url("/v1"));
+    let provider = OpenAiProvider::new("k", "gpt-4o-mini").with_base_url(server.url("/v1"));
     let cancel = CancellationToken::new();
     let err = match provider.stream(&[user_message("hi")], &[], cancel).await {
         Err(e) => e,

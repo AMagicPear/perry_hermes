@@ -2,10 +2,10 @@
 //! to serve canned SSE bytes (httpmock doesn't expose captured bodies
 //! per CLAUDE.md).
 
-use std::time::Duration;
 use futures::StreamExt;
 use hermes_core::provider::{FinishReason, Provider};
 use hermes_providers::OpenAiProvider;
+use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -36,8 +36,8 @@ async fn stream_parses_sse_chunks() {
         tokio::time::sleep(Duration::from_millis(200)).await;
     });
 
-    let provider = OpenAiProvider::new("test-key", "gpt-test")
-        .with_base_url(format!("http://{addr}"));
+    let provider =
+        OpenAiProvider::new("test-key", "gpt-test").with_base_url(format!("http://{addr}"));
     let cancel = CancellationToken::new();
     let messages = vec![];
     let tools = vec![];

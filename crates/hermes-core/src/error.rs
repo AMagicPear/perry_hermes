@@ -8,8 +8,6 @@ use thiserror::Error;
 pub enum ProviderError {
     #[error("rate limited (retry after {retry_after_secs}s)")]
     RateLimited { retry_after_secs: u64 },
-    #[error("context length exceeded: {0} tokens")]
-    ContextLengthExceeded(u64),
     #[error("authentication failed: {0}")]
     Auth(String),
     #[error("transport error: {0}")]
@@ -54,6 +52,4 @@ pub enum LoopError {
     ContentFilter,
     #[error("provider error: {0}")]
     Provider(#[from] ProviderError),
-    #[error("context compression failed: {0}")]
-    Compression(String),
 }

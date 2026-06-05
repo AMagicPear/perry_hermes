@@ -1,4 +1,3 @@
-
 //! Core types and traits for the Hermes agent loop.
 //!
 //! This crate has no IO, no async (beyond trait method signatures), and no
@@ -16,6 +15,6 @@ pub mod usage;
 pub use error::{LoopError, ProviderError, ToolError};
 pub use message::{Content, ContentPart, Message, Role, ToolCall};
 pub use provider::{Completion, CompletionDelta, CompletionStream, FinishReason, Provider};
-pub use registry::{InMemoryRegistry, ToolRegistry, ToolSchema};
-pub use tool::{Attachment, AttachmentKind, Tool, ToolContext, ToolOutput, ToolPermissions};
+pub use registry::{InMemoryRegistry, ToolSchema};
+pub use tool::{Tool, ToolContext, ToolOutput, ToolPermissions};
 pub use usage::Usage;

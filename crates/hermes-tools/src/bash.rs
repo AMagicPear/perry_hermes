@@ -13,8 +13,8 @@ use hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
-use tokio_util::sync::CancellationToken;
 use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 
 /// Truncate output keeping a head+tail strategy (aligned with Python Hermes).
 /// Preserves the first 40% and last 60% of the character budget, since error
@@ -167,7 +167,6 @@ impl Tool for BashTool {
                 };
                 Ok(ToolOutput {
                     content: format!("{truncated}{exit_note}"),
-                    attachments: vec![],
                 })
             }
         }

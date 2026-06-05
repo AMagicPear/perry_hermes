@@ -40,7 +40,7 @@ async fn echo_provider_runs_one_iteration_and_stops() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: hermes_core::tool::ToolPermissions { subprocess: true, ..Default::default() },
+        permissions: hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
     let result = loop_

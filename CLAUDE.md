@@ -36,17 +36,18 @@ hermes-cli (interactive REPL — Phase 4)
 
 `hermes-providers` and `hermes-tools` are independent — adding a tool never touches providers, and vice versa.
 
-**Three core traits** (all in `hermes-core`):
+**Core boundaries**:
 
-- `Provider` — async `complete(messages, tools, cancel) -> Completion`. `ProviderError` via `?` propagates cleanly into `LoopError`.
+- `Provider` — async `stream(messages, tools, cancel) -> CompletionStream`. `ProviderError` via `?` propagates cleanly into `LoopError`.
 - `Tool` — async `execute(args, ctx, cancel) -> ToolOutput`. `ToolError` is **non-fatal**: the loop wraps it in `role: tool` content so the LLM sees the error and can pivot.
-- `ToolRegistry` — maps tool names to `Arc<dyn Tool>`. `InMemoryRegistry` is HashMap-backed with builder-style `.register()`. Supports `toolsets()` / `tools_in_toolset()` for filtering.
+- `InMemoryRegistry` — maps tool names to `Arc<dyn Tool>`. Runtime builds it after applying toolset policy.
+- `LoopEvent` — typed presentation events for CLI/gateway. The agent reports what happened; adapters decide how to render it.
 
-**The agent loop** (`hermes-loop/src/agent.rs`): `AgentLoop<P, R>` is generic over Provider and ToolRegistry. The `run()` method is a state machine loop — on `FinishReason::ToolUse` it dispatches tools sequentially, appends `role: tool` messages, and calls the provider again. `on_event` callback is the only side-channel (CLI uses it for spinner/activity feed; tests collect event strings). **`run()` takes a `ToolContext`** so the caller (CLI / runtime) controls `session_id`, `working_dir`, and `permissions` — the loop no longer hardcodes `"default"` and `std::env::current_dir()`.
+**The agent loop** (`hermes-loop/src/agent.rs`): `AgentLoop` holds `Arc<dyn Provider>` plus an `InMemoryRegistry`. The `run()` method is a state machine loop — on `FinishReason::ToolUse` it dispatches tools sequentially, appends `role: tool` messages, and calls the provider again. `on_event` callback is the only side-channel (CLI uses it for spinner/activity feed; tests collect event strings). **`run()` takes a `ToolContext`** so runtime/gateway controls `session_id`, `working_dir`, and permissions.
 
 **OpenAI adapter** (`hermes-providers/src/openai.rs`): `OpenAiProvider::with_base_url()` lets it talk to any OpenAI-compatible endpoint (DeepSeek, MiniMax, Ollama, vLLM). The `tool_calls` field round-trips: assistant's `tool_calls` are serialized back into the next request body so the LLM remembers which tools it called. OpenAI sends `arguments` as a JSON **string** (not object) — must `serde_json::from_str` on parse and `to_string` on serialize. `tool_choice: "auto"` is **omitted** when the tool list is empty (some providers reject it). `finish_reason` is parsed via `FinishReason::from_provider_str` (renamed from `from_str` to avoid colliding with the std `FromStr` trait).
 
-**CLI** (`crates/hermes-cli/src/main.rs`): clap-derived args, tokio runtime, `dispatch()` branches on `--provider openai|echo` and instantiates `AgentLoop` with the concrete provider type (avoids `Arc<dyn Provider>` which doesn't satisfy `P: Provider`). The REPL is a generic `run_repl<P, R>` over any `AgentLoop<P, R>`. Events render to stderr as `… ` / `📦 tool(args)` / `← ⚡ result` lines with truncated previews. Multi-turn: `run_result.messages` becomes the next turn's `history`. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the loop. Slash commands: `/quit`, `/exit`. `--disabled-toolsets core|terminal` filters the registry at construction time.
+**Runtime + CLI** (`crates/hermes-runtime/src/lib.rs`, `crates/hermes-cli/src/main.rs`): runtime is the shared composition point for CLI and future gateway. `AIAgent` builds the provider, registry, loop, `ToolContext`, and system prompt. CLI only parses args, maintains REPL history, and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's `history`. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the loop. Slash commands: `/quit`, `/exit`. `--disabled-toolsets core|terminal` is passed to runtime.
 
 ## TDD Workflow
 
@@ -60,7 +61,7 @@ For loop tests, `ScriptedProvider` (in `crates/hermes-loop/tests/`) returns a fi
 
 ## Design Doc
 
-`plans/rust-port-design.md` is the master reference — types, traits, loop code, crate layout, 12-phase roadmap, Rust-specific pitfalls. `plans/hermes-comparison.md` tracks divergence from the Python source. Both are authoritative for architectural decisions.
+Current code is authoritative. `plans/rust-port-design.md` is a historical design draft — useful for intent and roadmap, but some API sketches are stale after the runtime/streaming simplification. `plans/hermes-comparison.md` tracks divergence from the Python source and has a current-status note at the top.
 
 ## Known Issues (from comparison report)
 
@@ -70,17 +71,18 @@ For loop tests, `ScriptedProvider` (in `crates/hermes-loop/tests/`) returns a fi
 - ✅ CLI not wired to runtime — `hermes-cli` binary now uses `AIAgent`'s pieces directly; REPL is end-to-end runnable.
 - ✅ `tool_choice: "auto"` sent on empty tool list — OpenAI provider now sets `tool_choice: None` when `tools.is_empty()`.
 - ✅ No streaming (Phase 5) — `Provider::stream()` is the only required method; `OpenAiProvider` parses SSE and yields `CompletionDelta`; `AgentLoop::run` drives the stream via `tokio::select!` and emits `ContentDelta` / `ReasoningDelta` / `ToolCallPartial` events. CLI prints tokens as they arrive. Cancel mid-stream preserves partial content via `LoopError::CancelledWith(Message)`.
+- ✅ Runtime facade too thin — CLI now goes through `hermes-runtime::AIAgent`; runtime is the shared composition point for future gateway.
+- ✅ Over-abstracted registry/loop — removed `ToolRegistry` trait and `AgentLoop<P, R>` generics; current loop uses `Arc<dyn Provider>` + `InMemoryRegistry`.
 
 **Still open (before phase 7):**
 
-- `ToolContext.permissions` not enforced — the field exists, no tool consults it.
-- Unknown `finish_reason` defaults to `Stop` — `FinishReason::from_provider_str` silently maps anything unrecognized to `Stop` instead of returning `Error`.
-- `Content::Parts` silently dropped — multimodal content round-trips as `<multimodal content>` in the CLI.
+- Permission model is still coarse — `BashTool` checks `subprocess`, but runtime currently always enables it and no finer gateway policy exists yet.
+- Unknown `finish_reason` maps to `FinishReason::Error`, but provider diagnostics are still coarse.
+- `Content::Parts` only sends the first text part to OpenAI-compatible providers; real multimodal mapping is still missing.
 - `BashTool` does not kill concurrent children — under heavy parallel load the `child.kill().await` path is untested.
 
 **P1 (next up):**
 
 - ~~No streaming yet (Phase 5)~~ — resolved.
 - No `IterationBudget` (refund / grace call / subagent budget) — `LoopConfig.max_iterations` is a flat `u32`. (Phase 7)
-- `parallel_tool_calls` field is plumbed but always false.
 - `Toolset` filtering works at registry construction time (via `--disabled-toolsets`) but is not reactive to per-turn changes.

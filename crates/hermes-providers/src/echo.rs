@@ -11,14 +11,11 @@ use hermes_core::{
 };
 use tokio_util::sync::CancellationToken;
 
-pub struct EchoProvider {
-    name: String,
-    model: String,
-}
+pub struct EchoProvider;
 
 impl EchoProvider {
     pub fn new() -> Self {
-        Self { name: "echo".into(), model: "echo-v0".into() }
+        Self
     }
 }
 
@@ -30,9 +27,6 @@ impl Default for EchoProvider {
 
 #[async_trait]
 impl Provider for EchoProvider {
-    fn name(&self) -> &str { &self.name }
-    fn model(&self) -> &str { &self.model }
-
     async fn stream(
         &self,
         messages: &[Message],
@@ -42,7 +36,9 @@ impl Provider for EchoProvider {
         if cancel.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        let last_user = messages.iter().rev()
+        let last_user = messages
+            .iter()
+            .rev()
             .find(|m| m.role == Role::User)
             .cloned()
             .unwrap_or(Message {

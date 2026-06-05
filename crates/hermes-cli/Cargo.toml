@@ -12,9 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 hermes-core.workspace = true
-hermes-providers.workspace = true
-hermes-tools.workspace = true
-hermes-loop.workspace = true
+hermes-runtime.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tokio-util.workspace = true
 anyhow.workspace = true

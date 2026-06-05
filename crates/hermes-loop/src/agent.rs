@@ -17,7 +17,7 @@
 //! Tools errors are NOT fatal — they become `role: tool` content
 //! "Error: …" messages so the LLM can see what went wrong and choose
 //! to retry or pivot. This is the key design decision that makes the
-//! agent robust to flaky tools (network blips, transient FS errors, …).
+//! agent robust to flaky tools.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -28,15 +28,14 @@ use tokio_util::sync::CancellationToken;
 use hermes_core::error::{LoopError, ProviderError};
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{FinishReason, Provider, ToolCallDelta};
-use hermes_core::registry::ToolRegistry;
+use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::{ToolContext, ToolOutput};
 
-/// The agent loop. Generic over `P: Provider` and `R: ToolRegistry` so
-/// tests can swap in mocks. The loop holds a reference to the registry
-/// (not ownership) so multiple loops can share it.
-pub struct AgentLoop<P: Provider, R: ToolRegistry> {
-    provider: P,
-    registry: Arc<R>,
+/// The agent loop: stream model output, dispatch requested tools, and keep the
+/// conversation trajectory.
+pub struct AgentLoop {
+    provider: Arc<dyn Provider>,
+    registry: Arc<InMemoryRegistry>,
     config: LoopConfig,
 }
 
@@ -109,8 +108,20 @@ pub enum LoopEvent {
     Cancelled,
 }
 
-impl<P: Provider, R: ToolRegistry> AgentLoop<P, R> {
-    pub fn new(provider: P, registry: Arc<R>, config: LoopConfig) -> Self {
+impl AgentLoop {
+    pub fn new(
+        provider: impl Provider + 'static,
+        registry: Arc<InMemoryRegistry>,
+        config: LoopConfig,
+    ) -> Self {
+        Self::from_provider(Arc::new(provider), registry, config)
+    }
+
+    pub fn from_provider(
+        provider: Arc<dyn Provider>,
+        registry: Arc<InMemoryRegistry>,
+        config: LoopConfig,
+    ) -> Self {
         Self {
             provider,
             registry,

@@ -13,9 +13,6 @@ use crate::usage::Usage;
 /// (OpenAI, Anthropic, an echo mock, …) implements this.
 #[async_trait]
 pub trait Provider: Send + Sync {
-    fn name(&self) -> &str;
-    fn model(&self) -> &str;
-
     /// Stream deltas as the LLM generates them. The consumer drives the
     /// stream to completion (or cancellation), emitting one event per
     /// delta, then assembles a final `Completion` from accumulated state.

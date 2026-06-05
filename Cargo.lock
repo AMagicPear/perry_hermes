@@ -880,9 +880,7 @@ dependencies = [
  "anyhow",
  "clap",
  "hermes-core",
- "hermes-loop",
- "hermes-providers",
- "hermes-tools",
+ "hermes-runtime",
  "tokio",
  "tokio-util",
 ]

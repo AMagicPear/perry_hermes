@@ -131,7 +131,10 @@ mod tests {
 
         let cancel_2 = CancellationToken::new();
         handler.enter_turn(cancel_2.clone());
-        assert!(!cancel_2.is_cancelled(), "fresh turn must start with a fresh token");
+        assert!(
+            !cancel_2.is_cancelled(),
+            "fresh turn must start with a fresh token"
+        );
         assert_eq!(handler.handle(), CtrlCAction::Cancel);
         assert!(cancel_2.is_cancelled());
     }

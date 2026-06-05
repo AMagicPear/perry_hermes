@@ -122,8 +122,8 @@ fn build_request_body<'a>(
                 calls
                     .iter()
                     .map(|c| {
-                        let arguments = serde_json::to_string(&c.arguments)
-                            .unwrap_or_else(|_| "null".into());
+                        let arguments =
+                            serde_json::to_string(&c.arguments).unwrap_or_else(|_| "null".into());
                         OaiToolCallRef {
                             id: &c.id,
                             r#type: "function",
@@ -169,19 +169,14 @@ fn build_request_body<'a>(
         tools: oai_tools,
         tool_choice: if has_tools { Some("auto") } else { None },
         stream,
-        stream_options: Some(StreamOptions { include_usage: true }),
+        stream_options: Some(StreamOptions {
+            include_usage: true,
+        }),
     })
 }
 
 #[async_trait]
 impl Provider for OpenAiProvider {
-    fn name(&self) -> &str {
-        "openai"
-    }
-    fn model(&self) -> &str {
-        &self.model
-    }
-
     async fn stream(
         &self,
         messages: &[Message],
@@ -208,7 +203,9 @@ impl Provider for OpenAiProvider {
             return Err(ProviderError::Auth(resp.text().await.unwrap_or_default()));
         }
         if resp.status() == 429 {
-            return Err(ProviderError::RateLimited { retry_after_secs: 1 });
+            return Err(ProviderError::RateLimited {
+                retry_after_secs: 1,
+            });
         }
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -316,12 +313,15 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
     };
 
     let tool_call_delta = choice.delta.tool_calls.and_then(|calls| {
-        calls.into_iter().next().map(|c| hermes_core::provider::ToolCallDelta {
-            index: c.index,
-            id: c.id,
-            name: c.function.name,
-            arguments_delta: c.function.arguments,
-        })
+        calls
+            .into_iter()
+            .next()
+            .map(|c| hermes_core::provider::ToolCallDelta {
+                index: c.index,
+                id: c.id,
+                name: c.function.name,
+                arguments_delta: c.function.arguments,
+            })
     });
 
     Ok(CompletionDelta {
@@ -329,7 +329,10 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
         reasoning_delta: choice.delta.reasoning_content,
         tool_call_delta,
         usage: chunk.usage,
-        finish_reason: choice.finish_reason.as_deref().map(FinishReason::from_provider_str),
+        finish_reason: choice
+            .finish_reason
+            .as_deref()
+            .map(FinishReason::from_provider_str),
     })
 }
 
@@ -347,7 +350,8 @@ mod tests {
 
     #[test]
     fn parses_single_text_chunk() {
-        let sse = b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n";
+        let sse =
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n";
         let deltas = parse_sse_bytes(sse).unwrap();
         assert_eq!(deltas.len(), 1);
         assert_eq!(deltas[0].content_delta.as_deref(), Some("Hello"));
@@ -417,7 +421,9 @@ data: [DONE]\n\n";
         let deltas = parse_sse_bytes(sse).unwrap();
         assert_eq!(deltas.len(), 2);
         assert_eq!(deltas[0].content_delta.as_deref(), Some("hi"));
-        let usage = deltas[1].usage.expect("usage-only chunk must surface usage");
+        let usage = deltas[1]
+            .usage
+            .expect("usage-only chunk must surface usage");
         assert_eq!(usage.input_tokens, 12);
         assert_eq!(usage.output_tokens, 4);
         // The usage-only chunk has no choice, so all choice-derived fields are None.

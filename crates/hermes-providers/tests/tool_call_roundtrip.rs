@@ -26,10 +26,7 @@ use hermes_providers::OpenAiProvider;
 /// Minimal HTTP/1.1 server that records POST bodies and returns the
 /// same canned response every time. Parses `Content-Length` to know
 /// when the request body is done.
-async fn run_capturing_server(
-    listener: TcpListener,
-    bodies: Arc<Mutex<Vec<String>>>,
-) {
+async fn run_capturing_server(listener: TcpListener, bodies: Arc<Mutex<Vec<String>>>) {
     let canned = serde_json::to_string(&json!({
         "id": "x", "model": "m",
         "choices": [{

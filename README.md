@@ -2,7 +2,7 @@
 
 > Vibe code 一个 Rust 版的 Nous Research 的 [hermes-agent](https://github.com/NousResearch/hermes-agent) —— 一个自进化的 AI Agent。
 
-当前进度：**Phase 0–4 已完成**（核心循环 + OpenAI 适配器 + BashTool + 运行时门面 + 交互式 CLI）。下一步进入 Phase 5 流式输出。
+当前进度：**Phase 0–6 已完成**（核心循环 + OpenAI 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断）。下一步进入 Phase 7：上下文压缩 / 预算模型。
 
 ## 特性
 
@@ -11,7 +11,7 @@
 - **OpenAI 兼容** — 通过 `with_base_url()` 支持 OpenAI、DeepSeek、MiniMax、Ollama、vLLM 等任意兼容端点
 - **协作式取消** — `CancellationToken` 贯穿所有异步调用，支持 Ctrl-C 优雅中断(第一次中断当前 turn，第二次退出 REPL)
 - **交互式 REPL CLI** — 多轮对话、工具调用实时渲染(emoji + 截断预览)、`/quit`/`/exit` 斜杠命令、`--disabled-toolsets` 细粒度控制
-- **Toolset 过滤** — 通过 CLI flag 或 ToolRegistry 按 toolset 名启用/禁用工具(目前内置 `core` / `terminal`)
+- **Toolset 过滤** — 通过 runtime 配置按 toolset 名启用/禁用工具(目前内置 `core` / `terminal`)
 - **健壮的 BashTool** — stdout/stderr 并发 drain 避免管道死锁；输出采用 head+tail 40%/60% 截断策略，与 Python Hermes 对齐
 - **严格的分层架构** — 依赖方向始终向下，无循环依赖
 
@@ -30,18 +30,19 @@ hermes-cli (交互式 REPL — Phase 4)
 
 | Crate | 职责 | 关键类型/特征 |
 |---|---|---|
-| `hermes-core` | 核心类型、特征定义、错误类型，无 IO | `Provider`, `Tool`, `ToolRegistry`, `Message`, `Completion`, `FinishReason` |
+| `hermes-core` | 核心类型、特征定义、错误类型，无 IO | `Provider`, `Tool`, `InMemoryRegistry`, `Message`, `Completion`, `FinishReason` |
 | `hermes-providers` | LLM 提供者实现 | `OpenAiProvider` (兼容 DeepSeek/MiniMax/Ollama/vLLM), `EchoProvider` |
 | `hermes-tools` | 内置工具实现 | `BashTool` (bash 命令执行，30s 超时，50KB 输出截断，并发 drain stdout/stderr) |
-| `hermes-loop` | Agent 循环状态机 | `AgentLoop<P, R>`, `LoopConfig`, `RunResult`, `LoopEvent` |
-| `hermes-runtime` | 用户面向的 API 门面 | `AIAgent::openai_compatible()`, `run_turn()` |
+| `hermes-loop` | Agent 循环状态机 | `AgentLoop`, `LoopConfig`, `RunResult`, `LoopEvent` |
+| `hermes-runtime` | CLI/gateway 共用运行入口 | `AIAgent`, `AgentOptions`, `run_messages()`, `run_turn()` |
 | `hermes-cli` | 交互式 REPL 二进制 | `hermes` 命令，clap 参数解析，多轮历史，事件渲染 |
 
-### 三个核心特征
+### 核心边界
 
-- **`Provider`** — 异步 `complete(messages, tools, cancel) -> Completion`，LLM 调用的统一抽象
+- **`Provider`** — 异步 `stream(messages, tools, cancel) -> CompletionStream`，LLM 调用的统一抽象
 - **`Tool`** — 异步 `execute(args, ctx, cancel) -> ToolOutput`，工具调用的统一抽象
-- **`ToolRegistry`** — 工具名到 `Arc<dyn Tool>` 的映射，支持按 toolset 过滤
+- **`InMemoryRegistry`** — 工具名到 `Arc<dyn Tool>` 的简单映射，运行时负责按 toolset 过滤
+- **`LoopEvent`** — agent 到 CLI/gateway 的展示事件；平台适配器决定怎么渲染
 
 ## 快速开始
 
@@ -113,7 +114,7 @@ cargo run -p hermes-runtime --example live_tool_use -- "what time is it?"
 
 ```bash
 cargo build                              # 构建所有 crate
-cargo test                               # 运行所有测试(当前 19 个全过)
+cargo test                               # 运行所有测试
 cargo test -p hermes-core                # 测试单个 crate
 cargo test -p hermes-loop --test tool_dispatch  # 运行单个集成测试
 cargo clippy --all-targets --all-features -- -D warnings  # Lint
@@ -132,10 +133,13 @@ echo "hello" | cargo run -p hermes-cli --quiet -- --provider echo
 crates/hermes-loop/tests/
   ├── echo_loop.rs          # Echo 模拟循环测试
   ├── tool_dispatch.rs      # 工具调度集成测试
-  └── arg_validation.rs     # 工具参数校验测试
+  ├── arg_validation.rs     # 工具参数校验测试
+  ├── usage_metrics.rs      # streaming usage 指标测试
+  └── support/              # loop 集成测试共享 provider
 
 crates/hermes-providers/tests/
   ├── openai.rs             # OpenAI 适配器 HTTP 测试（httpmock）
+  ├── openai_stream.rs      # SSE streaming 测试
   └── tool_call_roundtrip.rs  # tool_calls 序列化往返测试
 
 crates/hermes-tools/tests/
@@ -148,8 +152,8 @@ crates/hermes-tools/tests/
 
 | 文档 | 内容 |
 |---|---|
-| [plans/rust-port-design.md](plans/rust-port-design.md) | 主设计文档：类型定义、特征设计、循环实现、12 阶段路线图 |
-| [plans/hermes-comparison.md](plans/hermes-comparison.md) | Rust 移植与 Python 原版的差异对比 |
+| [plans/rust-port-design.md](plans/rust-port-design.md) | 历史主设计草稿：早期类型定义、特征设计、12 阶段路线图；部分 API 已被当前实现简化 |
+| [plans/hermes-comparison.md](plans/hermes-comparison.md) | Rust 移植与 Python 原版的差异对比；顶部有当前状态修订 |
 | [CLAUDE.md](CLAUDE.md) | Claude Code 的开发指引 |
 
 ## 路线图
@@ -161,8 +165,8 @@ crates/hermes-tools/tests/
 | Phase 2 | OpenAI Provider：真实 gpt-4o-mini 调用 | ✅ |
 | Phase 3 | BashTool：真实 shell 命令执行 | ✅ |
 | Phase 4 | CLI：交互式 REPL，clap 参数，多轮历史，事件渲染 | ✅ |
-| Phase 5 | 流式输出：逐 token 输出 | 🔜 |
-| Phase 6 | 中断：Ctrl-C 停止流式输出(基础取消已在 Phase 4 接入) | |
+| Phase 5 | 流式输出：逐 token 输出 | ✅ |
+| Phase 6 | 中断：Ctrl-C 停止流式输出并保留 partial assistant message | ✅ |
 | Phase 7 | 上下文压缩：消息过长时自动摘要 | |
 | Phase 8 | Anthropic Provider：多 Provider 支持 | |
 | Phase 9 | Skills：加载 .md 文件作为系统提示词 | |
@@ -173,8 +177,8 @@ crates/hermes-tools/tests/
 ## 已知问题
 
 - `ToolContext.permissions` 已建模但未强制执行
-- 未知 `finish_reason` 默认为 Stop（`FinishReason::from_provider_str` 的兜底）
-- `Content::Parts` 被静默丢弃
+- 未知 `finish_reason` 会映射为 `FinishReason::Error`，但错误信息仍较粗
+- `Content::Parts` 目前只取第一个文本 part 发送给 OpenAI-compatible provider，真正多模态还未实现
 - 复用同一 `BashTool` 时 `child.kill().await` 的并发安全未充分测试
 
 ## License

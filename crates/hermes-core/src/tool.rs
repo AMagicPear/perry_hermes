@@ -9,8 +9,8 @@ use tokio_util::sync::CancellationToken;
 use crate::error::ToolError;
 
 /// A callable unit of capability exposed to the LLM. Implementations live in
-/// `hermes-tools` (bash, file ops, …) and are registered into a
-/// [`ToolRegistry`](crate::registry::ToolRegistry) at startup.
+/// `hermes-tools` (bash, file ops, …) and are registered into an
+/// [`InMemoryRegistry`](crate::registry::InMemoryRegistry) at startup.
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &str;
@@ -49,32 +49,12 @@ pub struct ToolContext {
 /// should consult this rather than reading global config.
 #[derive(Debug, Clone, Default)]
 pub struct ToolPermissions {
-    pub network: bool,
-    pub filesystem_write: bool,
     pub subprocess: bool,
 }
 
 /// What a tool returns. The `content` string is fed back to the LLM as the
-/// `role: tool` message; `attachments` are future-facing (v0 ignores them).
+/// `role: tool` message.
 #[derive(Debug, Clone)]
 pub struct ToolOutput {
-    /// Text fed back to the LLM as the `role: tool` message.
     pub content: String,
-    /// Optional attachments (images, files) — not yet in v0.
-    pub attachments: Vec<Attachment>,
-}
-
-/// A binary or file payload attached to a tool output.
-#[derive(Debug, Clone)]
-pub struct Attachment {
-    pub kind: AttachmentKind,
-    pub data: Vec<u8>,
-    pub mime: String,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum AttachmentKind {
-    Image,
-    File,
-    Audio,
 }

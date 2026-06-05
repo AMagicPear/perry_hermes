@@ -78,14 +78,6 @@ fn completion_to_deltas(c: Completion) -> Vec<CompletionDelta> {
 
 #[async_trait]
 impl Provider for ScriptedProvider {
-    fn name(&self) -> &str {
-        "scripted"
-    }
-
-    fn model(&self) -> &str {
-        "scripted-v0"
-    }
-
     async fn stream(
         &self,
         _messages: &[Message],

@@ -1,6 +1,6 @@
 # Hermes 的 Rust 移植 — 设计文档
 
-> **状态:** 设计草稿 — 尚未实现。目标:这是一个个人项目,目的是通过将 `hermes-agent`(Python)的核心移植到 Rust 来学习 Rust。
+> **状态:** 历史设计草稿。当前代码已经实现 Phase 0–6，并在后续简化中调整了部分 API：`Provider::stream()` 是唯一必需 provider 方法；`ToolRegistry` trait 已删除，只保留 `InMemoryRegistry`; `AgentLoop<P, R>` 已收缩为持有 `Arc<dyn Provider>` + `InMemoryRegistry` 的 `AgentLoop`; `hermes-runtime::AIAgent` 是 CLI 和未来 gateway 的共享入口。本文保留早期设计思路和路线图，不应当逐字当作当前 API 文档。
 >
 > **范围:** 核心的 agent 循环 + 最简可用的工具/CLI。Hermes 的完整功能(17 个消息平台、Honcho 用户建模、curator、ACP 适配器、FTS5 session 搜索、Web 仪表盘等)在 v0 明确**不在范围内** — 想法是花几个周末做出一个有趣、可用的 agent。
 
@@ -764,8 +764,8 @@ hermes-runtime = { path = "crates/hermes-runtime" }
 | **2. OpenAI provider** | 真实 `gpt-4o-mini` 调用可用 | `crates/hermes-providers/src/openai.rs` | ~600 |
 | **3. 一个真实工具** | `BashTool` 能跑 shell 命令 | `crates/hermes-tools/src/bash.rs` | ~400 |
 | **4. CLI** ✅ | 输入消息,看到 agent 完成(交互式 REPL + clap + 多轮历史 + 事件渲染 + 工具集过滤) | `crates/hermes-cli/src/main.rs` | ~500 |
-| **5. 流式** | token 到达时立即打印 | 覆盖 `Provider::stream` | +300 |
-| **6. 中断** | Ctrl-C 在流式中途能停下 | 在各处接入 `CancellationToken` | +200 |
+| **5. 流式** ✅ | token 到达时立即打印 | `Provider::stream` + SSE parser + `LoopEvent::ContentDelta` | +300 |
+| **6. 中断** ✅ | Ctrl-C 在流式中途能停下并保留 partial assistant message | `CancellationToken` + `LoopError::CancelledWith` | +200 |
 | **7. 上下文压缩** | 消息过长时做摘要 | `ContextCompressor` trait | ~500 |
 | **8. Anthropic provider** | 体验多 provider 差异 | `crates/hermes-providers/src/anthropic.rs` | ~600 |
 | **9. Skills** | 加载 `.md` 文件作为 system-prompt 内容 | skill scanner | ~400 |

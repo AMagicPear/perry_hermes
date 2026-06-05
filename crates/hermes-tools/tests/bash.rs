@@ -9,14 +9,14 @@ use std::path::PathBuf;
 
 use hermes_core::tool::{Tool, ToolContext, ToolPermissions};
 use hermes_tools::BashTool;
-use tokio_util::sync::CancellationToken;
 use serde_json::json;
+use tokio_util::sync::CancellationToken;
 
 fn ctx() -> ToolContext {
     ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        permissions: ToolPermissions { subprocess: true, ..Default::default() },
+        permissions: ToolPermissions { subprocess: true },
     }
 }
 
@@ -26,11 +26,7 @@ async fn bash_tool_runs_a_simple_command_and_returns_stdout() {
 
     let cancel = CancellationToken::new();
     let out = tool
-        .execute(
-            json!({ "command": "echo hello-from-bash" }),
-            ctx(),
-            cancel,
-        )
+        .execute(json!({ "command": "echo hello-from-bash" }), ctx(), cancel)
         .await
         .expect("bash should run");
 
