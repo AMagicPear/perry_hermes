@@ -6,6 +6,7 @@ members = [
     "crates/hermes-tools",
     "crates/hermes-loop",
     "crates/hermes-runtime",
+    "crates/hermes-skills",
     "crates/hermes-cli",
     # "crates/hermes-gateway",  # phase 11+
     # "crates/hermes-tui",      # phase 10+
