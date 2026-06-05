@@ -3,6 +3,8 @@
 //! See `docs/superpowers/specs/2026-06-05-phase-9-skills-loading-design.md`
 //! for the full design.
 
+pub mod frontmatter;
+
 use std::path::PathBuf;
 
 /// A single skill, loaded from a `SKILL.md` file with valid frontmatter.
