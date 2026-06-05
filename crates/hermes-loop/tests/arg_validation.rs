@@ -161,7 +161,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: Default::default(),
+        permissions: hermes_core::tool::ToolPermissions { subprocess: true, ..Default::default() },
     };
 
     let result = loop_

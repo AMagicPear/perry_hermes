@@ -90,6 +90,11 @@ impl Tool for BashTool {
         ctx: ToolContext,
         cancel: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
+        if !ctx.permissions.subprocess {
+            return Err(ToolError::Permission(
+                "subprocess execution not permitted".into(),
+            ));
+        }
         let command = args
             .get("command")
             .and_then(|v| v.as_str())

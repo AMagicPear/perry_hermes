@@ -14,10 +14,10 @@ use futures::StreamExt;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::message::{Content, Message};
+use hermes_core::message::{Content, ContentPart, Message};
 use hermes_core::provider::{CompletionDelta, FinishReason, Provider};
 use hermes_core::registry::ToolSchema;
-use hermes_core::{CompletionStream, ProviderError, Usage};
+use hermes_core::{CompletionStream, ProviderError};
 
 pub struct OpenAiProvider {
     api_key: String,
@@ -139,7 +139,10 @@ fn build_request_body<'a>(
                 role: m.role.as_str(),
                 content: match &m.content {
                     Content::Text(s) => Some(s.as_str()),
-                    Content::Parts(_) => None,
+                    Content::Parts(parts) => parts.iter().find_map(|p| match p {
+                        ContentPart::Text { text } => Some(text.as_str()),
+                        _ => None,
+                    }),
                 },
                 tool_call_id: m.tool_call_id.as_deref(),
                 tool_calls,
@@ -224,7 +227,9 @@ impl Provider for OpenAiProvider {
 #[cfg(test)]
 pub(crate) fn parse_sse_for_test(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
     use futures::stream;
-    let stream = stream::once(async { Ok(Bytes::copy_from_slice(input)) });
+    // stream::iter on a Vec yields a Unpin stream — needed for Box::pin inside
+    // parse_sse_chunks.
+    let stream = stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::copy_from_slice(input))]);
     let s = parse_sse_chunks(stream);
     futures::executor::block_on(async move {
         let mut v = Vec::new();
@@ -237,44 +242,27 @@ pub(crate) fn parse_sse_for_test(input: &[u8]) -> Result<Vec<CompletionDelta>, P
 }
 
 fn parse_sse_chunks(
-    bytes: impl Stream<Item = reqwest::Result<Bytes>>,
+    bytes: impl Stream<Item = reqwest::Result<Bytes>> + Unpin,
 ) -> impl Stream<Item = Result<CompletionDelta, ProviderError>> {
     async_stream::stream! {
-        let mut buffer = Vec::<u8>::new();
-        // Pin the stream so we can poll it repeatedly
+        let mut buffer = String::new();
         let mut bytes = Box::pin(bytes);
-        loop {
-            // Drain all complete events from the buffer first
-            while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
-                let event: Vec<u8> = buffer.drain(..pos + 2).collect();
-                let event_str = String::from_utf8_lossy(&event);
-                let mut payload: Option<String> = None;
-                for line in event_str.lines() {
-                    if let Some(rest) = line.strip_prefix("data: ") {
-                        payload = Some(rest.trim().to_string());
-                    }
-                }
-                if let Some(p) = payload {
-                    if p == "[DONE]" {
-                        return;
-                    }
-                    match parse_sse_data_payload(&p) {
-                        Ok(d) => yield Ok(d),
-                        Err(e) => {
-                            yield Err(e);
-                            return;
-                        }
-                    }
-                }
+        while let Some(chunk) = bytes.next().await {
+            match chunk {
+                Ok(c) => buffer.push_str(&String::from_utf8_lossy(&c)),
+                Err(e) => { yield Err(ProviderError::Transport(e)); return; }
             }
-            // Need more bytes
-            match bytes.next().await {
-                Some(Ok(chunk)) => buffer.extend_from_slice(&chunk),
-                Some(Err(e)) => {
-                    yield Err(ProviderError::Transport(e));
-                    return;
+            while let Some(pos) = buffer.find("\n\n") {
+                let event: String = buffer.drain(..pos + 2).collect();
+                for line in event.lines() {
+                    let Some(rest) = line.strip_prefix("data: ") else { continue };
+                    let payload = rest.trim();
+                    if payload == "[DONE]" { return; }
+                    match parse_sse_data_payload(payload) {
+                        Ok(d) => yield Ok(d),
+                        Err(e) => { yield Err(e); return; }
+                    }
                 }
-                None => return,
             }
         }
     }
@@ -284,27 +272,8 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
     #[derive(serde::Deserialize)]
     struct SseChunk {
         choices: Vec<SseChoice>,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        usage: Option<SseUsage>,
-    }
-    /// Maps OpenAI's usage field names to our internal Usage struct.
-    #[derive(serde::Deserialize)]
-    struct SseUsage {
-        prompt_tokens: u64,
-        completion_tokens: u64,
-        #[allow(dead_code)]
-        total_tokens: u64,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cached_tokens: Option<u64>,
-    }
-    impl From<SseUsage> for Usage {
-        fn from(u: SseUsage) -> Self {
-            Usage {
-                input_tokens: u.prompt_tokens,
-                output_tokens: u.completion_tokens,
-                cached_input_tokens: u.cached_tokens.unwrap_or(0),
-            }
-        }
+        #[serde(default)]
+        usage: Option<hermes_core::Usage>,
     }
     #[derive(serde::Deserialize)]
     struct SseChoice {
@@ -334,16 +303,14 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
         .map_err(|e| ProviderError::InvalidResponse(format!("sse json: {e}")))?;
 
     // OpenAI sends a final chunk with empty `choices` and a populated
-    // `usage` when `stream_options.include_usage=true`. Handle this by
-    // returning a delta with only the usage field set. All other deltas
-    // (which DO have a choice) proceed through the normal path.
+    // `usage` when `stream_options.include_usage=true`. Handle by returning
+    // a delta carrying only the usage.
     let Some(choice) = chunk.choices.into_iter().next() else {
-        let usage = chunk.usage.map(Usage::from);
         return Ok(CompletionDelta {
             content_delta: None,
             reasoning_delta: None,
             tool_call_delta: None,
-            usage,
+            usage: chunk.usage,
             finish_reason: None,
         });
     };
@@ -361,7 +328,7 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
         content_delta: choice.delta.content,
         reasoning_delta: choice.delta.reasoning_content,
         tool_call_delta,
-        usage: chunk.usage.map(Usage::from),
+        usage: chunk.usage,
         finish_reason: choice.finish_reason.as_deref().map(FinishReason::from_provider_str),
     })
 }

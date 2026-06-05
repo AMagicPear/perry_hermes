@@ -187,7 +187,7 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: Default::default(),
+        permissions: hermes_core::tool::ToolPermissions { subprocess: true, ..Default::default() },
     };
 
     let result = loop_

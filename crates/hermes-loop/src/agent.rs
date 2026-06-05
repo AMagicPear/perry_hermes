@@ -47,10 +47,6 @@ pub struct LoopConfig {
     pub max_iterations: u32,
     /// Wall-clock cap.
     pub max_duration: Duration,
-    /// Run tool calls in a batch in parallel? (phase 3: ignored —
-    /// tool calls always run sequentially in the order the LLM
-    /// emitted them.)
-    pub parallel_tool_calls: bool,
     /// Optional system prompt prepended to messages if not already
     /// present.
     pub system_prompt: Option<String>,
@@ -61,7 +57,6 @@ impl Default for LoopConfig {
         Self {
             max_iterations: 90,
             max_duration: Duration::from_secs(60 * 10),
-            parallel_tool_calls: false,
             system_prompt: None,
         }
     }

@@ -75,7 +75,7 @@ impl AIAgent {
         let ctx = ToolContext {
             session_id: "default".into(),
             working_dir: std::env::current_dir().unwrap_or_default(),
-            permissions: Default::default(),
+            permissions: hermes_core::tool::ToolPermissions { subprocess: true, ..Default::default() },
         };
         self.loop_.run(messages, ctx, cancel, &mut on_event).await
     }

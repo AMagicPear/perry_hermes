@@ -15,7 +15,7 @@ use hermes_core::error::LoopError;
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::Provider;
 use hermes_core::registry::{InMemoryRegistry, ToolRegistry};
-use hermes_core::tool::ToolContext;
+use hermes_core::tool::{ToolContext, ToolPermissions};
 use hermes_loop::{AgentLoop, LoopConfig, LoopEvent};
 use hermes_tools::BashTool;
 use tokio_util::sync::CancellationToken;
@@ -166,7 +166,7 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
         let ctx = ToolContext {
             session_id: "cli".into(),
             working_dir: working_dir.clone(),
-            permissions: Default::default(),
+            permissions: ToolPermissions { subprocess: true, ..Default::default() },
         };
         let cancel = CancellationToken::new();
         ctrl_c.enter_turn(cancel.clone());

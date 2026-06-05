@@ -16,7 +16,7 @@ fn ctx() -> ToolContext {
     ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        permissions: ToolPermissions::default(),
+        permissions: ToolPermissions { subprocess: true, ..Default::default() },
     }
 }
 
