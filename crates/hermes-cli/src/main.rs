@@ -218,11 +218,12 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
 
         match result {
             Ok(run_result) => {
-                let text = match run_result.final_message.content {
-                    Content::Text(s) => s,
-                    Content::Parts(_) => "<multimodal content>".into(),
-                };
-                println!("{text}");
+                // Don't re-print the final message — it was already streamed
+                // token-by-token via the ContentDelta on_event arm. Just
+                // print the metrics. The AssistantMessage event also fires
+                // a newline (via its on_event arm) so the cursor is on a
+                // fresh line before the metrics block.
+                let _ = &run_result.final_message; // suppress unused warning
 
                 // Update history with full trajectory for multi-turn context.
                 history = run_result.messages;
