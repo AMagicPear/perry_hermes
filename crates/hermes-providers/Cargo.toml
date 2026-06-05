@@ -21,3 +21,5 @@ bytes.workspace = true
 [dev-dependencies]
 httpmock.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio-util.workspace = true
+futures.workspace = true
