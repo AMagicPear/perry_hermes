@@ -9,6 +9,61 @@ pub mod validate;
 
 use std::path::PathBuf;
 
+/// Render the system-prompt metadata index block for the given skills.
+///
+/// Returns `""` when `skills` is empty. The block groups categorized
+/// skills first (alphabetical by category) and un-categorized skills
+/// under a "general" heading. Within each group, skills sort by `name`.
+///
+/// The block intentionally references a `skill_view` tool that does not
+/// exist yet; the LLM may fall back to reading SKILL.md via bash when
+/// the `terminal` toolset is enabled. The actual `SkillActivationTool`
+/// is a Phase 12 deliverable.
+pub fn render_system_prompt_block(skills: &[Skill]) -> String {
+    if skills.is_empty() {
+        return String::new();
+    }
+
+    let mut categorized: std::collections::BTreeMap<String, Vec<&Skill>> =
+        std::collections::BTreeMap::new();
+    let mut uncategorized: Vec<&Skill> = Vec::new();
+
+    for s in skills {
+        match &s.category {
+            Some(c) => categorized
+                .entry(c.clone())
+                .or_default()
+                .push(s),
+            None => uncategorized.push(s),
+        }
+    }
+
+    let mut out = String::new();
+    out.push_str(
+        "The following skills are available. Each skill is a directory containing a SKILL.md file with detailed instructions.\n\
+         Use the `skill_view` tool (or read the file directly with bash) to load a skill's body when it is relevant to the user's request.\n\n\
+         Available skills:\n",
+    );
+
+    for (cat, mut members) in categorized {
+        members.sort_by(|a, b| a.name.cmp(&b.name));
+        out.push_str(&format!("\n**{cat}**:\n"));
+        for s in members {
+            out.push_str(&format!("- **{}**: {}\n", s.name, s.description));
+        }
+    }
+
+    if !uncategorized.is_empty() {
+        uncategorized.sort_by(|a, b| a.name.cmp(&b.name));
+        out.push_str("\n**general** (uncategorized):\n");
+        for s in uncategorized {
+            out.push_str(&format!("- **{}**: {}\n", s.name, s.description));
+        }
+    }
+
+    out
+}
+
 /// A single skill, loaded from a `SKILL.md` file with valid frontmatter.
 ///
 /// The `frontmatter` field preserves every key from the YAML header
@@ -412,5 +467,75 @@ mod tests {
             let _ = std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755));
             assert!(result.is_err(), "read_dir on chmod 000 should return Err");
         }
+    }
+
+    fn make_skill(name: &str, category: Option<&str>, description: &str) -> Skill {
+        Skill {
+            name: name.to_string(),
+            qualified_name: match category {
+                Some(c) => format!("{c}.{name}"),
+                None => name.to_string(),
+            },
+            category: category.map(|s| s.to_string()),
+            description: description.to_string(),
+            body: String::new(),
+            frontmatter: serde_yaml::Value::Null,
+            source_path: Default::default(),
+        }
+    }
+
+    #[test]
+    fn render_empty_block_for_empty_vec() {
+        assert_eq!(render_system_prompt_block(&[]), "");
+    }
+
+    #[test]
+    fn render_block_groups_categorized_first_alphabetically() {
+        let skills = vec![
+            make_skill("alpha", None, "a"),
+            make_skill("rust-style", Some("cat-a"), "r"),
+            make_skill("python-style", Some("cat-a"), "p"),
+            make_skill("beta", Some("cat-b"), "b"),
+        ];
+        let block = render_system_prompt_block(&skills);
+        // Categorized first, alphabetical category order.
+        let cat_a_idx = block.find("**cat-a**").expect("cat-a header present");
+        let cat_b_idx = block.find("**cat-b**").expect("cat-b header present");
+        let general_idx = block.find("**general**").expect("general header present");
+        assert!(cat_a_idx < cat_b_idx);
+        assert!(cat_b_idx < general_idx);
+    }
+
+    #[test]
+    fn render_block_sorts_within_category_alphabetically() {
+        let skills = vec![
+            make_skill("zeta", Some("cat"), "z"),
+            make_skill("alpha", Some("cat"), "a"),
+        ];
+        let block = render_system_prompt_block(&skills);
+        let alpha_idx = block.find("- **alpha**").expect("alpha bullet present");
+        let zeta_idx = block.find("- **zeta**").expect("zeta bullet present");
+        assert!(alpha_idx < zeta_idx);
+    }
+
+    #[test]
+    fn render_block_omits_general_section_when_all_categorized() {
+        let skills = vec![make_skill("foo", Some("cat"), "f")];
+        let block = render_system_prompt_block(&skills);
+        assert!(!block.contains("**general**"));
+    }
+
+    #[test]
+    fn render_block_uses_bold_name_and_colon_description() {
+        let skills = vec![make_skill("foo", None, "the foo skill")];
+        let block = render_system_prompt_block(&skills);
+        assert!(block.contains("- **foo**: the foo skill"));
+    }
+
+    #[test]
+    fn render_block_includes_forward_reference_to_skill_view_tool() {
+        let skills = vec![make_skill("foo", None, "x")];
+        let block = render_system_prompt_block(&skills);
+        assert!(block.contains("skill_view"), "should reference skill_view tool for Phase 12");
     }
 }
