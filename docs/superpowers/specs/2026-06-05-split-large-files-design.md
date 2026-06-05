@@ -1,383 +1,286 @@
-# Split Large Files — Extract Shared SSE Helper, Split Providers
+# Split Large Files — Extract `StreamAccumulator`, Add SSE Parser Boundary Tests
 
 **Date:** 2026-06-05
-**Status:** Designed. Pending user review of this spec before writing the implementation plan.
-**Scope:** `hermes-core` (one extraction), `hermes-providers` (one new shared module + two provider-internal splits).
+**Status:** Designed. Pending user review before writing the implementation plan.
+**Scope:** `hermes-core` (one extraction) + `hermes-providers` (boundary tests only).
 
 ## 1. Goals
 
-The codebase has accumulated 800-line and 540-line files whose **internal duplication** is the real problem, not the line count. After this refactor:
+The codebase has accumulated 800-line and 540-line files. After reviewing internal structure, two real refactors are worth doing now; the rest are not.
 
-- The two provider implementations share a single SSE frame-buffering helper instead of duplicating the same ~30 lines of byte-stream → SSE-event parsing twice.
-- Each provider's `mod.rs` reads as a clean public surface (struct + builders + `impl Provider`), with request serialization and SSE event parsing living in dedicated private modules.
-- `StreamAccumulator` lives in its own file, since it is a 130-line cohesive concept (not a part of the `Provider` trait surface).
-- No public API path changes — every type that callers import today still lives at the same path.
-- All existing tests keep passing; new tests cover the shared helper.
+After this refactor:
+
+- **`StreamAccumulator` lives in its own file** (`hermes-core/src/accumulator.rs`). It is a 130-line cohesive concept (stream-delta aggregation, partial-message construction for cancel) that is not part of the `Provider` trait surface — putting it in `provider.rs` made that file misleadingly long.
+- **Existing SSE parsers in OpenAI and Anthropic have boundary tests** for the cases that aren't covered today: bytes split across multiple chunks, transport errors, the `[DONE]`-then-extra-event edge case. This is a low-cost test-coverage upgrade on code that's already working, no behavior change.
+- Public API paths stay byte-identical for everything that's currently public.
+- All existing tests keep passing; new tests cover gaps in the SSE parsers.
 
 ## 2. Non-Goals
 
-Explicitly out of scope (each would be its own brainstorm round):
+Explicitly out of scope for this round. Each is a separate brainstorm.
 
-- **Splitting `hermes-cli/src/main.rs`.** REPL is single-responsibility (`Args` parse, `dispatch`, `run_repl`); the file is short and the parts are tightly coupled at the type level.
-- **Splitting `hermes-runtime/src/lib.rs`.** `AIAgent` and `AgentOptions` are small, cohesive, and read together.
-- **Splitting `hermes-loop/src/agent.rs`.** It is one state machine in one function; decomposition into private helpers (e.g. `run_one_iteration`, `dispatch_tool_call`) is value-positive but is a separate cleanup pass that needs its own design.
-- **Creating a new crate.** All splits stay inside their existing crate.
-- **Renaming anything public.** No `use` site outside the affected crates needs to change.
-- **Changing provider behavior.** This is a pure refactor — wire format, event dispatch, and emitted deltas are byte-identical.
+- **Shared `sse_frame_stream` helper across OpenAI and Anthropic.** The two providers' SSE parsers look similar on the surface (both buffer bytes, split on `\n\n`, extract `data:` lines) but differ in two material ways:
+  - **OpenAI** iterates all `data:` lines in an event and yields one delta per line, with a `[DONE]` short-circuit.
+  - **Anthropic** joins all `data:` lines per spec, has no `[DONE]`, and dispatches on the SSE `event` type field (not just `data`).
+  A shared helper that preserves both behaviors needs to pass `&[String]` (the data lines) to a per-provider closure, which moves most of the complexity back into the provider. Net win: ~20 lines of de-duplication at the cost of a more elaborate helper signature and stricter test coverage requirements. **Defer until a 3rd provider lands** (Gemini, DeepSeek, etc.) — at that point the helper pays for itself.
+- **Splitting `openai.rs` (541 lines) and `anthropic.rs` (796 lines) into `openai/{mod,request,sse}.rs` and `anthropic/{mod,request,sse}.rs`.** These files are large because each is one provider's complete implementation; the parts are tightly coupled (wire types flow into request body, request body is what produces the bytes that get parsed back). Splitting requires `pub(super)` plumbing, test-block relocation, and careful visibility — the readability win is real but it doesn't pay for itself yet. **Defer until a 3rd provider lands**, at which point the directory split also has a real comparison case.
+- **Splitting `hermes-cli/src/main.rs`.** REPL is single-responsibility; the file is short.
+- **Splitting `hermes-runtime/src/lib.rs`.** `AIAgent` and `AgentOptions` are small and read together.
+- **Splitting `hermes-loop/src/agent.rs`.** It is one state machine in one function; decomposition into private helpers (`run_one_iteration`, `dispatch_tool_call`) is value-positive but a separate cleanup pass.
+- **Creating a new crate.** Everything stays inside existing crates.
+- **Changing provider behavior.** Pure refactor for `StreamAccumulator`; pure test additions for SSE parsers.
 
 ## 3. Architecture
 
-### 3.1 Before (file sizes)
-
-```
-hermes-core/src/provider.rs             468 lines
-  └─ Provider trait, Completion, FinishReason, CompletionDelta, ToolCallDelta,
-     StreamAccumulator, accumulate_stream, tests
-
-hermes-providers/src/anthropic.rs       796 lines
-  └─ AnthropicProvider, request body (wire types + builders + convert_*),
-     impl Provider, SSE parsing (AnthropicStreamState + parse_sse_data_payload
-     + parse_content_block_start + parse_content_block_delta + usage_delta
-     + anthropic_finish_reason), tests
-
-hermes-providers/src/openai.rs          541 lines
-  └─ OpenAiProvider, request body (wire types + build_request_body),
-     impl Provider, SSE parsing (OpenAiStreamState + parse_sse_data_payload
-     + split_think_tag_content), tests
-```
-
-### 3.2 After (file layout)
+### 3.1 File changes (this round)
 
 ```
 hermes-core/src/
-  provider.rs        ← Provider trait, Completion, FinishReason, CompletionDelta, ToolCallDelta
-                       (small, just the trait + delta types)
-  accumulator.rs     ← StreamAccumulator, accumulate_stream, accumulator tests
-                       (130 lines of self-contained stream-aggregation logic)
+  lib.rs             ← +1 line: pub mod accumulator;
+  provider.rs        ← shrink to ~280 lines (Provider trait + Completion + FinishReason
+                       + CompletionDelta + ToolCallDelta + their tests).
+                       Re-exports StreamAccumulator + accumulate_stream
+                       from accumulator.rs (see §4.2) to preserve
+                       hermes_core::provider::StreamAccumulator import path
+                       used by hermes-loop/src/agent.rs:186.
+  accumulator.rs     ← NEW (~200 lines incl. tests). Contains:
+                       - StreamAccumulator struct + Default + new
+                       - add / finalize / is_empty / into_partial_message
+                       - pub async fn accumulate_stream
+                       - The existing accumulator test module
+                         (moved verbatim from provider.rs)
 
 hermes-providers/src/
-  lib.rs             ← pub mod sse; pub mod openai; pub mod anthropic; pub mod echo;
-  sse.rs             ← sse_frame_stream  ⭐ shared frame-buffering helper
-  openai/
-    mod.rs           ← OpenAiProvider struct, builders, impl Provider
-    request.rs       ← ChatRequest + Oai* wire types + build_request_body
-    sse.rs           ← OpenAiStreamState + parse_sse_data_payload + split_think_tag_content
-  anthropic/
-    mod.rs           ← AnthropicProvider struct, AnthropicRequestOptions, AnthropicThinking,
-                       builders, impl Provider
-    request.rs       ← MessagesRequest + OutputConfig + Wire* wire types +
-                       build_request_body_with_options + convert_tools +
-                       convert_messages_to_anthropic + flush_tool_results +
-                       content_to_wire_user + content_to_text + build_thinking_param +
-                       build_output_config
-    sse.rs           ← AnthropicStreamState + parse_sse_data_payload +
-                       parse_content_block_start + parse_content_block_delta +
-                       usage_delta + anthropic_finish_reason
-  echo.rs            ← (unchanged)
+  openai.rs          ← +tests only. Add 4 boundary tests to mod tests.
+  anthropic.rs       ← +tests only. Add 4 boundary tests to mod tests.
 ```
 
-### 3.3 Component diagram
+### 3.2 Why test additions, not module splits, for the providers
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│ hermes-core                                                    │
-│                                                                │
-│   provider.rs       Provider trait + Completion + FinishReason │
-│                       + CompletionDelta + ToolCallDelta        │
-│                                                                │
-│   accumulator.rs    StreamAccumulator + accumulate_stream      │
-│                       (used by Provider::complete default      │
-│                        and AgentLoop::run's drive loop)        │
-└────────────────────────────────────────────────────────────────┘
+The OpenAI and Anthropic provider files are 540 and 790 lines, but:
 
-┌────────────────────────────────────────────────────────────────┐
-│ hermes-providers                                               │
-│                                                                │
-│   sse.rs            sse_frame_stream (shared frame buffer)     │
-│                                                                │
-│   openai/           OpenAiProvider                             │
-│     mod.rs            struct + impl Provider                  │
-│     request.rs        build_request_body                      │
-│     sse.rs            OpenAiStreamState + parse_sse_data_     │
-│                         payload + split_think_tag_content    │
-│                       ──► calls sse::sse_frame_stream         │
-│                                                                │
-│   anthropic/        AnthropicProvider                         │
-│     mod.rs            struct + impl Provider                  │
-│     request.rs        build_request_body_with_options + conv  │
-│     sse.rs            AnthropicStreamState + parse_sse_data_  │
-│                         payload + event-specific parsers      │
-│                       ──► calls sse::sse_frame_stream         │
-│                                                                │
-│   echo.rs           (unchanged)                               │
-└────────────────────────────────────────────────────────────────┘
-```
+- Each is a single coherent provider implementation with one `Provider` impl, one request builder, one SSE parser, and one set of tests.
+- The boundaries (request vs SSE) are inside the file, marked by a section comment today (`// --- Request body ---`, `// --- SSE parser ---`).
+- Splitting them now would force us to define `pub(super)` boundaries and re-arrange tests — work that has no payoff until we have a 3rd provider to compare against.
 
-`hermes-loop`, `hermes-runtime`, `hermes-cli`, `hermes-tools` are untouched.
+The right move is to add the boundary tests now (cheap, fills real gaps), and revisit module splits the next time a provider is added.
 
-### 3.4 Data flow (unchanged — refactor only)
+## 4. Core changes
 
-The agent loop's interaction with a provider is byte-for-byte the same:
+### 4.1 `StreamAccumulator` extraction (mechanical)
 
-1. `AgentLoop::run` calls `provider.stream(messages, tools, cancel)`.
-2. Provider serializes a request, POSTs, returns a `CompletionStream`.
-3. Internally the provider now drives that stream through `sse::sse_frame_stream(bytes, done_sentinel, parse_payload)`, which buffers bytes, splits on `\n\n`, joins `data:` lines, optionally short-circuits on the done sentinel, and calls `parse_payload` for each event.
-4. The closure passed to `sse_frame_stream` is the provider's per-event parser (which holds the provider's stream-state struct).
-5. Deltas flow back to the loop, the loop accumulates via `StreamAccumulator`, breaks on `finish_reason`.
-
-## 4. Core types
-
-### 4.1 `sse_frame_stream` (new in `hermes-providers/src/sse.rs`)
+All the code below moves verbatim from `provider.rs` to `accumulator.rs`. The only change is the file location and the `use` paths.
 
 ```rust
-/// Parse an HTTP byte stream (typically `reqwest::Response::bytes_stream()`)
-/// as Server-Sent Events and yield `CompletionDelta`s as each event arrives.
-///
-/// The helper handles SSE framing only: byte buffer accumulation, splitting
-/// on `\n\n`, joining multi-line `data:` payloads (per the SSE spec), and
-/// skipping non-data lines (comments, event-type lines, etc.). It does NOT
-/// know anything about any specific provider's event schema — that is the
-/// `parse_payload` closure's job.
-///
-/// `done_sentinel`: if `Some(s)`, a payload that equals `s` after joining
-/// `data:` lines terminates the stream without yielding. Anthropic passes
-/// `None`; OpenAI passes `Some("[DONE]")`.
-///
-/// `parse_payload`: invoked once per complete SSE event with the joined
-/// `data:` payload. Return:
-///   - `Ok(Some(delta))` — yield this delta to the consumer
-///   - `Ok(None)` — silently skip this event (e.g. ping, content_block_stop)
-///   - `Err(provider_error)` — propagate and terminate the stream
-///
-/// The closure is `FnMut + Send + 'static` so it can own provider-specific
-/// stream state (e.g. `AnthropicStreamState`).
-pub fn sse_frame_stream<S, F>(
-    bytes: S,
-    done_sentinel: Option<&'static str>,
-    parse_payload: F,
-) -> impl Stream<Item = Result<CompletionDelta, ProviderError>> + Send
-where
-    S: Stream<Item = reqwest::Result<Bytes>> + Unpin + Send + 'static,
-    F: FnMut(&str) -> Result<Option<CompletionDelta>, ProviderError> + Send + 'static,
-{
-    async_stream::stream! {
-        let mut buffer = String::new();
-        let mut bytes = Box::pin(bytes);
-        while let Some(chunk) = bytes.next().await {
-            match chunk {
-                Ok(c) => buffer.push_str(&String::from_utf8_lossy(&c)),
-                Err(e) => { yield Err(ProviderError::Transport(e)); return; }
-            }
-            while let Some(pos) = buffer.find("\n\n") {
-                let event: String = buffer.drain(..pos + 2).collect();
-                let payload: String = event
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("data: "))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                if let Some(s) = done_sentinel {
-                    if payload == s { return; }
-                }
-                if payload.is_empty() { continue; }
-                match parse_payload(&payload) {
-                    Ok(Some(delta)) => yield Ok(delta),
-                    Ok(None) => {}
-                    Err(e) => { yield Err(e); return; }
-                }
-            }
-        }
-    }
+// hermes-core/src/accumulator.rs
+
+use std::collections::BTreeMap;
+
+use futures::StreamExt;
+
+use crate::error::ProviderError;
+use crate::message::{Content, Message, Role, ToolCall};
+use crate::provider::{Completion, CompletionDelta, FinishReason};
+use crate::usage::Usage;
+
+pub struct StreamAccumulator { /* unchanged */ }
+impl Default for StreamAccumulator { /* unchanged */ }
+impl StreamAccumulator {
+    pub fn new() -> Self { /* unchanged */ }
+    pub fn add(&mut self, delta: &CompletionDelta) { /* unchanged */ }
+    pub fn finalize(self) -> Completion { /* unchanged */ }
+    pub fn is_empty(&self) -> bool { /* unchanged */ }
+    pub fn into_partial_message(self, role: Role) -> Message { /* unchanged */ }
 }
+
+pub async fn accumulate_stream(
+    mut stream: crate::provider::CompletionStream,
+) -> Result<Completion, ProviderError> { /* unchanged */ }
+
+#[cfg(test)]
+mod tests { /* unchanged — all 8 tests move with the code */ }
 ```
 
-### 4.2 Why join `data:` lines (instead of taking only the first one)?
+### 4.2 Public path preservation (critical)
 
-- **Anthropic's existing behavior** is to join — its `parse_sse_chunks` does
-  `event.lines().filter_map(|line| line.strip_prefix("data: ")).collect::<Vec<_>>().join("\n")`.
-- **OpenAI's existing behavior** is to iterate and yield one delta per `data:` line, but
-  in practice OpenAI streams always have exactly one `data:` line per event, so joining
-  produces an equivalent result.
-- **SSE spec** (WHATWG) explicitly allows multiple `data:` lines in a single event that
-  must be joined. Joining is the more spec-compliant default and removes a subtle
-  compatibility risk for future providers.
-
-### 4.3 Provider call sites
-
-**OpenAI** (in `openai/mod.rs::impl Provider::stream`):
+`crates/hermes-loop/src/agent.rs:186` imports `StreamAccumulator` via the full path:
 
 ```rust
-let mut state = OpenAiStreamState::default();
-let stream = sse::sse_frame_stream(
-    response.bytes_stream(),
-    Some("[DONE]"),
-    move |payload| openai::sse::parse_sse_data_payload(payload, &mut state)
-        .map(Some),
-);
-Ok(Box::pin(stream))
+let mut acc = hermes_core::provider::StreamAccumulator::new();
 ```
 
-**Anthropic** (in `anthropic/mod.rs::impl Provider::stream`):
+To keep this working **without editing `agent.rs`**, `provider.rs` re-exports the moved items at the bottom of the file:
 
 ```rust
-let mut state = AnthropicStreamState::default();
-let stream = sse::sse_frame_stream(
-    response.bytes_stream(),
-    None,
-    move |payload| anthropic::sse::parse_sse_data_payload(payload, &mut state),
-);
-Ok(Box::pin(stream))
-```
+// hermes-core/src/provider.rs (new lines at the end)
 
-Note: `AnthropicStreamState` and `OpenAiStreamState` are owned by the closure via `move`,
-so the returned stream is `'static` (it doesn't borrow from any local).
-
-### 4.4 `StreamAccumulator` (moved to `hermes-core/src/accumulator.rs`)
-
-The struct, its `Default` impl, `add` / `finalize` / `is_empty` / `into_partial_message`
-methods, the `accumulate_stream` free function, and the existing test module all move
-verbatim from `provider.rs` to a new `accumulator.rs`. The `Provider` trait's default
-`complete()` impl now reads `crate::accumulator::accumulate_stream`.
-
-**Public path preservation**: `crates/hermes-loop/src/agent.rs:186` imports
-`hermes_core::provider::StreamAccumulator`. To keep this import working without touching
-`agent.rs`, `provider.rs` re-exports the moved items at the bottom of the file:
-
-```rust
-// hermes-core/src/provider.rs
+// Re-exported to preserve the `hermes_core::provider::StreamAccumulator`
+// import path used by `hermes-loop`. The implementation lives in
+// `crate::accumulator`; `provider.rs` keeps the trait + delta types only.
 pub use crate::accumulator::{accumulate_stream, StreamAccumulator};
 ```
 
-`hermes-core/src/lib.rs` is unchanged (it does not currently re-export `StreamAccumulator`
-from the crate root, and that remains the case).
+`hermes-core/src/lib.rs` gains exactly one new line: `pub mod accumulator;`. No other changes.
 
-`hermes-core/src/provider.rs` shrinks to ~280 lines (just the trait + delta types + their tests).
+`agent.rs` is **not** touched. The existing `hermes_core::provider::StreamAccumulator` import keeps working via the re-export.
+
+### 4.3 SSE parser boundary tests
+
+These go in the existing `mod tests` blocks of `openai.rs` and `anthropic.rs` (8 tests exist in OpenAI's, 9 in Anthropic's; we add 4 to each).
+
+The 4 new tests per provider, parameterized by which provider's parser we're testing:
+
+| Test | What it asserts |
+|---|---|
+| `chunks_split_across_frames_assemble_correctly` | Feed a single SSE event as **3 separate byte chunks** (e.g. `b"data: {\"ch"...`, `b"oices\":[{\"de"...`, `b"lta\":{\"content\":\"hi\"}}]}\n\n"`). The parser must produce 1 delta. Validates the buffer + `find("\n\n")` logic. |
+| `transport_error_becomes_provider_error_transport` | Feed a byte stream where the underlying `Stream<Item = reqwest::Result<Bytes>>` yields `Err(reqwest::Error)`. The parser must yield `Err(ProviderError::Transport(_))` and terminate. |
+| `done_sentinel_preserves_prior_deltas` | Feed 2 valid events then `data: [DONE]\n\n` then a 3rd valid event. The parser must yield 2 deltas and stop. (Anthropic: omitted because Anthropic has no `[DONE]` — replaced with an "Anthropic-specific" test, see below.) |
+| `partial_utf8_in_a_chunk_does_not_panic` | Feed bytes containing invalid UTF-8 (e.g. `b"data: \xFF\xFE\n\n"`). The parser must NOT panic; it should yield either an `InvalidResponse` (for the malformed JSON) or skip the event gracefully. The current code uses `String::from_utf8_lossy`, which is fine — this test pins that behavior. |
+
+For **Anthropic** specifically, the `[DONE]` test is replaced by:
+
+- `message_stop_event_terminates_cleanly` — Anthropic sends an explicit `message_delta` then `message_stop`. The parser must yield the `message_delta` (carrying `finish_reason`) and then return without an extra `Ok(None)` for `message_stop`.
+
+These are **black-box** tests: each takes a byte slice (or a stream of byte slices) and asserts on the resulting `Vec<CompletionDelta>` or first error. They do NOT depend on the helper helper (`parse_sse_for_test`) — the helper is small enough to inline.
+
+For OpenAI, the test pattern mirrors the existing `parse_sse_for_test`:
+```rust
+fn parse_sse_bytes(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
+    let stream = futures::stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::copy_from_slice(input))]);
+    let s = parse_sse_chunks(stream);
+    futures::executor::block_on(async move {
+        let mut v = Vec::new();
+        futures::pin_mut!(s);
+        while let Some(item) = s.next().await {
+            v.push(item?);
+        }
+        Ok(v)
+    })
+}
+```
+
+For the **chunked** test, we need a stream of multiple byte chunks:
+```rust
+fn parse_sse_chunks_of(chunks: Vec<&[u8]>) -> Result<Vec<CompletionDelta>, ProviderError> {
+    let stream = futures::stream::iter(
+        chunks.into_iter().map(|c| Ok::<_, reqwest::Error>(Bytes::copy_from_slice(c))).collect::<Vec<_>>()
+    );
+    // ... same drive pattern
+}
+```
+
+For the **transport error** test:
+```rust
+fn parse_sse_with_transport_error() -> ProviderError {
+    let stream = futures::stream::iter(vec![Err(reqwest::Error::decode() /* or similar */)]);
+    let s = parse_sse_chunks(stream);
+    futures::executor::block_on(async move {
+        let mut last_err = None;
+        futures::pin_mut!(s);
+        while let Some(item) = s.next().await {
+            if let Err(e) = item { last_err = Some(e); break; }
+        }
+        last_err.expect("stream must yield at least one error")
+    })
+}
+```
+
+(Exact `reqwest::Error` constructor is chosen at implementation time — `reqwest::Error` doesn't have a public `new`, so the test may need a small helper that wraps a known error. If constructing a `reqwest::Error` is impractical, we can use a thin wrapper type that implements `From<...>` — but the cleanest fix is to construct one via `reqwest::Client::new().get("http://[::1]:0").send().await` and capture its error. Decide at implementation time.)
 
 ## 5. Implementation strategy (TDD per CLAUDE.md)
 
 Per `CLAUDE.md` "TDD Workflow" — strict RED → GREEN → REFACTOR.
 
-### Step 1: RED — write failing tests for the new helper
+### Step 1: RED — write failing tests for the SSE boundary cases
 
-In `hermes-providers/src/sse.rs`, write a `#[cfg(test)] mod tests` block with three tests:
+For **OpenAI** (`openai.rs::mod tests`), add 4 tests:
+1. `chunks_split_across_frames_assemble_correctly`
+2. `transport_error_becomes_provider_error_transport`
+3. `done_sentinel_preserves_prior_deltas` (already partially covered by `done_marker_terminates`, but the new test specifically asserts that the third event is **not** parsed and no extra delta is yielded)
+4. `partial_utf8_in_a_chunk_does_not_panic`
 
-1. `sse_frame_stream_yields_deltas_for_data_events` — feed bytes containing two `data:` events separated by `\n\n`, assert two `Ok(CompletionDelta { content_delta: Some(...), .. })` items arrive.
-2. `sse_frame_stream_returns_on_done_sentinel` — feed bytes ending with `data: [DONE]\n\n` and a `done_sentinel = Some("[DONE]")`, assert the stream yields nothing after the sentinel and ends.
-3. `sse_frame_stream_skips_empty_payloads` — feed bytes with an event whose only data is empty (a `ping` would do), assert no delta is yielded.
+For **Anthropic** (`anthropic.rs::mod tests`), add 4 tests:
+1. `chunks_split_across_frames_assemble_correctly`
+2. `transport_error_becomes_provider_error_transport`
+3. `message_stop_event_terminates_cleanly`
+4. `partial_utf8_in_a_chunk_does_not_panic`
 
-`cargo test -p hermes-providers` — confirm these fail (helper doesn't exist yet).
+Run `cargo test -p hermes-providers` — confirm they pass (the SSE parsers are already correct, this is test-coverage gap-filling, not a behavior change). The point of the RED phase is to make sure the new tests run before the extraction lands, so we know the extraction didn't break anything.
 
-### Step 2: GREEN — implement `sse_frame_stream`
+If any of these fail, that means the existing parser has a real bug, which is a separate finding — fix the parser minimally, document the fix, and proceed.
 
-Copy the function from §4.1 above. Run tests until they pass.
+### Step 2: GREEN — extract `StreamAccumulator`
 
-### Step 3: REFACTOR — wire up the providers
+1. Create `hermes-core/src/accumulator.rs` and move (verbatim, except `use` paths):
+   - `StreamAccumulator` struct
+   - `Default` impl
+   - `new`, `add`, `finalize`, `is_empty`, `into_partial_message`
+   - `accumulate_stream` free function
+   - The `#[cfg(test)] mod tests` block (all 8 existing tests)
+2. Add `pub mod accumulator;` to `hermes-core/src/lib.rs`.
+3. Add the re-export at the bottom of `provider.rs`:
+   ```rust
+   pub use crate::accumulator::{accumulate_stream, StreamAccumulator};
+   ```
+4. Delete the moved code from `provider.rs` (it now lives in `accumulator.rs`).
+5. Update the `Provider::complete` default impl in `provider.rs` to call `crate::accumulator::accumulate_stream` (the path changed from the same-file call to a cross-module call).
 
-In order of risk (smallest delta first):
-
-1. **OpenAI**: in `openai.rs`, replace the `parse_sse_chunks` definition with a thin
-   wrapper that delegates to `sse::sse_frame_stream` plus a closure wrapping
-   `parse_sse_data_payload`. Run `cargo test -p hermes-providers`. All existing
-   `tests/openai.rs` integration tests must still pass — the public `OpenAiProvider::stream`
-   behavior is unchanged.
-
-2. **Anthropic**: same pattern, no `.map(Some)` wrapper (Anthropic's
-   `parse_sse_data_payload` already returns `Result<Option<...>, _>`). Run
-   `cargo test -p hermes-providers`. `tests/anthropic.rs` must still pass.
-
-3. **Extract `StreamAccumulator`**: move the struct + tests from `provider.rs` to a
-   new `accumulator.rs`. Re-export from `provider.rs` (or `lib.rs`). Run
-   `cargo test -p hermes-core` and the dependent crate tests.
-
-4. **Split `openai.rs` into `openai/` directory**:
-   - `openai/mod.rs` keeps `OpenAiProvider` struct + builder methods + `impl Provider`.
-   - `openai/request.rs` takes the `ChatRequest` / `Oai*` wire types + `build_request_body`.
-   - `openai/sse.rs` takes `OpenAiStreamState` + `parse_sse_data_payload` + `split_think_tag_content`.
-   - `crates/hermes-providers/src/lib.rs`: change `pub mod openai;` (still works — Rust
-     resolves `openai.rs` OR `openai/mod.rs` OR `openai/` directory).
-   - **Test migration**: all 9 unit tests in `openai.rs::mod tests` are SSE-parser
-     tests (they all use the `parse_sse_for_test` helper which wraps `parse_sse_chunks`).
-     The whole `mod tests` block moves to `openai/sse.rs`. The test helper
-     `parse_sse_for_test` is rewritten to call `sse::sse_frame_stream` directly with a
-     fresh `OpenAiStreamState` (the existing one-liner becomes ~10 lines because the
-     closure now owns state — this is fine; the test body is unchanged).
-
-5. **Split `anthropic.rs` into `anthropic/` directory**:
-   - `anthropic/mod.rs`: `AnthropicProvider` struct, `AnthropicRequestOptions`,
-     `AnthropicThinking`, builders, `impl Provider`.
-   - `anthropic/request.rs`: `MessagesRequest` / `OutputConfig` / `Wire*` / `ThinkingParam`
-     + `build_request_body_with_options` + all `convert_*` / `content_to_*` / `build_*`
-     helpers.
-   - `anthropic/sse.rs`: `AnthropicStreamState` + `parse_sse_data_payload` +
-     `parse_content_block_start` + `parse_content_block_delta` + `usage_delta` +
-     `anthropic_finish_reason`.
-   - **Test migration**: `anthropic.rs::mod tests` has 9 tests — 7 of them
-     (`convert_messages_pulls_system_out_and_joins_text_parts`,
-     `convert_messages_emits_tool_use_and_tool_result_blocks`,
-     `request_body_uses_structured_tool_choice_and_input_schema`,
-     `thinking_defaults_to_off_for_claude_3_7`,
-     `manual_thinking_is_explicit`,
-     `adaptive_thinking_is_explicit`,
-     `adaptive_thinking_can_set_effort`) test request-body construction → move to
-     `anthropic/request.rs::mod tests`. The other 2 (`parses_text_tool_and_usage_stream`,
-     `message_delta_usage_can_update_input_tokens`) test the SSE parser → move to
-     `anthropic/sse.rs::mod tests`. Each module's test block keeps the same
-     `use super::*;` plus any additional `use` it needs.
-
-### Step 4: Verify
+### Step 3: Verify
 
 ```bash
 cargo build
 cargo test                                          # all unit + integration tests
+cargo test -p hermes-core                           # focus on the changed crate
 cargo test -p hermes-providers                      # focus on the changed crate
-cargo test -p hermes-core                           # StreamAccumulator moved
 cargo clippy --all-targets --all-features -- -D warnings
 ```
 
-Every test that passed before this refactor must pass after. The new `sse::tests` block
-adds three more green tests.
+Every test that passed before this refactor must pass after. The 8 new SSE boundary tests must pass.
 
-### Step 5: Manual smoke (optional)
-
-If `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` are set in `.envrc`:
+### Step 4: Manual smoke (optional, requires API keys)
 
 ```bash
 echo "hello" | cargo run -p hermes-cli --quiet -- --provider openai
 echo "hello" | cargo run -p hermes-cli --quiet -- --provider anthropic
 ```
 
-Both should produce a response and exit cleanly — confirming that the new SSE helper
-is exercised end-to-end.
+If `OPENAI_API_KEY` / `ANTHROPIC_API_KEY` are in `.envrc`, both should produce a response — confirming the SSE parsers still work end-to-end with the test-coverage additions.
 
 ## 6. Risks and mitigations
 
 | Risk | Mitigation |
 |---|---|
-| Forgetting to mark `FnMut` as `move` causes the returned stream to borrow from a local | Use `move` on both provider closures; lint catches non-`'static` future returns if a `Box::pin` call site is changed. |
-| SSE spec compliance: joining `data:` lines changes behavior for a provider that genuinely sends multi-line data and a parser that expects only the first line | OpenAI never does this; Anthropic already joins. If a future provider is added and hits this, the helper can grow a `join_data_lines: bool` flag — but YAGNI for now. |
-| Public API accidentally re-exported at the wrong path | `hermes-providers/src/lib.rs` re-exports `pub use openai::OpenAiProvider;` etc. explicitly so downstream code (`hermes-runtime`) keeps working. Run `cargo build` of `hermes-runtime` and `hermes-cli` after the split to catch any miss. |
-| Test file moves break test discovery | Each moved `#[cfg(test)] mod tests` keeps the same `use super::*;` shape; running `cargo test -p hermes-providers` confirms they still execute. |
-| `parse_sse_data_payload` signatures diverge between OpenAI and Anthropic | They already diverge today (`Result<Option<...>>` vs `Result<...>`). The new shared helper uses `FnMut(&str) -> Result<Option<CompletionDelta>, _>` and OpenAI adapts with `.map(Some)`. Documented in §4.3. |
+| `pub use` at the bottom of `provider.rs` makes `StreamAccumulator` accessible from two paths (`hermes_core::provider::StreamAccumulator` AND `hermes_core::accumulator::StreamAccumulator`), which could be confusing | Document the canonical path in the re-export comment. The crate-root re-export at `hermes-core/src/lib.rs` is NOT added, so `hermes_core::StreamAccumulator` is **not** a new public path — only the existing `hermes_core::provider::StreamAccumulator` keeps working. |
+| `reqwest::Error` is hard to construct in tests (no public `new`) | Use `reqwest::Client::new().get("http://[::1]:0/").build().unwrap().execute(request).await` to get a real error, OR abstract the stream input behind a `parse_sse_chunks_from<S: Stream<...>>` helper that takes a generic byte stream. Decide at implementation time. |
+| SSE parser tests that need a `Vec<Result<Bytes, reqwest::Error>>` for chunked input require constructing multiple `reqwest::Error` values if any chunk fails | Only the transport-error test needs a real `reqwest::Error`. The chunked test only needs `Ok(Bytes)`. |
+| The `use` paths inside `accumulator.rs` may need adjusting (e.g. `crate::provider::CompletionDelta` becomes `crate::provider::CompletionDelta`, which is fine since the trait + delta types stay in `provider.rs`) | The only paths that change are the `accumulate_stream` body's reference to `StreamAccumulator` (still in same file) and `Provider::complete` default impl in `provider.rs` (use `crate::accumulator::accumulate_stream`). |
 
 ## 7. Test coverage summary
 
-**New tests** (3, in `hermes-providers/src/sse.rs::tests`):
-- Yields deltas for two `data:` events.
-- Terminates on `[DONE]` sentinel.
-- Skips empty payloads (pings).
+**New tests** (8 total):
+
+| Provider | Test name | What it pins |
+|---|---|---|
+| OpenAI | `chunks_split_across_frames_assemble_correctly` | buffer + `find("\n\n")` works across multiple byte chunks |
+| OpenAI | `transport_error_becomes_provider_error_transport` | byte-stream errors propagate as `ProviderError::Transport` |
+| OpenAI | `done_sentinel_preserves_prior_deltas` | events after `[DONE]` are not parsed |
+| OpenAI | `partial_utf8_in_a_chunk_does_not_panic` | `String::from_utf8_lossy` behavior is stable |
+| Anthropic | `chunks_split_across_frames_assemble_correctly` | (same as OpenAI, but for Anthropic's parser) |
+| Anthropic | `transport_error_becomes_provider_error_transport` | (same) |
+| Anthropic | `message_stop_event_terminates_cleanly` | `message_stop` is handled without yielding an extra delta |
+| Anthropic | `partial_utf8_in_a_chunk_does_not_panic` | (same) |
 
 **Existing tests, unchanged behavior**:
-- `crates/hermes-core/src/accumulator.rs::tests` — all move with `StreamAccumulator`.
-- `crates/hermes-providers/tests/openai.rs` — `OpenAiProvider::stream` integration tests (HTTP-mock).
-- `crates/hermes-providers/tests/anthropic.rs` — same.
-- `crates/hermes-providers/tests/openai_stream.rs` — SSE byte-stream test.
-- `crates/hermes-loop/tests/echo_loop.rs`, `tool_dispatch.rs`, `arg_validation.rs`, `usage_metrics.rs` — exercise the loop with the providers; behavior unchanged.
-- `crates/hermes-cli/src/main.rs` smoke (offline via `echo`) and `live_tool_use` example — unchanged.
+- `crates/hermes-core/src/provider.rs::tests` — provider-trait related tests stay.
+- `crates/hermes-core/src/accumulator.rs::tests` — all 8 `StreamAccumulator` tests move with the code.
+- `crates/hermes-providers/tests/openai.rs` and `tests/anthropic.rs` — integration tests, behavior unchanged.
+- `crates/hermes-loop/tests/*` — exercise the loop with the providers, behavior unchanged.
 
 ## 8. Out-of-scope follow-ups (parking lot)
 
-These were considered and deferred. Each is a separate brainstorm.
+These were considered and deferred. Each is a separate brainstorm round, with stronger justification once a 3rd provider is on the table.
 
-- **Decompose `AgentLoop::run` into private helpers** (`run_one_iteration`, `dispatch_tool_call`, `append_tool_result`). Improves readability of the 200-line method.
-- **Split `hermes-runtime/src/lib.rs`** if it grows past ~300 lines.
-- **Split `hermes-cli/src/main.rs`** only if `run_repl` grows past ~250 lines.
-- **`sse::sse_frame_stream` → `sse::SseParser` struct** if we ever need named config knobs (join behavior, custom split delimiter). YAGNI today.
+- **Shared `sse_frame_stream` helper** in `hermes-providers::sse` (or `pub(crate)`). Provider-agnostic byte-buffering. Justified when a 3rd provider lands. See §2 for the behavior-compatibility constraints.
+- **Provider directory split** (`openai/{mod,request,sse}.rs`, `anthropic/{mod,request,sse}.rs`). Justified when a 3rd provider lands — at that point the cross-provider structure becomes worth formalizing.
+- **Decompose `AgentLoop::run`** into private helpers (`run_one_iteration`, `dispatch_tool_call`, `append_tool_result`). Improves readability of the 200-line method.
+- **`Provider::complete` default impl** could take an event callback for parity with `AgentLoop::run`'s streaming path. Separate API change, not a refactor.
