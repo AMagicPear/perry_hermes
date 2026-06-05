@@ -1,17 +1,15 @@
-//! `EchoProvider` — the v0 mock provider.
-//!
-//! Echoes back the user's last user-role message with an `"echo: "`
-//! prefix and `finish_reason = Stop`. Used by phase 1's smoke test and
-//! by `hermes --provider echo` for offline iteration on the loop.
-//!
-//! See `plans/rust-port-design.md` §7.12.
+//! Echo provider — yields a single "echo: <text>" delta and stops.
+//! Useful for offline smoke tests of the agent loop without an API key.
 
 use async_trait::async_trait;
+use futures::stream;
+use hermes_core::{
+    message::{Content, Message, Role},
+    provider::{CompletionDelta, CompletionStream, FinishReason, Provider},
+    registry::ToolSchema,
+    ProviderError, Usage,
+};
 use tokio_util::sync::CancellationToken;
-
-use hermes_core::message::{Content, Message, Role};
-use hermes_core::provider::{Completion, FinishReason, Provider};
-use hermes_core::{ProviderError, ToolSchema, Usage};
 
 pub struct EchoProvider {
     name: String,
@@ -20,10 +18,7 @@ pub struct EchoProvider {
 
 impl EchoProvider {
     pub fn new() -> Self {
-        Self {
-            name: "echo".into(),
-            model: "echo-v0".into(),
-        }
+        Self { name: "echo".into(), model: "echo-v0".into() }
     }
 }
 
@@ -35,26 +30,19 @@ impl Default for EchoProvider {
 
 #[async_trait]
 impl Provider for EchoProvider {
-    fn name(&self) -> &str {
-        &self.name
-    }
-    fn model(&self) -> &str {
-        &self.model
-    }
+    fn name(&self) -> &str { &self.name }
+    fn model(&self) -> &str { &self.model }
 
-    async fn complete(
+    async fn stream(
         &self,
         messages: &[Message],
         _tools: &[ToolSchema],
         cancel: CancellationToken,
-    ) -> Result<Completion, ProviderError> {
+    ) -> Result<CompletionStream, ProviderError> {
         if cancel.is_cancelled() {
             return Err(ProviderError::Cancelled);
         }
-        // Echo back the last user message.
-        let last_user = messages
-            .iter()
-            .rev()
+        let last_user = messages.iter().rev()
             .find(|m| m.role == Role::User)
             .cloned()
             .unwrap_or(Message {
@@ -68,16 +56,13 @@ impl Provider for EchoProvider {
             Content::Text(t) => format!("echo: {t}"),
             Content::Parts(_) => "echo: (multimodal)".to_string(),
         };
-        Ok(Completion {
-            message: Message {
-                role: Role::Assistant,
-                content: Content::Text(reply),
-                reasoning: None,
-                tool_call_id: None,
-                tool_calls: None,
-            },
-            usage: Usage::default(),
-            finish_reason: FinishReason::Stop,
-        })
+        let delta = CompletionDelta {
+            content_delta: Some(reply),
+            reasoning_delta: None,
+            tool_call_delta: None,
+            usage: Some(Usage::default()),
+            finish_reason: Some(FinishReason::Stop),
+        };
+        Ok(Box::pin(stream::once(async move { Ok(delta) })))
     }
 }
