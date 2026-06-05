@@ -33,7 +33,11 @@ pub fn parse(raw: &str) -> Option<(Value, String)> {
     let yaml_text = &after_skip[..close_offset];
     // Strip exactly one newline (the one immediately after the closing fence).
     // Any further blank lines within the body are preserved.
-    let body = tail.strip_prefix('\n').unwrap_or(tail).to_string();
+    let body = tail
+        .strip_prefix("\r\n")
+        .or_else(|| tail.strip_prefix('\n'))
+        .unwrap_or(tail)
+        .to_string();
 
     let frontmatter = match serde_yaml::from_str::<Value>(yaml_text) {
         Ok(v) => v,
@@ -88,5 +92,15 @@ mod tests {
         let raw = "---\nname: rust\ndescription: x\n---\n";
         let (_, body) = parse(raw).expect("frontmatter present");
         assert_eq!(body, "");
+    }
+
+    #[test]
+    fn handles_crlf_body_line_endings() {
+        // Closing fence is `---\r\n` (CRLF, no preceding newline).
+        // The body should be returned with the `\r` stripped.
+        let raw = "---\nname: rust\ndescription: \"x\"\n---\r\nbody\n";
+        let (_, body) = parse(raw).expect("frontmatter should parse");
+        assert_eq!(body, "body\n");
+        assert!(!body.contains('\r'), "body should not contain a stray \\r");
     }
 }
