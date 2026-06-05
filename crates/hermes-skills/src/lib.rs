@@ -320,59 +320,28 @@ mod tests {
     }
 
     #[test]
-    fn skips_dir_name_not_matching_frontmatter() {
+    fn skips_various_invalid_skills_via_warn_and_skip() {
+        // Each case exercises a different skip path in parse_one /
+        // layout::find_skill_files. The point of grouping them is to
+        // assert that `load_all` is best-effort: any single bad skill
+        // is dropped, the rest are loaded, and no error is returned.
         let tmp = tempfile::tempdir().unwrap();
-        write_skill(
-            tmp.path(),
-            "weird-dir/SKILL.md",
-            &fm("not-weird-dir", "x"),
-        );
-        let skills = load_all(tmp.path()).unwrap();
-        assert!(skills.is_empty());
-    }
+        // dir name doesn't match frontmatter name
+        write_skill(tmp.path(), "weird-dir/SKILL.md", &fm("not-weird-dir", "x"));
+        // invalid name (underscore)
+        write_skill(tmp.path(), "Has_Upper/SKILL.md", &fm("Has_Upper", "x"));
+        // invalid description (empty)
+        write_skill(tmp.path(), "good-name/SKILL.md", &fm("good-name", ""));
+        // missing frontmatter
+        write_skill(tmp.path(), "no-fm/SKILL.md", "# Just markdown\n");
+        // frontmatter missing required field
+        write_skill(tmp.path(), "no-desc/SKILL.md", "---\nname: no-desc\n---\nbody\n");
+        // one good skill alongside
+        write_skill(tmp.path(), "ok/SKILL.md", &fm("ok", "fine"));
 
-    #[test]
-    fn skips_invalid_name() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_skill(
-            tmp.path(),
-            "Has_Upper/SKILL.md",
-            &fm("Has_Upper", "x"),
-        );
         let skills = load_all(tmp.path()).unwrap();
-        assert!(skills.is_empty());
-    }
-
-    #[test]
-    fn skips_invalid_description() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_skill(
-            tmp.path(),
-            "good-name/SKILL.md",
-            &fm("good-name", ""),
-        );
-        let skills = load_all(tmp.path()).unwrap();
-        assert!(skills.is_empty());
-    }
-
-    #[test]
-    fn skips_missing_frontmatter() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_skill(tmp.path(), "no-frontmatter/SKILL.md", "# Just markdown\n");
-        let skills = load_all(tmp.path()).unwrap();
-        assert!(skills.is_empty());
-    }
-
-    #[test]
-    fn skips_frontmatter_missing_required_field() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_skill(
-            tmp.path(),
-            "no-desc/SKILL.md",
-            "---\nname: no-desc\n---\nbody\n",
-        );
-        let skills = load_all(tmp.path()).unwrap();
-        assert!(skills.is_empty());
+        assert_eq!(skills.len(), 1, "only the good skill survives");
+        assert_eq!(skills[0].name, "ok");
     }
 
     #[test]

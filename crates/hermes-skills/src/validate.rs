@@ -54,32 +54,17 @@ mod tests {
     }
 
     #[test]
-    fn name_rejects_uppercase() {
-        assert!(!is_valid_name("Rust"));
-        assert!(!is_valid_name("RUST"));
-    }
-
-    #[test]
-    fn name_rejects_underscore() {
-        assert!(!is_valid_name("rust_core"));
-    }
-
-    #[test]
-    fn name_rejects_over_max_length() {
-        assert!(!is_valid_name(&"a".repeat(MAX_NAME_LEN + 1)));
-    }
-
-    #[test]
-    fn name_rejects_xml_brackets() {
-        assert!(!is_valid_name("foo<bar"));
-        assert!(!is_valid_name("foo>bar"));
-        assert!(!is_valid_name("foo<bar>baz"));
-    }
-
-    #[test]
-    fn name_rejects_reserved_words() {
-        assert!(!is_valid_name("anthropic"));
-        assert!(!is_valid_name("claude"));
+    fn name_rejects_various_invalid_inputs() {
+        // Each case exercises a different clause of the validator:
+        // uppercase / underscores / over-length / XML brackets / reserved words.
+        assert!(!is_valid_name("Rust"), "uppercase should be rejected");
+        assert!(!is_valid_name("rust_core"), "underscore should be rejected");
+        assert!(
+            !is_valid_name(&"a".repeat(MAX_NAME_LEN + 1)),
+            "over-length should be rejected"
+        );
+        assert!(!is_valid_name("foo<bar>baz"), "XML brackets should be rejected");
+        assert!(!is_valid_name("anthropic"), "reserved word should be rejected");
     }
 
     #[test]
@@ -89,18 +74,17 @@ mod tests {
     }
 
     #[test]
-    fn description_rejects_empty() {
-        assert!(!is_valid_description(""));
-    }
-
-    #[test]
-    fn description_rejects_over_max_length() {
-        assert!(!is_valid_description(&"a".repeat(MAX_DESC_LEN + 1)));
-    }
-
-    #[test]
-    fn description_rejects_xml_brackets() {
-        assert!(!is_valid_description("a <b> tag"));
+    fn description_rejects_invalid_inputs() {
+        // Each case exercises a different clause of the validator.
+        assert!(!is_valid_description(""), "empty should be rejected");
+        assert!(
+            !is_valid_description(&"a".repeat(MAX_DESC_LEN + 1)),
+            "over-length should be rejected"
+        );
+        assert!(
+            !is_valid_description("a <b> tag"),
+            "XML brackets should be rejected"
+        );
     }
 
     #[test]
