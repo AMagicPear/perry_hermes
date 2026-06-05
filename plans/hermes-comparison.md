@@ -1,6 +1,6 @@
 # Hermes Python vs Rust 移植 — current status note + phase 4 historical review
 
-> **当前状态修订（2026-06-05）:** Rust 实现已完成 Phase 0–6：核心工具循环、OpenAI-compatible provider、BashTool、runtime facade、CLI、多轮历史、流式输出、Ctrl-C 中断和 streaming usage 指标。后续简化后，`ToolRegistry` trait 已删除，`AgentLoop<P, R>` 已收缩为 `AgentLoop`，runtime 是 CLI 和未来 gateway 的共享入口。下面正文是 2026-06-04 的 phase 4 前置审查，保留作历史对照；凡与本段冲突，以当前代码和本段为准。
+> **当前状态修订（2026-06-05）:** Rust 实现已完成 Phase 0–6、Phase 8–9 ✅：核心工具循环、OpenAI-compatible provider、BashTool、runtime facade、CLI、多轮历史、流式输出、Ctrl-C 中断和 streaming usage 指标，以及 Skills 加载（SKILL.md 扫描 + system prompt 注入）。后续简化后，`ToolRegistry` trait 已删除，`AgentLoop<P, R>` 已收缩为 `AgentLoop`，runtime 是 CLI 和未来 gateway 的共享入口。下面正文是 2026-06-04 的 phase 4 前置审查，保留作历史对照；凡与本段冲突，以当前代码和本段为准。
 
 > 调研日期:2026-06-04
 >
