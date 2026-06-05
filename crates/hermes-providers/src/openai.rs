@@ -271,6 +271,7 @@ fn parse_sse_chunks(
 ) -> impl Stream<Item = Result<CompletionDelta, ProviderError>> {
     async_stream::stream! {
         let mut buffer = String::new();
+        let mut state = OpenAiStreamState::default();
         let mut bytes = Box::pin(bytes);
         while let Some(chunk) = bytes.next().await {
             match chunk {
@@ -283,7 +284,7 @@ fn parse_sse_chunks(
                     let Some(rest) = line.strip_prefix("data: ") else { continue };
                     let payload = rest.trim();
                     if payload == "[DONE]" { return; }
-                    match parse_sse_data_payload(payload) {
+                    match parse_sse_data_payload(payload, &mut state) {
                         Ok(d) => yield Ok(d),
                         Err(e) => { yield Err(e); return; }
                     }
@@ -293,7 +294,15 @@ fn parse_sse_chunks(
     }
 }
 
-fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderError> {
+#[derive(Default)]
+struct OpenAiStreamState {
+    in_think_tag: bool,
+}
+
+fn parse_sse_data_payload(
+    payload: &str,
+    state: &mut OpenAiStreamState,
+) -> Result<CompletionDelta, ProviderError> {
     #[derive(serde::Deserialize)]
     struct SseChunk {
         choices: Vec<SseChoice>,
@@ -352,9 +361,14 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
             })
     });
 
+    let (content_delta, reasoning_delta) = match choice.delta.reasoning_content {
+        Some(reasoning) => (choice.delta.content, Some(reasoning)),
+        None => split_think_tag_content(choice.delta.content, state),
+    };
+
     Ok(CompletionDelta {
-        content_delta: choice.delta.content,
-        reasoning_delta: choice.delta.reasoning_content,
+        content_delta,
+        reasoning_delta,
         tool_call_delta,
         usage: chunk.usage,
         finish_reason: choice
@@ -362,6 +376,52 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
             .as_deref()
             .map(FinishReason::from_provider_str),
     })
+}
+
+fn split_think_tag_content(
+    content: Option<String>,
+    state: &mut OpenAiStreamState,
+) -> (Option<String>, Option<String>) {
+    let Some(content) = content else {
+        return (None, None);
+    };
+
+    let mut rest = content.as_str();
+    let mut visible = String::new();
+    let mut reasoning = String::new();
+
+    while !rest.is_empty() {
+        if state.in_think_tag {
+            if let Some(end) = rest.find("</think>") {
+                reasoning.push_str(&rest[..end]);
+                rest = &rest[end + "</think>".len()..];
+                state.in_think_tag = false;
+            } else {
+                reasoning.push_str(rest);
+                rest = "";
+            }
+        } else if let Some(start) = rest.find("<think>") {
+            visible.push_str(&rest[..start]);
+            rest = &rest[start + "<think>".len()..];
+            state.in_think_tag = true;
+        } else {
+            visible.push_str(rest);
+            rest = "";
+        }
+    }
+
+    (
+        if visible.is_empty() {
+            None
+        } else {
+            Some(visible)
+        },
+        if reasoning.is_empty() {
+            None
+        } else {
+            Some(reasoning)
+        },
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -459,5 +519,23 @@ data: [DONE]\n\n";
         assert!(deltas[1].reasoning_delta.is_none());
         assert!(deltas[1].tool_call_delta.is_none());
         assert!(deltas[1].finish_reason.is_none());
+    }
+
+    #[test]
+    fn think_tag_content_is_reclassified_as_reasoning() {
+        let sse = b"\
+data: {\"choices\":[{\"delta\":{\"content\":\"<think>Need\"},\"finish_reason\":null}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"content\":\" to inspect</think>Answer\"},\"finish_reason\":null}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"content\":\" done\"},\"finish_reason\":null}]}\n\n\
+data: [DONE]\n\n";
+        let deltas = parse_sse_bytes(sse).unwrap();
+
+        assert_eq!(deltas.len(), 3);
+        assert_eq!(deltas[0].reasoning_delta.as_deref(), Some("Need"));
+        assert!(deltas[0].content_delta.is_none());
+        assert_eq!(deltas[1].reasoning_delta.as_deref(), Some(" to inspect"));
+        assert_eq!(deltas[1].content_delta.as_deref(), Some("Answer"));
+        assert_eq!(deltas[2].content_delta.as_deref(), Some(" done"));
+        assert!(deltas[2].reasoning_delta.is_none());
     }
 }
