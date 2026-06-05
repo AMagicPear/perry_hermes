@@ -8,12 +8,15 @@ description = "LLM provider implementations (echo mock, OpenAI, Anthropic, ...)"
 
 [dependencies]
 hermes-core.workspace = true
+async-stream.workspace = true
 async-trait.workspace = true
+futures.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 reqwest.workspace = true
+bytes.workspace = true
 
 [dev-dependencies]
 httpmock.workspace = true

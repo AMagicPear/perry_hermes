@@ -19,6 +19,7 @@ license = "MIT"
 
 [workspace.dependencies]
 # Async
+async-stream = "0.3"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
@@ -44,6 +45,7 @@ clap = { version = "4", features = ["derive"] }
 
 # HTTP (used by hermes-providers)
 reqwest = { version = "0.12", features = ["json", "stream"] }
+bytes = "1"
 
 # HTTP mock server (dev-dep on hermes-providers)
 httpmock = "0.7"

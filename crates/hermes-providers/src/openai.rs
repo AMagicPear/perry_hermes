@@ -8,13 +8,16 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
+use bytes::Bytes;
+use futures::Stream;
+use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::message::{Content, Message, Role};
-use hermes_core::provider::{Completion, FinishReason, Provider};
+use hermes_core::message::{Content, Message};
+use hermes_core::provider::{CompletionDelta, FinishReason, Provider};
 use hermes_core::registry::ToolSchema;
-use hermes_core::{ProviderError, Usage};
+use hermes_core::{CompletionStream, ProviderError, Usage};
 
 pub struct OpenAiProvider {
     api_key: String,
@@ -52,6 +55,7 @@ struct ChatRequest<'a> {
     tools: Vec<OaiTool<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<&'static str>,
+    stream: bool,
 }
 
 #[derive(Serialize)]
@@ -132,6 +136,66 @@ struct OaiUsage {
     completion_tokens: u64,
 }
 
+fn build_request_body<'a>(
+    model: &'a str,
+    messages: &'a [Message],
+    tools: &'a [ToolSchema],
+    stream: bool,
+) -> Result<ChatRequest<'a>, ProviderError> {
+    let oai_msgs: Vec<OaiMessage> = messages
+        .iter()
+        .map(|m| {
+            let tool_calls = m.tool_calls.as_ref().map(|calls| {
+                calls
+                    .iter()
+                    .map(|c| {
+                        let arguments = serde_json::to_string(&c.arguments)
+                            .unwrap_or_else(|_| "null".into());
+                        OaiToolCallRef {
+                            id: &c.id,
+                            r#type: "function",
+                            function: OaiFunctionCallRef {
+                                name: &c.name,
+                                arguments,
+                            },
+                        }
+                    })
+                    .collect()
+            });
+            OaiMessage {
+                role: m.role.as_str(),
+                content: match &m.content {
+                    Content::Text(s) => Some(s.as_str()),
+                    Content::Parts(_) => None,
+                },
+                tool_call_id: m.tool_call_id.as_deref(),
+                tool_calls,
+            }
+        })
+        .collect();
+
+    let oai_tools: Vec<OaiTool> = tools
+        .iter()
+        .map(|t| OaiTool {
+            r#type: "function",
+            function: OaiFunctionDef {
+                name: &t.name,
+                description: &t.description,
+                parameters: &t.parameters,
+            },
+        })
+        .collect();
+
+    let has_tools = !oai_tools.is_empty();
+    Ok(ChatRequest {
+        model,
+        messages: oai_msgs,
+        tools: oai_tools,
+        tool_choice: if has_tools { Some("auto") } else { None },
+        stream,
+    })
+}
+
 #[async_trait]
 impl Provider for OpenAiProvider {
     fn name(&self) -> &str {
@@ -141,148 +205,231 @@ impl Provider for OpenAiProvider {
         &self.model
     }
 
-    async fn complete(
+    async fn stream(
         &self,
         messages: &[Message],
         tools: &[ToolSchema],
         cancel: CancellationToken,
-    ) -> Result<Completion, ProviderError> {
-        let oai_msgs: Vec<OaiMessage> = messages
-            .iter()
-            .map(|m| {
-                let tool_calls = m.tool_calls.as_ref().map(|calls| {
-                    calls
-                        .iter()
-                        .map(|c| {
-                            // OpenAI expects `arguments` as a JSON
-                            // *string*, not a nested object — same
-                            // shape the response uses.
-                            let arguments = serde_json::to_string(&c.arguments)
-                                .unwrap_or_else(|_| "null".into());
-                            OaiToolCallRef {
-                                id: &c.id,
-                                r#type: "function",
-                                function: OaiFunctionCallRef {
-                                    name: &c.name,
-                                    arguments,
-                                },
-                            }
-                        })
-                        .collect()
-                });
-                OaiMessage {
-                    role: m.role.as_str(),
-                    content: match &m.content {
-                        Content::Text(s) => Some(s.as_str()),
-                        Content::Parts(_) => None,
-                    },
-                    tool_call_id: m.tool_call_id.as_deref(),
-                    tool_calls,
-                }
-            })
-            .collect();
-
-        let oai_tools: Vec<OaiTool> = tools
-            .iter()
-            .map(|t| OaiTool {
-                r#type: "function",
-                function: OaiFunctionDef {
-                    name: &t.name,
-                    description: &t.description,
-                    parameters: &t.parameters,
-                },
-            })
-            .collect();
-
-        let has_tools = !oai_tools.is_empty();
-        let req = ChatRequest {
-            model: &self.model,
-            messages: oai_msgs,
-            tools: oai_tools,
-            tool_choice: if has_tools { Some("auto") } else { None },
-        };
-
+    ) -> Result<CompletionStream, ProviderError> {
+        let body = build_request_body(&self.model, messages, tools, true)?;
         let url = format!("{}/chat/completions", self.base_url);
+
+        // Pre-flight: send request, race against cancel
         let resp = tokio::select! {
             biased;
             _ = cancel.cancelled() => {
                 return Err(ProviderError::Cancelled);
             }
-            r = self
-                .client
-                .post(&url)
+            r = self.client.post(&url)
                 .bearer_auth(&self.api_key)
-                .json(&req)
+                .json(&body)
                 .send() => r.map_err(ProviderError::Transport)?,
         };
 
+        // Pre-flight: status check
         if resp.status() == 401 {
             return Err(ProviderError::Auth(resp.text().await.unwrap_or_default()));
         }
         if resp.status() == 429 {
-            // Phase 2 minimum: assume 1s backoff. A future phase
-            // should read the `retry-after` header.
-            return Err(ProviderError::RateLimited {
-                retry_after_secs: 1,
-            });
+            return Err(ProviderError::RateLimited { retry_after_secs: 1 });
         }
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
             return Err(ProviderError::InvalidResponse(body));
         }
 
-        let parsed: ChatResponse = resp
-            .json()
-            .await
-            .map_err(|e| ProviderError::InvalidResponse(e.to_string()))?;
+        // Hand the byte stream to the SSE parser.
+        Ok(Box::pin(parse_sse_chunks(resp.bytes_stream())))
+    }
+}
 
-        let choice = parsed
-            .choices
-            .into_iter()
-            .next()
-            .ok_or_else(|| ProviderError::InvalidResponse("no choices".into()))?;
+// ---------------------------------------------------------------------------
+// SSE parser
+// ---------------------------------------------------------------------------
 
-        let finish_reason = choice
-            .finish_reason
-            .as_deref()
-            .map(FinishReason::from_provider_str)
-            .unwrap_or(FinishReason::Stop);
+#[cfg(test)]
+pub(crate) fn parse_sse_for_test(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
+    use futures::stream;
+    let stream = stream::once(async { Ok(Bytes::copy_from_slice(input)) });
+    let s = parse_sse_chunks(stream);
+    futures::executor::block_on(async move {
+        let mut v = Vec::new();
+        futures::pin_mut!(s);
+        while let Some(item) = s.next().await {
+            v.push(item?);
+        }
+        Ok(v)
+    })
+}
 
-        let tool_calls = choice.message.tool_calls.map(|calls| {
-            calls
-                .into_iter()
-                .map(|c| hermes_core::message::ToolCall {
-                    id: c.id,
-                    name: c.function.name,
-                    // OpenAI sends `arguments` as a JSON string, not an
-                    // object. A garbage payload is treated as Null
-                    // rather than failing the whole request — let the
-                    // tool's own argument-validation step complain.
-                    arguments: serde_json::from_str(&c.function.arguments)
-                        .unwrap_or(serde_json::Value::Null),
-                })
-                .collect()
-        });
+fn parse_sse_chunks(
+    bytes: impl Stream<Item = reqwest::Result<Bytes>>,
+) -> impl Stream<Item = Result<CompletionDelta, ProviderError>> {
+    async_stream::stream! {
+        let mut buffer = Vec::<u8>::new();
+        // Pin the stream so we can poll it repeatedly
+        let mut bytes = Box::pin(bytes);
+        loop {
+            // Drain all complete events from the buffer first
+            while let Some(pos) = buffer.windows(2).position(|w| w == b"\n\n") {
+                let event: Vec<u8> = buffer.drain(..pos + 2).collect();
+                let event_str = String::from_utf8_lossy(&event);
+                let mut payload: Option<String> = None;
+                for line in event_str.lines() {
+                    if let Some(rest) = line.strip_prefix("data: ") {
+                        payload = Some(rest.trim().to_string());
+                    }
+                }
+                if let Some(p) = payload {
+                    if p == "[DONE]" {
+                        return;
+                    }
+                    match parse_sse_data_payload(&p) {
+                        Ok(d) => yield Ok(d),
+                        Err(e) => {
+                            yield Err(e);
+                            return;
+                        }
+                    }
+                }
+            }
+            // Need more bytes
+            match bytes.next().await {
+                Some(Ok(chunk)) => buffer.extend_from_slice(&chunk),
+                Some(Err(e)) => {
+                    yield Err(ProviderError::Transport(e));
+                    return;
+                }
+                None => return,
+            }
+        }
+    }
+}
 
-        let usage = parsed
-            .usage
-            .map(|u| Usage {
-                input_tokens: u.prompt_tokens,
-                output_tokens: u.completion_tokens,
-                cached_input_tokens: 0,
-            })
-            .unwrap_or_default();
+fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderError> {
+    #[derive(serde::Deserialize)]
+    struct SseChunk {
+        choices: Vec<SseChoice>,
+        usage: Option<Usage>,
+    }
+    #[derive(serde::Deserialize)]
+    struct SseChoice {
+        delta: SseDelta,
+        finish_reason: Option<String>,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct SseDelta {
+        content: Option<String>,
+        #[serde(default)]
+        reasoning_content: Option<String>,
+        tool_calls: Option<Vec<SseToolCallRef>>,
+    }
+    #[derive(serde::Deserialize)]
+    struct SseToolCallRef {
+        index: usize,
+        id: Option<String>,
+        function: SseFunction,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct SseFunction {
+        name: Option<String>,
+        arguments: Option<String>,
+    }
 
-        Ok(Completion {
-            message: Message {
-                role: Role::Assistant,
-                content: Content::Text(choice.message.content.unwrap_or_default()),
-                reasoning: None,
-                tool_call_id: None,
-                tool_calls,
-            },
-            usage,
-            finish_reason,
+    let chunk: SseChunk = serde_json::from_str(payload)
+        .map_err(|e| ProviderError::InvalidResponse(format!("sse json: {e}")))?;
+
+    let choice = chunk.choices.into_iter().next()
+        .ok_or_else(|| ProviderError::InvalidResponse("sse: no choices".into()))?;
+
+    let tool_call_delta = choice.delta.tool_calls.and_then(|calls| {
+        calls.into_iter().next().map(|c| hermes_core::provider::ToolCallDelta {
+            index: c.index,
+            id: c.id,
+            name: c.function.name,
+            arguments_delta: c.function.arguments,
         })
+    });
+
+    Ok(CompletionDelta {
+        content_delta: choice.delta.content,
+        reasoning_delta: choice.delta.reasoning_content,
+        tool_call_delta,
+        usage: chunk.usage,
+        finish_reason: choice.finish_reason.as_deref().map(FinishReason::from_provider_str),
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hermes_core::provider::ToolCallDelta;
+
+    fn parse_sse_bytes(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
+        parse_sse_for_test(input)
+    }
+
+    #[test]
+    fn parses_single_text_chunk() {
+        let sse = b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n";
+        let deltas = parse_sse_bytes(sse).unwrap();
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].content_delta.as_deref(), Some("Hello"));
+    }
+
+    #[test]
+    fn parses_multiple_text_chunks() {
+        let sse = b"\
+data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":null}]}\n\n\
+data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+data: [DONE]\n\n";
+        let deltas = parse_sse_bytes(sse).unwrap();
+        assert_eq!(deltas.len(), 3);
+        assert_eq!(deltas[0].content_delta.as_deref(), Some("Hel"));
+        assert_eq!(deltas[1].content_delta.as_deref(), Some("lo"));
+        assert_eq!(deltas[2].finish_reason, Some(FinishReason::Stop));
+    }
+
+    #[test]
+    fn done_marker_terminates() {
+        let sse = b"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"y\"}}]}\n\n";
+        let deltas = parse_sse_bytes(sse).unwrap();
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].content_delta.as_deref(), Some("x"));
+    }
+
+    #[test]
+    fn tool_call_chunks_assemble() {
+        let sse = b"\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\"function\":{\"name\":\"bash\",\"arguments\":\"\"}}]}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"command\\\":\"}}]}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"ls\\\"}\"}}]}}]}\n\n\
+data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n";
+        let deltas = parse_sse_bytes(sse).unwrap();
+        assert_eq!(deltas.len(), 4);
+        let first_tool = deltas[0].tool_call_delta.as_ref().unwrap();
+        assert_eq!(first_tool.index, 0);
+        assert_eq!(first_tool.id.as_deref(), Some("call_a"));
+        assert_eq!(first_tool.name.as_deref(), Some("bash"));
+        assert_eq!(deltas[3].finish_reason, Some(FinishReason::ToolUse));
+    }
+
+    #[test]
+    fn malformed_json_yields_error() {
+        let sse = b"data: {not valid json}\n\n";
+        let result = parse_sse_bytes(sse);
+        assert!(matches!(result, Err(ProviderError::InvalidResponse(_))));
+    }
+
+    #[test]
+    fn comment_lines_are_skipped() {
+        let sse = b": this is a comment\ndata: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n";
+        let deltas = parse_sse_bytes(sse).unwrap();
+        assert_eq!(deltas.len(), 1);
     }
 }
