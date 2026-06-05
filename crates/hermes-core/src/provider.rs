@@ -16,28 +16,30 @@ pub trait Provider: Send + Sync {
     fn name(&self) -> &str;
     fn model(&self) -> &str;
 
-    /// Send messages, get a single completion back.
+    /// Stream deltas as the LLM generates them. The consumer drives the
+    /// stream to completion (or cancellation), emitting one event per
+    /// delta, then assembles a final `Completion` from accumulated state.
     ///
-    /// `tools` is a list of JSON Schema objects describing available tools.
-    /// `cancel` is a token the loop uses to say "stop, the user hit Ctrl-C".
-    /// Implementations MUST select on `cancel` and bail out cleanly.
-    async fn complete(
-        &self,
-        messages: &[Message],
-        tools: &[ToolSchema],
-        cancel: CancellationToken,
-    ) -> Result<Completion, ProviderError>;
-
-    /// Streaming variant. Default impl can fall back to `complete()` and
-    /// yield a single chunk — providers that support streaming override it.
+    /// Cancellation contract: the consumer MUST `select!` on the cancel
+    /// token and drop the stream when cancelled. Dropping the stream
+    /// aborts the in-flight HTTP body.
     async fn stream(
         &self,
         messages: &[Message],
         tools: &[ToolSchema],
         cancel: CancellationToken,
-    ) -> Result<CompletionStream, ProviderError> {
-        let _ = (messages, tools, &cancel);
-        Err(ProviderError::Other("streaming not implemented".into()))
+    ) -> Result<CompletionStream, ProviderError>;
+
+    /// Convenience: drive the stream to a single `Completion`. Default
+    /// implementation uses `accumulate_stream`. Providers do not override.
+    async fn complete(
+        &self,
+        messages: &[Message],
+        tools: &[ToolSchema],
+        cancel: CancellationToken,
+    ) -> Result<Completion, ProviderError> {
+        let stream = self.stream(messages, tools, cancel).await?;
+        accumulate_stream(stream).await
     }
 }
 
