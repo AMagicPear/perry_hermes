@@ -238,12 +238,17 @@ methods, the `accumulate_stream` free function, and the existing test module all
 verbatim from `provider.rs` to a new `accumulator.rs`. The `Provider` trait's default
 `complete()` impl now reads `crate::accumulator::accumulate_stream`.
 
-`provider.rs` re-exports the moved items to keep the public path the same:
+**Public path preservation**: `crates/hermes-loop/src/agent.rs:186` imports
+`hermes_core::provider::StreamAccumulator`. To keep this import working without touching
+`agent.rs`, `provider.rs` re-exports the moved items at the bottom of the file:
 
 ```rust
-// hermes-core/src/lib.rs (unchanged shape, possibly minor)
-pub use accumulator::{accumulate_stream, StreamAccumulator};
+// hermes-core/src/provider.rs
+pub use crate::accumulator::{accumulate_stream, StreamAccumulator};
 ```
+
+`hermes-core/src/lib.rs` is unchanged (it does not currently re-export `StreamAccumulator`
+from the crate root, and that remains the case).
 
 `hermes-core/src/provider.rs` shrinks to ~280 lines (just the trait + delta types + their tests).
 
@@ -289,9 +294,12 @@ In order of risk (smallest delta first):
    - `openai/sse.rs` takes `OpenAiStreamState` + `parse_sse_data_payload` + `split_think_tag_content`.
    - `crates/hermes-providers/src/lib.rs`: change `pub mod openai;` (still works — Rust
      resolves `openai.rs` OR `openai/mod.rs` OR `openai/` directory).
-   - Move the `#[cfg(test)] mod tests` block from `openai.rs` into `openai/request.rs`
-     (where the wire types live — most unit tests are JSON shape assertions on
-     `build_request_body`).
+   - **Test migration**: all 9 unit tests in `openai.rs::mod tests` are SSE-parser
+     tests (they all use the `parse_sse_for_test` helper which wraps `parse_sse_chunks`).
+     The whole `mod tests` block moves to `openai/sse.rs`. The test helper
+     `parse_sse_for_test` is rewritten to call `sse::sse_frame_stream` directly with a
+     fresh `OpenAiStreamState` (the existing one-liner becomes ~10 lines because the
+     closure now owns state — this is fine; the test body is unchanged).
 
 5. **Split `anthropic.rs` into `anthropic/` directory**:
    - `anthropic/mod.rs`: `AnthropicProvider` struct, `AnthropicRequestOptions`,
@@ -302,8 +310,18 @@ In order of risk (smallest delta first):
    - `anthropic/sse.rs`: `AnthropicStreamState` + `parse_sse_data_payload` +
      `parse_content_block_start` + `parse_content_block_delta` + `usage_delta` +
      `anthropic_finish_reason`.
-   - Move the `#[cfg(test)] mod tests` block to whichever submodule owns the
-     functionality tested.
+   - **Test migration**: `anthropic.rs::mod tests` has 9 tests — 7 of them
+     (`convert_messages_pulls_system_out_and_joins_text_parts`,
+     `convert_messages_emits_tool_use_and_tool_result_blocks`,
+     `request_body_uses_structured_tool_choice_and_input_schema`,
+     `thinking_defaults_to_off_for_claude_3_7`,
+     `manual_thinking_is_explicit`,
+     `adaptive_thinking_is_explicit`,
+     `adaptive_thinking_can_set_effort`) test request-body construction → move to
+     `anthropic/request.rs::mod tests`. The other 2 (`parses_text_tool_and_usage_stream`,
+     `message_delta_usage_can_update_input_tokens`) test the SSE parser → move to
+     `anthropic/sse.rs::mod tests`. Each module's test block keeps the same
+     `use super::*;` plus any additional `use` it needs.
 
 ### Step 4: Verify
 
