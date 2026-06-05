@@ -11,6 +11,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use clap::Parser;
 
+use hermes_core::error::LoopError;
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::Provider;
 use hermes_core::registry::{InMemoryRegistry, ToolRegistry};
@@ -235,9 +236,30 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
                 );
                 eprintln!();
             }
+            Err(LoopError::CancelledWith(partial)) => {
+                let chars = match &partial.content {
+                    Content::Text(s) => s.chars().count(),
+                    Content::Parts(_) => 0,
+                };
+                let calls = partial.tool_calls.as_ref().map(|c| c.len()).unwrap_or(0);
+                eprintln!(
+                    "\n  [cancelled mid-stream: {chars} chars streamed, {calls} tool call kept]"
+                );
+                if chars > 0 || calls > 0 {
+                    history.push(partial);
+                } else {
+                    history.pop();
+                }
+                eprintln!();
+            }
+            Err(LoopError::Cancelled) => {
+                eprintln!("\n[cancelled]");
+                history.pop();
+                eprintln!();
+            }
             Err(e) => {
                 eprintln!("error: {e}");
-                history.pop(); // remove the unprocessed user message
+                history.pop();
                 eprintln!();
             }
         }
