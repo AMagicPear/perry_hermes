@@ -48,6 +48,11 @@ impl OpenAiProvider {
 }
 
 #[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
+}
+
+#[derive(Serialize)]
 struct ChatRequest<'a> {
     model: &'a str,
     messages: Vec<OaiMessage<'a>>,
@@ -56,6 +61,10 @@ struct ChatRequest<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<&'static str>,
     stream: bool,
+    /// Ask OpenAI to include token usage in the stream's final chunk
+    /// (otherwise `in`/`out` metrics stay at 0).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
 }
 
 #[derive(Serialize)]
@@ -157,6 +166,7 @@ fn build_request_body<'a>(
         tools: oai_tools,
         tool_choice: if has_tools { Some("auto") } else { None },
         stream,
+        stream_options: Some(StreamOptions { include_usage: true }),
     })
 }
 
@@ -274,7 +284,27 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
     #[derive(serde::Deserialize)]
     struct SseChunk {
         choices: Vec<SseChoice>,
-        usage: Option<Usage>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        usage: Option<SseUsage>,
+    }
+    /// Maps OpenAI's usage field names to our internal Usage struct.
+    #[derive(serde::Deserialize)]
+    struct SseUsage {
+        prompt_tokens: u64,
+        completion_tokens: u64,
+        #[allow(dead_code)]
+        total_tokens: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cached_tokens: Option<u64>,
+    }
+    impl From<SseUsage> for Usage {
+        fn from(u: SseUsage) -> Self {
+            Usage {
+                input_tokens: u.prompt_tokens,
+                output_tokens: u.completion_tokens,
+                cached_input_tokens: u.cached_tokens.unwrap_or(0),
+            }
+        }
     }
     #[derive(serde::Deserialize)]
     struct SseChoice {
@@ -303,8 +333,20 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
     let chunk: SseChunk = serde_json::from_str(payload)
         .map_err(|e| ProviderError::InvalidResponse(format!("sse json: {e}")))?;
 
-    let choice = chunk.choices.into_iter().next()
-        .ok_or_else(|| ProviderError::InvalidResponse("sse: no choices".into()))?;
+    // OpenAI sends a final chunk with empty `choices` and a populated
+    // `usage` when `stream_options.include_usage=true`. Handle this by
+    // returning a delta with only the usage field set. All other deltas
+    // (which DO have a choice) proceed through the normal path.
+    let Some(choice) = chunk.choices.into_iter().next() else {
+        let usage = chunk.usage.map(Usage::from);
+        return Ok(CompletionDelta {
+            content_delta: None,
+            reasoning_delta: None,
+            tool_call_delta: None,
+            usage,
+            finish_reason: None,
+        });
+    };
 
     let tool_call_delta = choice.delta.tool_calls.and_then(|calls| {
         calls.into_iter().next().map(|c| hermes_core::provider::ToolCallDelta {
@@ -319,7 +361,7 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
         content_delta: choice.delta.content,
         reasoning_delta: choice.delta.reasoning_content,
         tool_call_delta,
-        usage: chunk.usage,
+        usage: chunk.usage.map(Usage::from),
         finish_reason: choice.finish_reason.as_deref().map(FinishReason::from_provider_str),
     })
 }
@@ -394,5 +436,27 @@ data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n";
         let sse = b": this is a comment\ndata: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n";
         let deltas = parse_sse_bytes(sse).unwrap();
         assert_eq!(deltas.len(), 1);
+    }
+
+    #[test]
+    fn usage_only_chunk_with_empty_choices_is_parsed() {
+        // OpenAI sends a final chunk with empty choices + usage when
+        // stream_options.include_usage=true is set. The parser must NOT
+        // error on this — it should return a delta with just usage set.
+        let sse = b"\
+data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n\
+data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4,\"total_tokens\":16,\"cached_tokens\":0}}\n\n\
+data: [DONE]\n\n";
+        let deltas = parse_sse_bytes(sse).unwrap();
+        assert_eq!(deltas.len(), 2);
+        assert_eq!(deltas[0].content_delta.as_deref(), Some("hi"));
+        let usage = deltas[1].usage.expect("usage-only chunk must surface usage");
+        assert_eq!(usage.input_tokens, 12);
+        assert_eq!(usage.output_tokens, 4);
+        // The usage-only chunk has no choice, so all choice-derived fields are None.
+        assert!(deltas[1].content_delta.is_none());
+        assert!(deltas[1].reasoning_delta.is_none());
+        assert!(deltas[1].tool_call_delta.is_none());
+        assert!(deltas[1].finish_reason.is_none());
     }
 }
