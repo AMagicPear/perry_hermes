@@ -24,29 +24,20 @@ pub struct SkillLocation {
 ///
 /// Returns `Err` if `read_dir` on `skills_dir` itself fails (permissions,
 /// vanished directory).
-pub fn find_skill_files(skills_dir: &Path) -> Vec<SkillLocation> {
+pub fn find_skill_files(skills_dir: &Path) -> anyhow::Result<Vec<SkillLocation>> {
     let mut out = Vec::new();
-    // Swallow errors: existing callers expect an empty vec on failure.
-    let _ = walk_with_error(skills_dir, 0, None, &mut out);
-    out
-}
-
-/// Variant of `find_skill_files` that propagates `read_dir` errors.
-pub fn find_skill_files_with_error(
-    skills_dir: &Path,
-) -> std::io::Result<Vec<SkillLocation>> {
-    let mut out = Vec::new();
-    walk_with_error(skills_dir, 0, None, &mut out)?;
+    walk(skills_dir, 0, None, &mut out)?;
     Ok(out)
 }
 
-fn walk_with_error(
+fn walk(
     dir: &Path,
     depth: usize,
     category: Option<&str>,
     out: &mut Vec<SkillLocation>,
-) -> std::io::Result<()> {
-    for entry in std::fs::read_dir(dir)? {
+) -> anyhow::Result<()> {
+    let entries = std::fs::read_dir(dir)?;
+    for entry in entries {
         let entry = entry?;
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
@@ -76,50 +67,12 @@ fn walk_with_error(
         } else if depth == 0 {
             // Depth 0 dir with no SKILL.md: recurse as category container.
             // Establish this directory's name as the category.
-            walk_with_error(&path, 1, Some(name), out)?;
+            walk(&path, 1, Some(name), out)?;
         }
         // At depth >= 1, directories without direct SKILL.md are too deep —
         // skip (do not recurse).
     }
     Ok(())
-}
-
-#[allow(unused)]
-fn walk(dir: &Path, depth: usize, category: Option<&str>, out: &mut Vec<SkillLocation>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if name.starts_with('.') {
-            continue;
-        }
-        if EXCLUDED_DIRS.contains(&name) {
-            continue;
-        }
-        let Ok(ft) = entry.file_type() else { continue };
-
-        if ft.is_file() {
-            // Skip files — they are handled as children of directories.
-            continue;
-        }
-
-        // We have a directory. Check if SKILL.md is a direct child file.
-        let skill_md = path.join("SKILL.md");
-        if skill_md.is_file() {
-            // Skill at this depth with current category.
-            out.push(SkillLocation { skill_md, category: category.map(String::from) });
-        } else if depth == 0 {
-            // Depth 0 dir with no SKILL.md: recurse as category container.
-            // Establish this directory's name as the category.
-            walk(&path, 1, Some(name), out);
-        }
-        // At depth >= 1, directories without direct SKILL.md are too deep —
-        // skip (do not recurse).
-    }
 }
 
 #[cfg(test)]
@@ -164,7 +117,7 @@ mod tests {
             tmp.path(),
             &[("rust-core-style/SKILL.md", "---\nname: x\n---\n")],
         );
-        let locs = find_skill_files(tmp.path());
+        let locs = find_skill_files(tmp.path()).unwrap();
         assert_eq!(locs.len(), 1);
         assert_eq!(locs[0].category, None);
         assert_eq!(
@@ -180,7 +133,7 @@ mod tests {
             tmp.path(),
             &[("software-engineering/dogfood/SKILL.md", "body")],
         );
-        let locs = find_skill_files(tmp.path());
+        let locs = find_skill_files(tmp.path()).unwrap();
         assert_eq!(locs.len(), 1);
         assert_eq!(locs[0].category.as_deref(), Some("software-engineering"));
     }
@@ -192,7 +145,7 @@ mod tests {
             tmp.path(),
             &[("a/b/c/SKILL.md", "body")],
         );
-        let locs = find_skill_files(tmp.path());
+        let locs = find_skill_files(tmp.path()).unwrap();
         assert!(locs.is_empty());
     }
 
@@ -200,7 +153,7 @@ mod tests {
     fn ignores_root_level_skill_md() {
         let tmp = tempfile::tempdir().unwrap();
         build_tree(tmp.path(), &[("SKILL.md", "body")]);
-        let locs = find_skill_files(tmp.path());
+        let locs = find_skill_files(tmp.path()).unwrap();
         assert!(locs.is_empty());
     }
 
@@ -216,7 +169,7 @@ mod tests {
                 ("node_modules/inner-skill/SKILL.md", "body"),
             ],
         );
-        let locs = find_skill_files(tmp.path());
+        let locs = find_skill_files(tmp.path()).unwrap();
         assert_eq!(locs.len(), 1);
         assert_eq!(locs[0].category, None);
     }
@@ -235,7 +188,7 @@ mod tests {
                 ("SKILL.md", "x"),       // ignored
             ],
         );
-        let locs = find_skill_files(tmp.path());
+        let locs = find_skill_files(tmp.path()).unwrap();
         let names = loc_names(&locs);
         assert_eq!(
             names,

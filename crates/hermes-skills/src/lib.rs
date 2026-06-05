@@ -45,7 +45,7 @@ pub fn load_all(skills_dir: &Path) -> anyhow::Result<Vec<Skill>> {
     if !skills_dir.exists() {
         return Ok(Vec::new());
     }
-    let locations = layout::find_skill_files_with_error(skills_dir)?;
+    let locations = layout::find_skill_files(skills_dir)?;
 
     // Deduplicate by qualified_name within the same category.
     // First-seen wins.
@@ -160,8 +160,9 @@ fn parse_one(loc: &layout::SkillLocation) -> Option<Skill> {
     }
     if !validate::is_valid_description(description) {
         tracing::warn!(
-            "skipping {}: invalid `description`",
-            loc.skill_md.display()
+            "skipping {}: invalid `description` {:?}",
+            loc.skill_md.display(),
+            description
         );
         return None;
     }
@@ -222,19 +223,12 @@ mod tests {
         fs::write(&p, contents).unwrap();
     }
 
-    const VALID_FM: &str = "---\nname: {NAME}\ndescription: \"{DESC}\"\n---\n";
+    const VALID_FM: &str = "---\nname: {NAME}\ndescription: \"{DESC}\"\n---\nbody\n";
 
     fn fm(name: &str, desc: &str) -> String {
         VALID_FM
             .replace("{NAME}", name)
             .replace("{DESC}", desc)
-    }
-
-    fn fm_with_body(name: &str, desc: &str) -> String {
-        VALID_FM
-            .replace("{NAME}", name)
-            .replace("{DESC}", desc)
-            + "body\n"
     }
 
     #[test]
@@ -243,7 +237,7 @@ mod tests {
         write_skill(
             tmp.path(),
             "rust-core-style/SKILL.md",
-            &fm_with_body("rust-core-style", "Rust style guide"),
+            &fm("rust-core-style", "Rust style guide"),
         );
         let skills = load_all(tmp.path()).unwrap();
         assert_eq!(skills.len(), 1);
@@ -371,7 +365,7 @@ mod tests {
         write_skill(
             tmp.path(),
             "header-only/SKILL.md",
-            &fm("header-only", "x"),
+            "---\nname: header-only\ndescription: \"x\"\n---\n",
         );
         let skills = load_all(tmp.path()).unwrap();
         assert_eq!(skills.len(), 1);
