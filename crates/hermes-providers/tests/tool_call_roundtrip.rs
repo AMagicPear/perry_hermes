@@ -19,7 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::message::{Content, Message, Role, ToolCall};
+use hermes_core::message::{Content, ContentPart, Message, Role, ToolCall};
 use hermes_core::provider::Provider;
 use hermes_providers::OpenAiProvider;
 
@@ -192,4 +192,71 @@ async fn openai_provider_serializes_assistant_tool_calls_in_request_body() {
         "second request body should contain tool_call marker, got: {}",
         captured[1]
     );
+}
+
+#[tokio::test]
+async fn openai_provider_serializes_content_parts_as_content_array() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let bodies: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let bodies_for_server = Arc::clone(&bodies);
+    tokio::spawn(async move {
+        run_capturing_server(listener, bodies_for_server).await;
+    });
+
+    let base_url = format!("http://{}", addr);
+    let provider = OpenAiProvider::new("k", "m").with_base_url(&base_url);
+
+    provider
+        .complete(
+            &[Message {
+                role: Role::User,
+                content: Content::Parts(vec![
+                    ContentPart::Text {
+                        text: "first text".into(),
+                    },
+                    ContentPart::ImageUrl {
+                        url: "https://example.com/image.png".into(),
+                    },
+                    ContentPart::Text {
+                        text: "second text".into(),
+                    },
+                ]),
+                reasoning: None,
+                tool_call_id: None,
+                tool_calls: None,
+            }],
+            &[],
+            CancellationToken::new(),
+        )
+        .await
+        .expect("call");
+
+    for _ in 0..20 {
+        if bodies.lock().unwrap().len() == 1 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let captured = bodies.lock().unwrap().clone();
+    assert_eq!(
+        captured.len(),
+        1,
+        "expected exactly 1 captured request body, got {}",
+        captured.len()
+    );
+
+    let body: serde_json::Value = serde_json::from_str(&captured[0]).unwrap();
+    let content = &body["messages"][0]["content"];
+    assert!(
+        content.is_array(),
+        "content parts should be sent as a content array, got: {}",
+        content
+    );
+    assert_eq!(content[0], json!({ "type": "text", "text": "first text" }));
+    assert_eq!(
+        content[1],
+        json!({ "type": "image_url", "image_url": { "url": "https://example.com/image.png" } })
+    );
+    assert_eq!(content[2], json!({ "type": "text", "text": "second text" }));
 }

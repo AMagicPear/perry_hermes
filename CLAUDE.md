@@ -78,7 +78,7 @@ Current code is authoritative. `plans/rust-port-design.md` is a historical desig
 
 - Permission model is still coarse — `BashTool` checks `subprocess`, but runtime currently always enables it and no finer gateway policy exists yet.
 - Unknown `finish_reason` maps to `FinishReason::Error`, but provider diagnostics are still coarse.
-- `Content::Parts` only sends the first text part to OpenAI-compatible providers; real multimodal mapping is still missing.
+- OpenAI-compatible providers now serialize `Content::Parts` as text/image_url content arrays; other media part types are not modeled yet.
 - `BashTool` does not kill concurrent children — under heavy parallel load the `child.kill().await` path is untested.
 
 **P1 (next up):**

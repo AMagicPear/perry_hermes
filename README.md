@@ -178,7 +178,7 @@ crates/hermes-tools/tests/
 
 - `ToolContext.permissions` 已建模但未强制执行
 - 未知 `finish_reason` 会映射为 `FinishReason::Error`，但错误信息仍较粗
-- `Content::Parts` 目前只取第一个文本 part 发送给 OpenAI-compatible provider，真正多模态还未实现
+- OpenAI-compatible provider 已支持 `Content::Parts` 的 text/image_url content array；其他多媒体 part 类型尚未建模
 - 复用同一 `BashTool` 时 `child.kill().await` 的并发安全未充分测试
 
 ## License

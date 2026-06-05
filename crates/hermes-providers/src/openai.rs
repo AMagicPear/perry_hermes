@@ -71,7 +71,7 @@ struct ChatRequest<'a> {
 struct OaiMessage<'a> {
     role: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<&'a str>,
+    content: Option<OaiMessageContent<'a>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_id: Option<&'a str>,
     /// Round-trip the LLM's `tool_calls` so the next request
@@ -81,6 +81,25 @@ struct OaiMessage<'a> {
     /// returns it), not a nested object.
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_calls: Option<Vec<OaiToolCallRef<'a>>>,
+}
+
+#[derive(Serialize)]
+#[serde(untagged)]
+enum OaiMessageContent<'a> {
+    Text(&'a str),
+    Parts(Vec<OaiContentPart<'a>>),
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum OaiContentPart<'a> {
+    Text { text: &'a str },
+    ImageUrl { image_url: OaiImageUrl<'a> },
+}
+
+#[derive(Serialize)]
+struct OaiImageUrl<'a> {
+    url: &'a str,
 }
 
 #[derive(Serialize)]
@@ -138,11 +157,20 @@ fn build_request_body<'a>(
             OaiMessage {
                 role: m.role.as_str(),
                 content: match &m.content {
-                    Content::Text(s) => Some(s.as_str()),
-                    Content::Parts(parts) => parts.iter().find_map(|p| match p {
-                        ContentPart::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    }),
+                    Content::Text(s) => Some(OaiMessageContent::Text(s.as_str())),
+                    Content::Parts(parts) => Some(OaiMessageContent::Parts(
+                        parts
+                            .iter()
+                            .map(|p| match p {
+                                ContentPart::Text { text } => OaiContentPart::Text {
+                                    text: text.as_str(),
+                                },
+                                ContentPart::ImageUrl { url } => OaiContentPart::ImageUrl {
+                                    image_url: OaiImageUrl { url: url.as_str() },
+                                },
+                            })
+                            .collect(),
+                    )),
                 },
                 tool_call_id: m.tool_call_id.as_deref(),
                 tool_calls,

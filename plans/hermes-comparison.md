@@ -89,12 +89,13 @@ Phase 0-6 已经收口 **CLI 可用性、工具范围控制、进程稳定性、
 - 支持 SSE streaming,并解析 usage-only chunk。
 - 解析 OpenAI 返回的 JSON 字符串形式 tool arguments。
 - 序列化 assistant `tool_calls` 到下一轮请求体。
+- `Content::Parts` 会按 OpenAI-compatible content array 发送 text/image_url parts。
 - 处理 401/429/非成功状态。
 
 仍需改进:
 
 - 未知 `finish_reason` 会映射为 `FinishReason::Error`,但 provider 诊断仍较粗。
-- `Content::Parts` 当前只取第一个文本 part,真正多模态 content array 还未实现。
+- 其他多媒体 part 类型尚未建模;当前只覆盖 text/image_url。
 - 429 暂时固定 retry-after=1,没有读取 header。
 
 ### 3.4 `hermes-tools`
@@ -216,7 +217,7 @@ phase 4 最小 CLI 可以不做持久化,但如果做多轮 REPL,至少需要在
 | P0 | 缺少 `IterationBudget` / 压缩触发 | 长会话会无限增长直到 provider 报 context limit | Phase 7 引入预算对象和压缩入口 |
 | P0 | 权限策略仍太粗 | gateway 暴露 shell 工具时权限语义不够 | 扩展 `ToolPermissions`,并由 runtime/gateway 注入 |
 | P1 | toolset scope 只在 registry 构造时生效 | 无法按 session / turn 动态控制工具 | 引入轻量 `ToolScope`;schema 和 dispatch 共用 |
-| P1 | `Content::Parts` 只取首个文本 part | 多模态输入不能正确进入 provider | 不支持时显式报错,或实现 OpenAI content array 映射 |
+| P1 | `Content::Parts` 仅覆盖 text/image_url | 音频、文件等多媒体输入尚不能进入 provider | 按需扩展 `ContentPart` 和 provider 映射 |
 | P2 | 429 retry-after 固定为 1 | 限流恢复策略粗糙 | 读取 response header |
 | P2 | tool metadata 缺失 | `hermes tools`/友好提示不好做 | 增加 `check/requires_env/emoji` 默认方法 |
 
