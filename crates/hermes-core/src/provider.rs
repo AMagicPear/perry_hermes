@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::ProviderError;
-use crate::message::{Message, ToolCall};
+use crate::message::Message;
 use crate::registry::ToolSchema;
 use crate::usage::Usage;
 
@@ -84,11 +84,24 @@ impl FinishReason {
 pub type CompletionStream =
     std::pin::Pin<Box<dyn futures::Stream<Item = CompletionDelta> + Send>>;
 
+/// One chunk of a streaming tool call. OpenAI emits these incrementally:
+/// the first chunk for a given `index` carries `id` and `name`; later
+/// chunks carry `arguments_delta` (a JSON string fragment, NOT a parsed
+/// value — the consumer concatenates them).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolCallDelta {
+    pub index: usize,
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub arguments_delta: Option<String>,
+}
+
 /// One chunk of a streaming response.
 #[derive(Debug, Clone)]
 pub struct CompletionDelta {
     pub content_delta: Option<String>,
     pub reasoning_delta: Option<String>,
-    pub tool_call_delta: Option<ToolCall>,
+    pub tool_call_delta: Option<ToolCallDelta>,
+    pub usage: Option<Usage>,
     pub finish_reason: Option<FinishReason>,
 }
