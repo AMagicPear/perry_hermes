@@ -1,6 +1,7 @@
 //! The `Provider` trait — the only LLM-facing abstraction in the codebase.
 
 use async_trait::async_trait;
+use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::ProviderError;
@@ -81,8 +82,11 @@ impl FinishReason {
 
 /// A stream of incremental deltas. Implementations should yield each
 /// `CompletionDelta` as soon as the corresponding chunk arrives.
+///
+/// The stream yields `Result<CompletionDelta, ProviderError>` so callers can
+/// propagate provider-level errors via `?`.
 pub type CompletionStream =
-    std::pin::Pin<Box<dyn futures::Stream<Item = CompletionDelta> + Send>>;
+    std::pin::Pin<Box<dyn futures::Stream<Item = Result<CompletionDelta, ProviderError>> + Send>>;
 
 /// One chunk of a streaming tool call. OpenAI emits these incrementally:
 /// the first chunk for a given `index` carries `id` and `name`; later
@@ -248,6 +252,25 @@ impl StreamAccumulator {
     }
 }
 
+/// Drive a `CompletionStream` to completion and return the final `Completion`.
+///
+/// This is a public helper used by the default `Provider::complete` impl.
+/// It does NOT emit per-delta events — for that, use `AgentLoop::run` which
+/// has its own private drive loop.
+pub async fn accumulate_stream(
+    mut stream: CompletionStream,
+) -> Result<Completion, ProviderError> {
+    let mut acc = StreamAccumulator::new();
+    while let Some(item) = stream.next().await {
+        let delta = item?;
+        acc.add(&delta);
+        if delta.finish_reason.is_some() {
+            break;
+        }
+    }
+    Ok(acc.finalize())
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -265,6 +288,65 @@ mod tests {
             usage: None,
             finish_reason: None,
         }
+    }
+
+    #[tokio::test]
+    async fn accumulate_stream_returns_completion() {
+        use futures::stream;
+        let deltas = vec![
+            Ok(CompletionDelta {
+                content_delta: Some("Hello".into()),
+                reasoning_delta: None,
+                tool_call_delta: None,
+                usage: None,
+                finish_reason: None,
+            }),
+            Ok(CompletionDelta {
+                content_delta: Some(" world".into()),
+                reasoning_delta: None,
+                tool_call_delta: None,
+                usage: Some(Usage { input_tokens: 1, output_tokens: 2, cached_input_tokens: 0 }),
+                finish_reason: Some(FinishReason::Stop),
+            }),
+        ];
+        let stream: CompletionStream = Box::pin(stream::iter(deltas));
+        let completion = accumulate_stream(stream).await.unwrap();
+        assert_eq!(completion.finish_reason, FinishReason::Stop);
+        assert!(matches!(completion.message.content, Content::Text(ref s) if s == "Hello world"));
+        assert_eq!(completion.usage.output_tokens, 2);
+    }
+
+    #[tokio::test]
+    async fn accumulate_stream_defaults_to_stop_on_none() {
+        use futures::stream;
+        let deltas = vec![Ok(CompletionDelta {
+            content_delta: Some("hi".into()),
+            reasoning_delta: None,
+            tool_call_delta: None,
+            usage: None,
+            finish_reason: None,
+        })];
+        let stream: CompletionStream = Box::pin(stream::iter(deltas));
+        let completion = accumulate_stream(stream).await.unwrap();
+        assert_eq!(completion.finish_reason, FinishReason::Stop);
+    }
+
+    #[tokio::test]
+    async fn accumulate_stream_propagates_error() {
+        use futures::stream;
+        let deltas: Vec<Result<CompletionDelta, ProviderError>> = vec![
+            Ok(CompletionDelta {
+                content_delta: Some("a".into()),
+                reasoning_delta: None,
+                tool_call_delta: None,
+                usage: None,
+                finish_reason: None,
+            }),
+            Err(ProviderError::InvalidResponse("boom".into())),
+        ];
+        let stream: CompletionStream = Box::pin(stream::iter(deltas));
+        let result = accumulate_stream(stream).await;
+        assert!(matches!(result, Err(ProviderError::InvalidResponse(_))));
     }
 
     #[test]
