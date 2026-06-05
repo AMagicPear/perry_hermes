@@ -69,8 +69,9 @@ For loop tests, `ScriptedProvider` (in `crates/hermes-loop/tests/`) returns a fi
 - ✅ BashTool pipe deadlock — `crates/hermes-tools/src/bash.rs` now drains `stdout` and `stderr` concurrently via `tokio::join!` instead of sequentially.
 - ✅ CLI not wired to runtime — `hermes-cli` binary now uses `AIAgent`'s pieces directly; REPL is end-to-end runnable.
 - ✅ `tool_choice: "auto"` sent on empty tool list — OpenAI provider now sets `tool_choice: None` when `tools.is_empty()`.
+- ✅ No streaming (Phase 5) — `Provider::stream()` is the only required method; `OpenAiProvider` parses SSE and yields `CompletionDelta`; `AgentLoop::run` drives the stream via `tokio::select!` and emits `ContentDelta` / `ReasoningDelta` / `ToolCallPartial` events. CLI prints tokens as they arrive. Cancel mid-stream preserves partial content via `LoopError::CancelledWith(Message)`.
 
-**Still open (before phase 5):**
+**Still open (before phase 7):**
 
 - `ToolContext.permissions` not enforced — the field exists, no tool consults it.
 - Unknown `finish_reason` defaults to `Stop` — `FinishReason::from_provider_str` silently maps anything unrecognized to `Stop` instead of returning `Error`.
@@ -79,7 +80,7 @@ For loop tests, `ScriptedProvider` (in `crates/hermes-loop/tests/`) returns a fi
 
 **P1 (next up):**
 
-- No streaming yet (Phase 5) — CLI blocks until full completion.
-- No `IterationBudget` (refund / grace call / subagent budget) — `LoopConfig.max_iterations` is a flat `u32`.
+- ~~No streaming yet (Phase 5)~~ — resolved.
+- No `IterationBudget` (refund / grace call / subagent budget) — `LoopConfig.max_iterations` is a flat `u32`. (Phase 7)
 - `parallel_tool_calls` field is plumbed but always false.
 - `Toolset` filtering works at registry construction time (via `--disabled-toolsets`) but is not reactive to per-turn changes.
