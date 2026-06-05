@@ -6,7 +6,7 @@ use std::sync::Arc;
 pub mod config;
 
 use anyhow::{anyhow, Context};
-use config::{ProviderConfig, ProviderKind, ThinkingConfig, ThinkingMode};
+use config::{ThinkingConfig, ThinkingMode};
 
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::Provider;
@@ -19,7 +19,7 @@ use hermes_providers::{
 use hermes_tools::BashTool;
 use tokio_util::sync::CancellationToken;
 
-pub use config::HermesConfig;
+pub use config::{AgentConfig, HermesConfig, ProviderConfig, ProviderKind};
 pub use hermes_loop::LoopEvent;
 
 pub const DEFAULT_SYSTEM_PROMPT: &str =

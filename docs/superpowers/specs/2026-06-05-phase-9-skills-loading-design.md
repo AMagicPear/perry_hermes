@@ -95,7 +95,7 @@ site-packages  __pycache__  .tox  .nox  .pytest_cache
 
 ### 5.2 `SKILL.md` Format
 
-Frontmatter is required. The first non-empty line must be `---`, the closing fence is a standalone `---` followed by a newline. The body is everything after the closing fence (may be empty).
+Frontmatter is required. **Leading blank lines before the first `---` are tolerated**; the frontmatter fence is the first non-empty line in the file. The closing fence is a standalone `---` followed by a newline. The body is everything after the closing fence (may be empty).
 
 ```markdown
 ---
@@ -114,7 +114,7 @@ Matches [Anthropic's official constraints](https://platform.claude.com/docs/en/a
 
 - Length ≤ 64 characters
 - Only lowercase letters `a-z`, digits `0-9`, and hyphens `-`
-- No XML tags (no `<` or `>`)
+- No `<` or `>` characters anywhere in the string (any literal angle bracket is rejected; this is simpler and stricter than a regex-based tag detector and matches the spirit of the Anthropic "no XML tags" rule)
 - Not in the reserved set: `anthropic`, `claude`
 - Directory name must equal `name` byte-for-byte
 
@@ -122,7 +122,7 @@ Matches [Anthropic's official constraints](https://platform.claude.com/docs/en/a
 
 - Non-empty
 - Length ≤ 1024 characters
-- No XML tags
+- No `<` or `>` characters (same rule as `name`)
 
 ### 5.5 `category` Validation
 
@@ -206,7 +206,7 @@ fn default_skills_dir() -> Option<PathBuf> {
         .map(|h| PathBuf::from(h).join(".perry_hermes").join("skills"))
 }
 
-fn compose_system_prompt(user_prompt: &Option<String>) -> Option<String> {
+fn compose_system_prompt(user_prompt: Option<&str>) -> Option<String> {
     let skills = match default_skills_dir() {
         Some(d) => match hermes_skills::load_all(&d) {
             Ok(v) => v,
@@ -224,7 +224,7 @@ fn compose_system_prompt(user_prompt: &Option<String>) -> Option<String> {
 
     // Fix the §3 regression: when the user does not supply a system
     // prompt, fall back to DEFAULT_SYSTEM_PROMPT.
-    let base = user_prompt.as_deref().unwrap_or(DEFAULT_SYSTEM_PROMPT);
+    let base = user_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
 
     if skills_block.is_empty() {
         Some(base.to_string())
@@ -360,6 +360,7 @@ Rendering:
 - `runtime_appends_skills_block_after_user_supplied_system_prompt` — `system_prompt = "my custom prompt"` + a skill → resulting system message starts with the custom prompt and contains "Available skills"
 - `runtime_does_not_fail_construction_when_skills_dir_has_parse_errors` — best-effort behavior
 - `runtime_loads_skills_from_home_perry_hermes_skills_path` — set `HOME` to a temp dir, drop a skill in `<temp>/.perry_hermes/skills/<name>/SKILL.md`, assert it shows up
+- `runtime_uses_default_system_prompt_when_home_is_unset` — `HOME=""` (or removed) and no skills → system message equals `DEFAULT_SYSTEM_PROMPT` verbatim; no skills block, no panic
 
 ### 8.3 Manual Smoke (Documented, Not in CI)
 
@@ -404,6 +405,14 @@ Documented in `README.md` "Quick start": copy `crates/hermes-runtime/skills-exam
 - `crates/hermes-core/` — no new types needed; `serde_yaml` is consumed in `hermes-skills`
 - `crates/hermes-providers/` / `crates/hermes-tools/` — independent leaf crates
 
-## 10. Open Questions
+## 10. Known Limitations (deferred to Phase 12)
+
+These are accepted gaps in this spec, captured so they don't slip through silently:
+
+1. **`skill_view` tool doesn't exist yet.** The rendered block tells the LLM to "use the `skill_view` tool (or read the file directly with bash) to load a skill's body." The `skill_view` tool is not registered. The fallback — bash — only works when the `terminal` toolset is enabled. **When the user sets `disabled_toolsets = ["terminal"]` (a perfectly reasonable config), the LLM sees the system prompt reference a tool that isn't reachable.** This is acceptable because this spec delivers metadata only; the LLM still knows what skills exist and can ask the user to enable the terminal toolset, or the user can re-enable it. Phase 12 ships the actual `SkillActivationTool` and closes this gap.
+2. **No mtime / content-hash invalidation.** Skills are re-read on every `AIAgent::from_config` call. Editing a skill mid-session has no effect until the next agent is constructed. This is consistent with the per-session model (the CLI constructs one agent at startup) but worth documenting for gateways that may construct agents more often.
+3. **Body in memory.** `Skill.body` is a full `String` of the file. For tens of skills this is fine; for thousands of skills it would add up. The index-rendering path never touches `body`, so this is paid only at construction time. No change required for Phase 9; future phases can lazy-load on demand.
+
+## 11. Open Questions
 
 None. The plan to deliver Level 1 metadata only, in the simplest possible shape, leaves Phase 12 (curator + SkillActivationTool + body loading) as a clean follow-up with its own spec.
