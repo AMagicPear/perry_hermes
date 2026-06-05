@@ -26,7 +26,7 @@ use tokio_util::sync::CancellationToken;
 
 use hermes_core::error::{LoopError, ProviderError};
 use hermes_core::message::{Content, Message, Role, ToolCall};
-use hermes_core::provider::{FinishReason, Provider};
+use hermes_core::provider::{FinishReason, Provider, ToolCallDelta};
 use hermes_core::registry::ToolRegistry;
 use hermes_core::tool::{ToolContext, ToolOutput};
 
@@ -92,6 +92,13 @@ pub struct RunResult {
 #[derive(Debug, Clone)]
 pub enum LoopEvent {
     Thinking,
+    /// One text token from a streaming assistant message.
+    ContentDelta(String),
+    /// One reasoning token (o1, extended thinking).
+    ReasoningDelta(String),
+    /// A delta for a streaming tool call. Silent-accumulated by the loop;
+    /// `ToolCallStarted` fires only when the call is complete.
+    ToolCallPartial(ToolCallDelta),
     AssistantMessage(Message),
     ToolCallStarted {
         call: ToolCall,
