@@ -9,11 +9,13 @@ description = "The agent loop — assembles context, calls the LLM, dispatches t
 [dependencies]
 hermes-core.workspace = true
 async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 jsonschema.workspace = true
+futures.workspace = true
 
 [dev-dependencies]
 # Integration tests use these to compose a real Provider + AgentLoop +

@@ -22,6 +22,7 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
 use hermes_core::error::{LoopError, ProviderError};
@@ -170,12 +171,47 @@ impl<P: Provider, R: ToolRegistry> AgentLoop<P, R> {
             // ── 2. Resolve tool schemas ────────────────────────────
             let tools = self.registry.schemas();
 
-            // ── 3. Call the LLM ────────────────────────────────────
+            // ── 3. Call the LLM (streaming) ────────────────────────
             on_event(LoopEvent::Thinking);
-            let completion = self
+            let mut stream = self
                 .provider
-                .complete(&messages, &tools, cancel.clone())
+                .stream(&messages, &tools, cancel.clone())
                 .await?;
+            let mut acc = hermes_core::provider::StreamAccumulator::new();
+            let completion = loop {
+                tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        on_event(LoopEvent::Cancelled);
+                        return if acc.is_empty() {
+                            Err(LoopError::Cancelled)
+                        } else {
+                            Err(LoopError::CancelledWith(acc.into_partial_message(Role::Assistant)))
+                        };
+                    }
+                    chunk = stream.next() => {
+                        match chunk {
+                            Some(Ok(delta)) => {
+                                if let Some(s) = &delta.content_delta {
+                                    on_event(LoopEvent::ContentDelta(s.clone()));
+                                }
+                                if let Some(s) = &delta.reasoning_delta {
+                                    on_event(LoopEvent::ReasoningDelta(s.clone()));
+                                }
+                                if let Some(td) = &delta.tool_call_delta {
+                                    on_event(LoopEvent::ToolCallPartial(td.clone()));
+                                }
+                                acc.add(&delta);
+                                if delta.finish_reason.is_some() {
+                                    break acc.finalize();
+                                }
+                            }
+                            Some(Err(e)) => return Err(LoopError::Provider(e)),
+                            None => break acc.finalize(),
+                        }
+                    }
+                }
+            };
             metrics.iterations += 1;
             metrics.input_tokens += completion.usage.input_tokens;
             metrics.output_tokens += completion.usage.output_tokens;
