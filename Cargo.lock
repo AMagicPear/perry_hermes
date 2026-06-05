@@ -938,11 +938,14 @@ name = "hermes-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "futures",
  "hermes-core",
  "hermes-loop",
  "hermes-providers",
  "hermes-tools",
  "serde",
+ "serde_json",
  "tokio",
  "tokio-util",
  "toml",
