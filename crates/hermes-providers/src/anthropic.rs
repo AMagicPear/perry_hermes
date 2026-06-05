@@ -793,4 +793,115 @@ mod tests {
         assert_eq!(usage.input_tokens, 8);
         assert_eq!(usage.output_tokens, 4);
     }
+
+    #[test]
+    fn chunks_split_across_frames_assemble_correctly() {
+        use futures::stream;
+        let chunks: Vec<&[u8]> = vec![
+            b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hel\"}}\n",
+            b"\n",
+            b"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"lo\"}}\n\n",
+        ];
+        let byte_stream = stream::iter(
+            chunks
+                .iter()
+                .map(|c| Ok::<_, reqwest::Error>(Bytes::copy_from_slice(c)))
+                .collect::<Vec<_>>(),
+        );
+        let s = parse_sse_chunks(byte_stream);
+        let deltas: Vec<CompletionDelta> = futures::executor::block_on(async move {
+            let mut v = Vec::new();
+            futures::pin_mut!(s);
+            while let Some(item) = s.next().await {
+                v.push(item.unwrap());
+            }
+            v
+        });
+        assert_eq!(deltas.len(), 2);
+        assert_eq!(deltas[0].content_delta.as_deref(), Some("Hel"));
+        assert_eq!(deltas[1].content_delta.as_deref(), Some("lo"));
+    }
+
+    #[tokio::test]
+    async fn transport_error_becomes_provider_error_transport() {
+        // A byte-stream that yields Err(reqwest::Error) must propagate
+        // as ProviderError::Transport. reqwest::Error has no public
+        // constructor, so we send a real request to a port that will
+        // refuse (127.0.0.1:1 — privileged, never bound) and capture
+        // the resulting transport error. The whole test runs in a
+        // tokio runtime so reqwest::Client::send() has a reactor.
+        use futures::stream;
+        let reqwest_err: reqwest::Error = reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .expect_err("expected transport error from refused connection");
+        let byte_stream = stream::iter(vec![Err::<Bytes, _>(reqwest_err)]);
+        let s = parse_sse_chunks(byte_stream);
+        let mut err = None;
+        futures::pin_mut!(s);
+        while let Some(item) = s.next().await {
+            if let Err(e) = item {
+                err = Some(e);
+                break;
+            }
+        }
+        let result = err.expect("stream must yield an error");
+        assert!(matches!(result, ProviderError::Transport(_)));
+    }
+
+    #[test]
+    fn message_stop_event_terminates_cleanly() {
+        // Anthropic uses explicit event types: message_delta carries
+        // stop_reason + usage, then message_stop is the actual end
+        // marker. The parser must yield the message_delta delta and
+        // then return cleanly when message_stop arrives (no extra
+        // Ok(None) leak).
+        let input = b"\
+event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":2,\"output_tokens\":0}}}\n\n\
+event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n\
+event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":4}}\n\n\
+event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n\
+";
+        let s = parse_sse_chunks(stream::iter(vec![Ok::<_, reqwest::Error>(
+            Bytes::copy_from_slice(input),
+        )]));
+
+        let deltas = futures::executor::block_on(async move {
+            let mut out = Vec::new();
+            futures::pin_mut!(s);
+            while let Some(item) = s.next().await {
+                out.push(item.unwrap());
+            }
+            out
+        });
+
+        // Expect: message_start yields usage delta, content_block_delta
+        // yields text delta, message_delta yields finish_reason + usage.
+        // message_stop is silently consumed and yields nothing extra.
+        assert_eq!(deltas.len(), 3);
+        assert_eq!(deltas[0].usage.unwrap().input_tokens, 2);
+        assert_eq!(deltas[1].content_delta.as_deref(), Some("Hi"));
+        assert_eq!(deltas[2].finish_reason, Some(FinishReason::Stop));
+        assert_eq!(deltas[2].usage.unwrap().output_tokens, 4);
+    }
+
+    #[test]
+    fn partial_utf8_in_a_chunk_does_not_panic() {
+        use futures::stream;
+        let s = parse_sse_chunks(stream::iter(vec![Ok::<_, reqwest::Error>(
+            Bytes::copy_from_slice(b"data: \xFF\xFE\n\n"),
+        )]));
+        let result: Result<Vec<CompletionDelta>, ProviderError> =
+            futures::executor::block_on(async move {
+                let mut v = Vec::new();
+                futures::pin_mut!(s);
+                while let Some(item) = s.next().await {
+                    v.push(item?);
+                }
+                Ok(v)
+            });
+        // Smoke: does not panic; returns Ok(empty) or Err cleanly.
+        let _ = result;
+    }
 }
