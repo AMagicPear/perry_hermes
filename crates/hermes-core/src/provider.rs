@@ -220,9 +220,7 @@ impl StreamAccumulator {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.content.is_empty()
-            && self.reasoning.is_empty()
-            && self.tool_calls.is_empty()
+        self.content.is_empty() && self.reasoning.is_empty() && self.tool_calls.is_empty()
     }
 
     /// Build a `Message` for the cancellation path. Filters out tool calls
@@ -260,16 +258,11 @@ impl StreamAccumulator {
 /// This is a public helper used by the default `Provider::complete` impl.
 /// It does NOT emit per-delta events — for that, use `AgentLoop::run` which
 /// has its own private drive loop.
-pub async fn accumulate_stream(
-    mut stream: CompletionStream,
-) -> Result<Completion, ProviderError> {
+pub async fn accumulate_stream(mut stream: CompletionStream) -> Result<Completion, ProviderError> {
     let mut acc = StreamAccumulator::new();
     while let Some(item) = stream.next().await {
         let delta = item?;
         acc.add(&delta);
-        if delta.finish_reason.is_some() {
-            break;
-        }
     }
     Ok(acc.finalize())
 }
@@ -308,7 +301,11 @@ mod tests {
                 content_delta: Some(" world".into()),
                 reasoning_delta: None,
                 tool_call_delta: None,
-                usage: Some(Usage { input_tokens: 1, output_tokens: 2, cached_input_tokens: 0 }),
+                usage: Some(Usage {
+                    input_tokens: 1,
+                    output_tokens: 2,
+                    cached_input_tokens: 0,
+                }),
                 finish_reason: Some(FinishReason::Stop),
             }),
         ];

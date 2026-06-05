@@ -197,9 +197,6 @@ impl<P: Provider, R: ToolRegistry> AgentLoop<P, R> {
                                     on_event(LoopEvent::ToolCallPartial(td.clone()));
                                 }
                                 acc.add(&delta);
-                                if delta.finish_reason.is_some() {
-                                    break acc.finalize();
-                                }
                             }
                             Some(Err(e)) => return Err(LoopError::Provider(e)),
                             None => break acc.finalize(),

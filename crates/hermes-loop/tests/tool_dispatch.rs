@@ -10,112 +10,18 @@
 //! The final assistant message should come from the *second* provider
 //! call, and the metrics should reflect two iterations + one tool call.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use async_trait::async_trait;
-use futures::stream;
 use hermes_core::message::{Content, Message, Role, ToolCall};
-use hermes_core::provider::{Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta};
-use hermes_core::registry::{InMemoryRegistry, ToolSchema};
+use hermes_core::provider::{Completion, FinishReason};
+use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::ToolContext;
-use hermes_core::ProviderError;
 use hermes_loop::{AgentLoop, LoopConfig};
 use hermes_tools::BashTool;
 use tokio_util::sync::CancellationToken;
 
-/// A test provider that scripts a fixed sequence of completions, one
-/// per call to `stream()`. Each script entry is converted to deltas
-/// internally so the loop sees a streaming provider.
-struct ScriptedProvider {
-    script: Mutex<Vec<Vec<CompletionDelta>>>,
-    #[allow(dead_code)]
-    call_count: AtomicUsize,
-}
-
-impl ScriptedProvider {
-    fn new(script: Vec<hermes_core::provider::Completion>) -> Self {
-        let script: Vec<Vec<CompletionDelta>> = script
-            .into_iter()
-            .map(completion_to_deltas)
-            .collect();
-        Self {
-            script: Mutex::new(script),
-            call_count: AtomicUsize::new(0),
-        }
-    }
-}
-
-fn completion_to_deltas(c: hermes_core::provider::Completion) -> Vec<CompletionDelta> {
-    // Mirror the structure StreamAccumulator::add expects.
-    let mut deltas = Vec::new();
-    // Content + reasoning (if any) on the first delta.
-    let has_text = matches!(&c.message.content, Content::Text(t) if !t.is_empty());
-    let has_reasoning = c.message.reasoning.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
-    if has_text || has_reasoning {
-        let text = match &c.message.content {
-            Content::Text(t) => Some(t.clone()),
-            _ => None,
-        };
-        deltas.push(CompletionDelta {
-            content_delta: text,
-            reasoning_delta: c.message.reasoning.clone(),
-            tool_call_delta: None,
-            usage: Some(c.usage),
-            finish_reason: None,
-        });
-    }
-    // Tool calls: one delta per call, with id+name+arguments in the first chunk.
-    if let Some(calls) = &c.message.tool_calls {
-        for (i, tc) in calls.iter().enumerate() {
-            deltas.push(CompletionDelta {
-                content_delta: None,
-                reasoning_delta: None,
-                tool_call_delta: Some(ToolCallDelta {
-                    index: i,
-                    id: Some(tc.id.clone()),
-                    name: Some(tc.name.clone()),
-                    arguments_delta: Some(tc.arguments.to_string()),
-                }),
-                usage: None,
-                finish_reason: None,
-            });
-        }
-    }
-    // Final delta carries the finish_reason (and usage if not already carried).
-    deltas.push(CompletionDelta {
-        content_delta: None,
-        reasoning_delta: None,
-        tool_call_delta: None,
-        usage: Some(c.usage),
-        finish_reason: Some(c.finish_reason),
-    });
-    deltas
-}
-
-#[async_trait]
-impl Provider for ScriptedProvider {
-    fn name(&self) -> &str {
-        "scripted"
-    }
-    fn model(&self) -> &str {
-        "scripted-v0"
-    }
-    async fn stream(
-        &self,
-        _messages: &[Message],
-        _tools: &[ToolSchema],
-        _cancel: CancellationToken,
-    ) -> Result<CompletionStream, ProviderError> {
-        let mut script = self.script.lock().unwrap();
-        if script.is_empty() {
-            panic!("ScriptedProvider: script exhausted — the loop called stream() more times than scripted");
-        }
-        let deltas = script.remove(0);
-        self.call_count.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::pin(stream::iter(deltas.into_iter().map(Ok))))
-    }
-}
+mod support;
+use support::ScriptedProvider;
 
 fn user_message(text: &str) -> Message {
     Message {
@@ -187,13 +93,21 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: hermes_core::tool::ToolPermissions { subprocess: true, ..Default::default() },
+        permissions: hermes_core::tool::ToolPermissions {
+            subprocess: true,
+            ..Default::default()
+        },
     };
 
     let result = loop_
-        .run(vec![user_message("please run something")], ctx, CancellationToken::new(), |e| {
-            events_for_cb.lock().unwrap().push(format!("{e:?}"));
-        })
+        .run(
+            vec![user_message("please run something")],
+            ctx,
+            CancellationToken::new(),
+            |e| {
+                events_for_cb.lock().unwrap().push(format!("{e:?}"));
+            },
+        )
         .await
         .expect("loop should succeed");
 
