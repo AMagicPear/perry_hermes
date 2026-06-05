@@ -16,7 +16,8 @@ cargo run -p hermes-providers --example live_smoke
 cargo run -p hermes-runtime --example live_tool_use -- "what time is it?"
 
 # CLI smoke (offline, no API key needed)
-echo "hello" | cargo run -p hermes-cli --quiet -- --provider echo
+echo '[provider]\nkind = "echo"' > /tmp/hermes-smoke.toml
+echo "hello" | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.toml
 ```
 
 direnv auto-loads `.envrc` on `cd` — no manual env var exports needed once set up.
@@ -47,7 +48,7 @@ hermes-cli (interactive REPL — Phase 4)
 
 **OpenAI adapter** (`hermes-providers/src/openai.rs`): `OpenAiProvider::with_base_url()` lets it talk to any OpenAI-compatible endpoint (DeepSeek, MiniMax, Ollama, vLLM). The `tool_calls` field round-trips: assistant's `tool_calls` are serialized back into the next request body so the LLM remembers which tools it called. OpenAI sends `arguments` as a JSON **string** (not object) — must `serde_json::from_str` on parse and `to_string` on serialize. `tool_choice: "auto"` is **omitted** when the tool list is empty (some providers reject it). `finish_reason` is parsed via `FinishReason::from_provider_str` (renamed from `from_str` to avoid colliding with the std `FromStr` trait).
 
-**Runtime + CLI** (`crates/hermes-runtime/src/lib.rs`, `crates/hermes-cli/src/main.rs`): runtime is the shared composition point for CLI and future gateway. `AIAgent` builds the provider, registry, loop, `ToolContext`, and system prompt. CLI only parses args, maintains REPL history, and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's `history`. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the loop. Slash commands: `/quit`, `/exit`. `--disabled-toolsets core|terminal` is passed to runtime.
+**Runtime + CLI** (`crates/hermes-runtime/src/lib.rs`, `crates/hermes-cli/src/main.rs`): runtime is the shared composition point for CLI and future gateway. `AIAgent::from_config(HermesConfig)` and `AIAgent::new(provider, HermesConfig)` are the two constructors; runtime builds the registry, loop, and resolves the `Provider` from the config. Per-run `working_dir` / `session_id` travel in a `SessionContext` passed to `run_turn` / `run_messages` (the runtime is reusable across sessions). CLI only parses args, resolves the config path (`--config` → `~/.perry_hermes/config.toml` → `./hermes.toml`, error if none), maintains REPL history, and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's `history`. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the loop. Slash commands: `/quit`, `/exit`. Provider-specific things (`OPENAI_API_KEY` etc.) live in `[provider]` of the TOML file; the runtime never reads the environment for defaults.
 
 ## TDD Workflow
 
@@ -85,4 +86,4 @@ Current code is authoritative. `plans/rust-port-design.md` is a historical desig
 
 - ~~No streaming yet (Phase 5)~~ — resolved.
 - No `IterationBudget` (refund / grace call / subagent budget) — `LoopConfig.max_iterations` is a flat `u32`. (Phase 7)
-- `Toolset` filtering works at registry construction time (via `--disabled-toolsets`) but is not reactive to per-turn changes.
+- `Toolset` filtering is configured at startup via `[agent].disabled_toolsets` in the TOML config (e.g. `disabled_toolsets = ["terminal"]`); it is not reactive to per-turn changes.

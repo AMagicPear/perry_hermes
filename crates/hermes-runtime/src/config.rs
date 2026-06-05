@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct HermesConfig {
     pub provider: ProviderConfig,
     #[serde(default)]
@@ -21,8 +21,9 @@ impl HermesConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 pub struct ProviderConfig {
+    #[serde(default)]
     pub kind: ProviderKind,
     #[serde(default)]
     pub api_key_env: Option<String>,
@@ -36,12 +37,13 @@ pub struct ProviderConfig {
     pub thinking: Option<ThinkingConfig>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
+    #[default]
+    Echo,
     Openai,
     Anthropic,
-    Echo,
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]

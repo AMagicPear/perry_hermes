@@ -18,7 +18,8 @@ use std::time::Duration;
 
 use hermes_core::message::Content;
 use hermes_core::LoopError;
-use hermes_runtime::{AIAgent, AgentOptions, LoopEvent};
+use hermes_providers::OpenAiProvider;
+use hermes_runtime::{AIAgent, HermesConfig, LoopEvent, SessionContext};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -44,13 +45,15 @@ async fn main() {
     eprintln!("→ user: {user_text}");
     eprintln!();
 
-    let agent = AIAgent::openai_compatible(&api_key, &model, &base_url, AgentOptions::default());
+    let provider = OpenAiProvider::new(&api_key, &model).with_base_url(&base_url);
+    let agent = AIAgent::new(provider, HermesConfig::default());
+    let session = SessionContext::current_shell();
     let cancel = CancellationToken::new();
 
     let started = std::time::Instant::now();
     let result = tokio::time::timeout(
         Duration::from_secs(180),
-        agent.run_turn(&user_text, cancel, |event| match event {
+        agent.run_turn(&user_text, &session, cancel, |event| match event {
             LoopEvent::Thinking => {
                 eprint!("… thinking");
                 let _ = std::io::Write::flush(&mut std::io::stderr());

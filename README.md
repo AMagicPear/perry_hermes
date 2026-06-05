@@ -10,9 +10,9 @@
 - **工具错误非致命** — 执行失败不会崩溃循环，而是把错误信息反馈给 LLM，让它自行调整策略
 - **OpenAI 兼容** — 通过 `with_base_url()` 支持 OpenAI、DeepSeek、MiniMax、Ollama、vLLM 等任意兼容端点；普通 content 中的 `<think>...</think>` fallback 会被归一化为 reasoning
 - **Anthropic 兼容** — 支持 Anthropic Messages API，以及 MiMo 这类需要 `api-key` header 的兼容端点
-- **TOML 配置文件** — `--config` 可加载 provider / agent / thinking 配置，CLI flag 会覆盖同名配置
+- **TOML 配置文件** — CLI 启动时必须有一个 `HermesConfig`(TOML)。查找顺序:`--config` 显式路径 → `~/.perry_hermes/config.toml` → `./hermes.toml`;三者皆无则报错退出
 - **协作式取消** — `CancellationToken` 贯穿所有异步调用，支持 Ctrl-C 优雅中断(第一次中断当前 turn，第二次退出 REPL)
-- **交互式 REPL CLI** — 多轮对话、工具调用实时渲染(emoji + 截断预览)、`/quit`/`/exit` 斜杠命令、`--disabled-toolsets` 细粒度控制
+- **交互式 REPL CLI** — 多轮对话、工具调用实时渲染(emoji + 截断预览)、`/quit`/`/exit` 斜杠命令、`[agent].disabled_toolsets` 细粒度控制
 - **Toolset 过滤** — 通过 runtime 配置按 toolset 名启用/禁用工具(目前内置 `core` / `terminal`)
 - **健壮的 BashTool** — stdout/stderr 并发 drain 避免管道死锁；输出采用 head+tail 40%/60% 截断策略，与 Python Hermes 对齐
 - **严格的分层架构** — 依赖方向始终向下，无循环依赖
@@ -36,7 +36,7 @@ hermes-cli (交互式 REPL — Phase 4)
 | `hermes-providers` | LLM 提供者实现 | `OpenAiProvider` (兼容 DeepSeek/MiniMax/Ollama/vLLM), `AnthropicProvider`, `EchoProvider` |
 | `hermes-tools` | 内置工具实现 | `BashTool` (bash 命令执行，30s 超时，50KB 输出截断，并发 drain stdout/stderr) |
 | `hermes-loop` | Agent 循环状态机 | `AgentLoop`, `LoopConfig`, `RunResult`, `LoopEvent` |
-| `hermes-runtime` | CLI/gateway 共用运行入口 | `AIAgent`, `AgentOptions`, `run_messages()`, `run_turn()` |
+| `hermes-runtime` | CLI/gateway 共用运行入口 | `AIAgent`, `HermesConfig`, `SessionContext`, `run_messages`, `run_turn` |
 | `hermes-cli` | 交互式 REPL 二进制 | `hermes` 命令，clap 参数解析，多轮历史，事件渲染 |
 
 ### 核心边界
@@ -53,26 +53,19 @@ hermes-cli (交互式 REPL — Phase 4)
 - Rust 1.75+（MSRV）
 - `direnv`（可选，自动加载环境变量）
 
-### 配置环境变量
+### 配置
 
-复制 `.envrc.example` 为 `.envrc`，填入：
+Provider 配置全部放在 TOML 的 `[provider]` 段(`crates/hermes-cli/hermes.example.toml` 是起点):
 
-```bash
-export OPENAI_API_KEY="sk-..."
-export OPENAI_BASE_URL="https://api.openai.com/v1"  # 可选，默认 OpenAI
-export OPENAI_MODEL="gpt-4o-mini"                     # 可选，默认 gpt-4o-mini
+```toml
+[provider]
+kind = "openai"               # openai | anthropic | echo
+api_key_env = "OPENAI_API_KEY"  # 运行时只读取这一个环境变量
+model = "gpt-4o-mini"
+base_url = "https://api.openai.com/v1"
 ```
 
-支持 OpenAI 兼容端点，例如 DeepSeek、MiniMax、Ollama 等，只需修改 `OPENAI_BASE_URL`。
-
-Anthropic / MiMo 兼容端点也可以用环境变量：
-
-```bash
-export ANTHROPIC_API_KEY="..."
-export ANTHROPIC_MODEL="mimo-v2.5"
-export ANTHROPIC_BASE_URL="https://api.xiaomimimo.com/anthropic/v1"
-export ANTHROPIC_API_KEY_HEADER="api-key"
-```
+运行时只读取 `[provider].api_key_env` 指向的那一个环境变量(默认 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`),其他环境变量(URL、模型、header 名称等)都会被忽略 —— 这些值必须写在 TOML 里。支持 OpenAI 兼容端点(DeepSeek、MiniMax、Ollama、vLLM)只需修改 `base_url` 和 `model`;Anthropic / MiMo 兼容端点改 `api_key_header` 和 `base_url`。
 
 ### 构建
 
@@ -82,27 +75,37 @@ cargo build
 
 ### 运行 CLI
 
+CLI 启动时会按 `--config` → `~/.perry_hermes/config.toml` → `./hermes.toml` 顺序查找配置。复制示例配置作为起点:
+
 ```bash
-# 真实 LLM + bash 工具
+cp crates/hermes-cli/hermes.example.toml hermes.toml
+# 编辑 hermes.toml,填入 API key 指向的 env 变量、model、base_url
 cargo run -p hermes-cli
+```
 
-# 离线烟囱测试：用 echo provider 模拟 LLM，不发任何 HTTP 请求
-cargo run -p hermes-cli -- --provider echo
+离线烟囱测试(用 echo provider 模拟 LLM,不发任何 HTTP 请求):
 
-# 切换模型/端点(也支持 DeepSeek / MiniMax / Ollama / vLLM 等任意 OpenAI 兼容服务)
-cargo run -p hermes-cli -- --base-url https://api.deepseek.com/v1 --model deepseek-chat
+```bash
+echo '[provider]\nkind = "echo"' > hermes.toml
+cargo run -p hermes-cli
+```
 
-# 禁用 bash(关闭 terminal toolset,只做对话)
-cargo run -p hermes-cli -- --disabled-toolsets terminal
+切换模型/端点(也支持 DeepSeek / MiniMax / Ollama / vLLM 等任意 OpenAI 兼容服务):改 `hermes.toml` 里的 `model` 和 `base_url`。
 
-# 在指定工作目录下执行 shell 命令
+禁用 bash(关闭 `terminal` toolset,只做对话):在 `hermes.toml` 的 `[agent]` 段加 `disabled_toolsets = ["terminal"]`。
+
+调高最大迭代次数(默认 10):在 `hermes.toml` 的 `[agent]` 段加 `max_iterations = 50`。
+
+指定工作目录:用 `--cwd`(只影响该次启动的 `SessionContext`):
+
+```bash
 cargo run -p hermes-cli -- --cwd /tmp
+```
 
-# 调高最大迭代次数(默认 20)
-cargo run -p hermes-cli -- --max-iterations 50
+显式指定配置文件:
 
-# 使用 TOML 配置文件
-cargo run -p hermes-cli -- --config hermes.toml
+```bash
+cargo run -p hermes-cli -- --config /path/to/hermes.toml
 ```
 
 示例 `hermes.toml`：
@@ -164,7 +167,8 @@ cargo clippy --all-targets --all-features -- -D warnings  # Lint
 
 ```bash
 # 离线烟囱测试：确认 REPL 能正常启动、echo provider 能跑通整个循环
-echo "hello" | cargo run -p hermes-cli --quiet -- --provider echo
+echo '[provider]\nkind = "echo"' > /tmp/hermes-smoke.toml
+echo "hello" | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.toml
 ```
 
 ### 测试结构
@@ -221,7 +225,7 @@ crates/hermes-tools/tests/
 - 未知 `finish_reason` 会映射为 `FinishReason::Error`，但错误信息仍较粗
 - OpenAI-compatible provider 已支持 `Content::Parts` 的 text/image_url content array；其他多媒体 part 类型尚未建模
 - OpenAI-compatible provider 会把普通 content 中的 `<think>...</think>` fallback 解析为 reasoning；支持原生 `reasoning_content` 的端点仍优先使用原生字段
-- Anthropic provider 支持官方 `x-api-key` header，也可通过 `ANTHROPIC_API_KEY_HEADER=api-key` 或 TOML `api_key_header = "api-key"` 适配 MiMo 这类 Anthropic-compatible 端点
+- Anthropic provider 支持官方 `x-api-key` header，可通过 TOML `api_key_header = "api-key"` 适配 MiMo 这类 Anthropic-compatible 端点
 - Anthropic thinking 默认关闭；如需发送 `thinking` 参数，必须在 TOML 中显式设置 `mode = "manual"` 或 `mode = "adaptive"`。第三方 Anthropic-compatible API 建议先保持 `off`。
 - 复用同一 `BashTool` 时 `child.kill().await` 的并发安全未充分测试
 
