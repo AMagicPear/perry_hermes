@@ -538,4 +538,94 @@ data: [DONE]\n\n";
         assert_eq!(deltas[2].content_delta.as_deref(), Some(" done"));
         assert!(deltas[2].reasoning_delta.is_none());
     }
+
+    #[test]
+    fn chunks_split_across_frames_assemble_correctly() {
+        // A single SSE event must survive being split across multiple
+        // byte chunks. The "\n\n" frame boundary can land in the middle
+        // of a chunk; the parser must still produce one delta.
+        use futures::stream;
+        let chunks: Vec<&[u8]> = vec![
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}]}\n",
+            b"\n",
+            b"data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":null}]}\n\n",
+        ];
+        let byte_stream = stream::iter(
+            chunks
+                .iter()
+                .map(|c| Ok::<_, reqwest::Error>(Bytes::copy_from_slice(c)))
+                .collect::<Vec<_>>(),
+        );
+        let s = parse_sse_chunks(byte_stream);
+        let deltas: Vec<CompletionDelta> = futures::executor::block_on(async move {
+            let mut v = Vec::new();
+            futures::pin_mut!(s);
+            while let Some(item) = s.next().await {
+                v.push(item.unwrap());
+            }
+            v
+        });
+        assert_eq!(deltas.len(), 2);
+        assert_eq!(deltas[0].content_delta.as_deref(), Some("Hel"));
+        assert_eq!(deltas[1].content_delta.as_deref(), Some("lo"));
+    }
+
+    #[tokio::test]
+    async fn transport_error_becomes_provider_error_transport() {
+        // A byte-stream that yields Err(reqwest::Error) must propagate
+        // as ProviderError::Transport. reqwest::Error has no public
+        // constructor, so we send a real request to a port that will
+        // refuse (127.0.0.1:1 — privileged, never bound) and capture
+        // the resulting transport error. The whole test runs in a
+        // tokio runtime so reqwest::Client::send() has a reactor.
+        use futures::stream;
+        let reqwest_err: reqwest::Error = reqwest::Client::new()
+            .get("http://127.0.0.1:1/")
+            .send()
+            .await
+            .expect_err("expected transport error from refused connection");
+        let byte_stream = stream::iter(vec![Err::<Bytes, _>(reqwest_err)]);
+        let s = parse_sse_chunks(byte_stream);
+        let mut err = None;
+        futures::pin_mut!(s);
+        while let Some(item) = s.next().await {
+            if let Err(e) = item {
+                err = Some(e);
+                break;
+            }
+        }
+        let result = err.expect("stream must yield an error");
+        assert!(matches!(result, ProviderError::Transport(_)));
+    }
+
+    #[test]
+    fn done_sentinel_preserves_prior_deltas() {
+        // Two valid events, then DONE, then a third valid event. The
+        // third must NOT be parsed — the stream terminates at the
+        // sentinel. (Note: the existing `done_marker_terminates` test
+        // covers the 1-event case; this one specifically asserts that
+        // both prior deltas are kept.)
+        let sse = b"\
+data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n\
+data: {\"choices\":[{\"delta\":{\"content\":\"y\"}}]}\n\n\
+data: [DONE]\n\n\
+data: {\"choices\":[{\"delta\":{\"content\":\"z\"}}]}\n\n";
+        let deltas = parse_sse_bytes(sse).unwrap();
+        assert_eq!(deltas.len(), 2);
+        assert_eq!(deltas[0].content_delta.as_deref(), Some("x"));
+        assert_eq!(deltas[1].content_delta.as_deref(), Some("y"));
+    }
+
+    #[test]
+    fn partial_utf8_in_a_chunk_does_not_panic() {
+        // Bytes containing invalid UTF-8 inside a data: line. The
+        // parser uses String::from_utf8_lossy, so it must not panic.
+        // The exact outcome is unspecified (could be Err
+        // InvalidResponse for the malformed JSON, or skip the event);
+        // we only assert that the call returns rather than panicking.
+        let sse = b"data: \xFF\xFE\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n";
+        let result = parse_sse_bytes(sse);
+        // Smoke: does not panic; returns either Ok or Err cleanly.
+        let _ = result;
+    }
 }
