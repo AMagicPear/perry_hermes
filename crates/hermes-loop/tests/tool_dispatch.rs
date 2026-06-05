@@ -10,11 +10,13 @@
 //! The final assistant message should come from the *second* provider
 //! call, and the metrics should reflect two iterations + one tool call.
 
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use futures::stream;
 use hermes_core::message::{Content, Message, Role, ToolCall};
-use hermes_core::provider::{Completion, FinishReason, Provider};
+use hermes_core::provider::{Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta};
 use hermes_core::registry::{InMemoryRegistry, ToolSchema};
 use hermes_core::tool::ToolContext;
 use hermes_core::ProviderError;
@@ -23,18 +25,72 @@ use hermes_tools::BashTool;
 use tokio_util::sync::CancellationToken;
 
 /// A test provider that scripts a fixed sequence of completions, one
-/// per call to `complete()`. Each script entry is the full Completion
-/// the loop should see for that call.
+/// per call to `stream()`. Each script entry is converted to deltas
+/// internally so the loop sees a streaming provider.
 struct ScriptedProvider {
-    script: Mutex<Vec<Completion>>,
+    script: Mutex<Vec<Vec<CompletionDelta>>>,
+    #[allow(dead_code)]
+    call_count: AtomicUsize,
 }
 
 impl ScriptedProvider {
-    fn new(script: Vec<Completion>) -> Self {
+    fn new(script: Vec<hermes_core::provider::Completion>) -> Self {
+        let script: Vec<Vec<CompletionDelta>> = script
+            .into_iter()
+            .map(completion_to_deltas)
+            .collect();
         Self {
             script: Mutex::new(script),
+            call_count: AtomicUsize::new(0),
         }
     }
+}
+
+fn completion_to_deltas(c: hermes_core::provider::Completion) -> Vec<CompletionDelta> {
+    // Mirror the structure StreamAccumulator::add expects.
+    let mut deltas = Vec::new();
+    // Content + reasoning (if any) on the first delta.
+    let has_text = matches!(&c.message.content, Content::Text(t) if !t.is_empty());
+    let has_reasoning = c.message.reasoning.as_ref().map(|s| !s.is_empty()).unwrap_or(false);
+    if has_text || has_reasoning {
+        let text = match &c.message.content {
+            Content::Text(t) => Some(t.clone()),
+            _ => None,
+        };
+        deltas.push(CompletionDelta {
+            content_delta: text,
+            reasoning_delta: c.message.reasoning.clone(),
+            tool_call_delta: None,
+            usage: Some(c.usage),
+            finish_reason: None,
+        });
+    }
+    // Tool calls: one delta per call, with id+name+arguments in the first chunk.
+    if let Some(calls) = &c.message.tool_calls {
+        for (i, tc) in calls.iter().enumerate() {
+            deltas.push(CompletionDelta {
+                content_delta: None,
+                reasoning_delta: None,
+                tool_call_delta: Some(ToolCallDelta {
+                    index: i,
+                    id: Some(tc.id.clone()),
+                    name: Some(tc.name.clone()),
+                    arguments_delta: Some(tc.arguments.to_string()),
+                }),
+                usage: None,
+                finish_reason: None,
+            });
+        }
+    }
+    // Final delta carries the finish_reason (and usage if not already carried).
+    deltas.push(CompletionDelta {
+        content_delta: None,
+        reasoning_delta: None,
+        tool_call_delta: None,
+        usage: Some(c.usage),
+        finish_reason: Some(c.finish_reason),
+    });
+    deltas
 }
 
 #[async_trait]
@@ -45,17 +101,19 @@ impl Provider for ScriptedProvider {
     fn model(&self) -> &str {
         "scripted-v0"
     }
-    async fn complete(
+    async fn stream(
         &self,
         _messages: &[Message],
         _tools: &[ToolSchema],
         _cancel: CancellationToken,
-    ) -> Result<Completion, ProviderError> {
-        let mut s = self.script.lock().unwrap();
-        if s.is_empty() {
-            panic!("ScriptedProvider: script exhausted — the loop called complete() more times than scripted");
+    ) -> Result<CompletionStream, ProviderError> {
+        let mut script = self.script.lock().unwrap();
+        if script.is_empty() {
+            panic!("ScriptedProvider: script exhausted — the loop called stream() more times than scripted");
         }
-        Ok(s.remove(0))
+        let deltas = script.remove(0);
+        self.call_count.fetch_add(1, Ordering::SeqCst);
+        Ok(Box::pin(stream::iter(deltas.into_iter().map(Ok))))
     }
 }
 
