@@ -2,27 +2,27 @@
 
 **Date:** 2026-06-05
 **Status:** Implemented in this branch.
-**Scope implemented:** `hermes-providers` (new `AnthropicProvider`), `hermes-runtime` (new `AIAgent::anthropic` constructor), `hermes-cli` (new `--provider anthropic` flag).
+**Scope implemented:** `hermes-providers` (new `AnthropicProvider`), `hermes-runtime` (new `AIAgent::anthropic` constructors), `hermes-cli` (new `--provider anthropic` flag).
 
 ## 1. Goals
 
 Add a second wire-protocol implementation of the `Provider` trait that talks to Anthropic's Messages API. After this phase:
 
-- A user can run `hermes --provider anthropic` against any Anthropic-compatible endpoint and get the same streaming + tool-calling experience the OpenAI path delivers.
+- A user can run `hermes --provider anthropic` against Anthropic and Anthropic-compatible endpoints and get the same streaming + tool-calling experience the OpenAI path delivers.
 - The `Message` / `Role` / `Content` / `ContentPart` model in `hermes-core` continues to work unchanged — the Anthropic adapter translates at the wire boundary.
 - The agent loop, runtime facade, and CLI all work with `AnthropicProvider` without modification.
-- The shape of `AnthropicProvider` (struct + `new()` + `with_base_url()`) mirrors `OpenAiProvider` so a future config-file layer (`ProviderConfig` enum + `AIAgent::from_config`) can dispatch on kind without touching either provider.
+- The shape of `AnthropicProvider` (struct + `new()` + `with_base_url()` + optional `with_api_key_header()`) mirrors `OpenAiProvider` closely enough that a future config-file layer (`ProviderConfig` enum + `AIAgent::from_config`) can dispatch on kind without touching provider internals.
 
 ## 2. Non-Goals
 
 Explicitly deferred to later phases (these would each be their own brainstorm round):
 
-- **OAuth / setup-tokens / Claude Code credentials / Entra ID bearer auth.** Phase 8 sends the API key as the `x-api-key` header. The `_is_oauth_token` / `_requires_bearer_auth` / `read_claude_code_credentials` / `refresh_anthropic_oauth_pure` machinery in Hermes's adapter is not ported.
+- **OAuth / setup-tokens / Claude Code credentials / Entra ID bearer auth.** Phase 8 sends the API key as a configurable static header. The default is Anthropic's `x-api-key`; `ANTHROPIC_API_KEY_HEADER=api-key` supports MiMo-style compatible endpoints. The `_is_oauth_token` / `_requires_bearer_auth` / `read_claude_code_credentials` / `refresh_anthropic_oauth_pure` machinery in Hermes's adapter is not ported.
 - **Prompt caching** (`cache_control` blocks on system / messages / tools). Not in the request body. Hermes's `prompt_caching.py` and `_evict_old_screenshots` are not ported.
-- **Third-party endpoint detection** (MiniMax Bearer auth, Azure `api-version` query param, Kimi `/coding` User-Agent spoof, DeepSeek `/anthropic` round-trip rules, AWS Bedrock model-id shape). `with_base_url()` exists and works against any Anthropic-compatible host, but no endpoint-specific behaviors are baked in.
+- **Third-party endpoint detection** (MiniMax Bearer auth, Azure `api-version` query param, Kimi `/coding` User-Agent spoof, DeepSeek `/anthropic` round-trip rules, AWS Bedrock model-id shape). `with_base_url()` and `with_api_key_header()` cover simple compatible hosts, but no endpoint-specific behaviors are baked in.
 - **Multimodal input** (`ContentPart::ImageUrl` → Anthropic `image` source block with base64 / media_type). `Content::Parts` is serialized as plain text by joining text parts with `\n`; image parts are dropped in Phase 8.
 - **Per-model `max_tokens` resolution table** (Hermes has a 20+ entry dict for Claude 3/3.5/3.7/4/4.5/4.6/4.7/4.8 plus third-party overrides). Phase 8 hard-codes a single `max_tokens = 16384` in the request body. This is a pragmatic default for the provider abstraction; a future phase can introduce a model→tokens table and lower the value for models/endpoints that reject it.
-- **Per-model sampling-param restrictions** (Opus 4.7+ rejects any non-default `temperature` / `top_p` / `top_k`). Phase 8 only sends `temperature = 1` when the model name indicates Claude 3.7 manual thinking. For Claude 4.x and unknown models it omits `thinking` and sampling params.
+- **Per-model sampling-param restrictions** (Opus 4.7+ rejects any non-default `temperature` / `top_p` / `top_k`). The current implementation no longer infers thinking from model names. Anthropic thinking is off by default and only sent when a config-driven `AnthropicRequestOptions` explicitly requests manual or adaptive thinking.
 - **Fast mode** (Opus 4.6 only, `extra_body.speed = "fast"` + `fast-mode-2026-02-01` beta header). Not sent.
 - **Bedrock / Vertex / Azure-native** clients. Out of scope; `AnthropicProvider` is direct-Messages-API only.
 - **The `ProviderConfig` enum / `AIAgent::from_config` factory / `--config` CLI flag.** This is a follow-up phase. Phase 8's `AIAgent::anthropic()` is the building block that future config code calls.
@@ -39,8 +39,8 @@ Explicitly deferred to later phases (these would each be their own brainstorm ro
            │ uses
            ▼
 ┌──────────────────────┐
-│ hermes-runtime       │  AIAgent::anthropic(api_key, model, base_url, options)
-│ lib.rs               │    (new — mirrors AIAgent::openai_compatible)
+│ hermes-runtime       │  AIAgent::anthropic(...)
+│ lib.rs               │  AIAgent::anthropic_with_api_key_header(...)
 └──────────┬───────────┘
            │ holds
            ▼
@@ -52,9 +52,9 @@ Explicitly deferred to later phases (these would each be their own brainstorm ro
            ▼
 ┌──────────────────────┐
 │ hermes-providers     │  AnthropicProvider::stream (new)
-│ anthropic.rs         │    — POST {base}/messages with x-api-key + anthropic-version headers
+│ anthropic.rs         │    — POST {base}/messages with configurable API-key header + anthropic-version
 │                      │    — wire serialization (system→top-level, tool→user+tool_result)
-│                      │    — manual thinking for Claude 3.7 only; no historical thinking replay
+│                      │    — explicit config-driven thinking only; no historical thinking replay
 │                      │    — Anthropic SSE → CompletionDelta (event-type dispatch)
 │                      │  OpenAiProvider::stream (unchanged)
 │                      │  EchoProvider::stream (unchanged)
@@ -65,14 +65,14 @@ No `hermes-core` changes. The `Provider` trait and `CompletionDelta` / `StreamAc
 
 ### 3.2 Data flow (one turn, no tools)
 
-1. CLI / runtime builds an `AnthropicProvider` from `(api_key, model, base_url)` and hands it to `AgentLoop`.
+1. CLI / runtime builds an `AnthropicProvider` from `(api_key, model, base_url, api_key_header)` and hands it to `AgentLoop`.
 2. Loop calls `provider.stream(&messages, &tools, cancel)`.
 3. Anthropic provider serializes:
    - Extract `system` from messages into a top-level field.
    - Convert remaining messages: assistant text → `content: [{type: "text", text}]`; assistant tool_calls → append `tool_use` blocks with parsed `arguments`; historical assistant reasoning is not serialized back as `thinking` because `Message` does not preserve Anthropic signatures; user text → `content: text`; tool role → merge into trailing user message as `tool_result` block.
    - Convert tools: drop the OpenAI `function` wrapper.
-   - Add `thinking` param per model family.
-4. POST to `{base_url}/messages` with `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`, body `{model, system?, messages, tools?, max_tokens: 16384, stream: true, thinking?, temperature?}`.
+   - Add `thinking` param only when explicitly configured.
+4. POST to `{base_url}/messages` with API-key header (`x-api-key` by default), `anthropic-version: 2023-06-01`, `content-type: application/json`, body `{model, system?, messages, tools?, max_tokens: 16384, stream: true, thinking?, temperature?}`.
 5. On 401 → `ProviderError::Auth`. On 429 → `ProviderError::RateLimited`. On other non-2xx → `ProviderError::InvalidResponse`.
 6. SSE parser consumes the byte stream and yields `CompletionDelta`s. The loop drives the stream (existing `tokio::select!` with cancel), emits `ContentDelta` / `ReasoningDelta` / `ToolCallPartial` events, accumulates into `StreamAccumulator`, breaks on `finish_reason`.
 7. `acc.finalize()` returns a `Completion` with `message.reasoning` carrying any streamed `thinking` text, `message.tool_calls` carrying assembled `tool_use` calls, `usage` carrying `input_tokens` + `output_tokens` (summed across two SSE events), and `finish_reason` translated from `stop_reason`.
@@ -113,6 +113,7 @@ Each event is dispatched (see §5.5):
 ```rust
 pub struct AnthropicProvider {
     api_key: String,
+    api_key_header: String,
     model: String,
     base_url: String,
     client: reqwest::Client,
@@ -122,6 +123,7 @@ impl AnthropicProvider {
     pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
         Self {
             api_key: api_key.into(),
+            api_key_header: "x-api-key".into(),
             base_url: "https://api.anthropic.com/v1".into(),
             model: model.into(),
             client: reqwest::Client::builder()
@@ -135,10 +137,15 @@ impl AnthropicProvider {
         self.base_url = base_url.into();
         self
     }
+
+    pub fn with_api_key_header(mut self, header_name: impl Into<String>) -> Self {
+        self.api_key_header = header_name.into();
+        self
+    }
 }
 ```
 
-Mirrors `OpenAiProvider` exactly. No `with_model` (the user picks at construction; runtime can build a new provider per model if needed).
+Mirrors `OpenAiProvider` closely. No `with_model` (the user picks at construction; runtime can build a new provider per model if needed). `with_api_key_header()` is intentionally narrow: it supports simple Anthropic-compatible endpoints such as MiMo without adding domain-specific endpoint detection.
 
 ### 5.2 Request body
 
@@ -156,9 +163,9 @@ struct MessagesRequest {
     max_tokens: u32,                        // hard-coded 16384
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    thinking: Option<ThinkingParam>,
+    thinking: Option<ThinkingParam>,        // explicit only; default omitted
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,               // only 1.0, only for Claude 3.7 manual thinking
+    temperature: Option<f32>,               // only 1.0, only for explicit manual thinking
 }
 
 #[derive(Serialize)]
@@ -193,6 +200,7 @@ enum WireToolChoice {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ThinkingParam {
     Enabled { budget_tokens: u32 },
+    Adaptive { display: String },
 }
 ```
 
@@ -252,22 +260,22 @@ Dispatches on the JSON `type` field:
 ### 5.6 Thinking
 
 ```rust
-fn build_thinking_param(model: &str) -> Option<ThinkingParam> {
-    let lower = model.to_lowercase();
-    if lower.contains("3-7") || lower.contains("3.7") {
-        Some(ThinkingParam::Enabled { budget_tokens: 8000 })
-    } else {
-        None
-    }
+#[derive(Debug, Clone, Default)]
+pub struct AnthropicRequestOptions {
+    pub thinking: Option<AnthropicThinking>,
 }
 
-fn temperature_for(model: &str) -> Option<f32> {
-    let lower = model.to_lowercase();
-    if lower.contains("3-7") || lower.contains("3.7") { Some(1.0) } else { None }
+#[derive(Debug, Clone)]
+pub enum AnthropicThinking {
+    Manual { budget_tokens: u32 },
+    Adaptive {
+        display: String,
+        effort: Option<String>,
+    },
 }
 ```
 
-Phase 8 keeps thinking conservative: enable manual extended thinking only for model names that contain `3-7` or `3.7`, and omit thinking for Claude 4.x / unknown models. This avoids sending unsupported adaptive-thinking shapes and avoids replaying unsigned historical thinking blocks.
+Thinking is config-driven. The default request sends no `thinking` field, which is the safest behavior for Anthropic-compatible third-party APIs. Official Anthropic users can opt into `manual` or `adaptive` thinking through Phase 9 config; manual thinking sets `temperature = 1.0`, adaptive thinking can optionally set `output_config.effort` and does not send temperature.
 
 ### 5.7 Finish reason
 
@@ -310,9 +318,24 @@ Mirrors `openai_compatible` exactly. No additional imports beyond the existing `
 
 ### 6.2 CLI `--provider anthropic` (in `hermes-cli/src/main.rs`)
 
-Add `"anthropic"` to the `match args.provider.as_str()` arms, alongside `"openai"` and `"echo"`. The arm reads three env vars / args: `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-sonnet-4-5`), `ANTHROPIC_BASE_URL` (default `https://api.anthropic.com/v1`).
+Add `"anthropic"` to the `match args.provider.as_str()` arms, alongside `"openai"` and `"echo"`. The arm reads these env vars / args:
+
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_MODEL` (default `claude-sonnet-4-5`)
+- `ANTHROPIC_BASE_URL` (default `https://api.anthropic.com/v1`)
+- `ANTHROPIC_API_KEY_HEADER` (default `x-api-key`; use `api-key` for MiMo)
 
 The existing CLI structure (multi-turn REPL, streaming rendering, Ctrl-C) works without modification — it already goes through `AIAgent`.
+
+MiMo-compatible manual test:
+
+```bash
+export ANTHROPIC_API_KEY="<mimo key>"
+export ANTHROPIC_MODEL=mimo-v2.5
+export ANTHROPIC_BASE_URL=https://api.xiaomimimo.com/anthropic/v1
+export ANTHROPIC_API_KEY_HEADER=api-key
+cargo run -p hermes-cli -- --provider anthropic
+```
 
 ## 7. Error handling
 
@@ -348,10 +371,10 @@ Mid-stream errors propagate through the byte stream as `Some(Err(ProviderError))
 | `convert_messages_renames_tool_call_id_to_tool_use_id` | Field mapping |
 | `convert_messages_handles_assistant_with_text_and_tools` | Mixed text + tool_use on same assistant turn |
 | `convert_tools_strips_function_wrapper` | Tool schema conversion |
-| `build_thinking_param_returns_manual_for_3_7` | `thinking.type = "enabled"` with `budget_tokens: 8000` |
-| `build_thinking_param_returns_none_for_4_x_and_haiku` | No thinking field |
-| `temperature_for_returns_some_1_for_3_7` | Manual mode requirement |
-| `temperature_for_returns_none_for_4_x_and_haiku` | No sampling param sent |
+| `thinking_defaults_to_off_for_claude_3_7` | No model-name inference |
+| `manual_thinking_is_explicit` | `thinking.type = "enabled"` with `budget_tokens: 8000` and `temperature: 1` |
+| `adaptive_thinking_is_explicit` | `thinking.type = "adaptive"` with display mode and no temperature |
+| `adaptive_thinking_can_set_effort` | `output_config.effort` is included only when configured |
 | `parse_message_start_yields_input_usage` | SSE → `usage` |
 | `parse_content_block_delta_text_yields_content_delta` | text_delta |
 | `parse_content_block_delta_input_json_yields_arguments_delta` | input_json_delta |
@@ -374,12 +397,12 @@ Mid-stream errors propagate through the byte stream as `Some(Err(ProviderError))
 | `anthropic_provider_maps_401_to_auth_error` | Pre-stream error path |
 | `anthropic_provider_maps_429_to_rate_limited` | Pre-stream error path |
 | `anthropic_provider_posts_to_messages_endpoint_with_version_header` | URL + `x-api-key` + `anthropic-version` |
+| `anthropic_provider_can_use_custom_api_key_header` | MiMo-style `api-key` header |
 | `anthropic_provider_sends_top_level_system_field` | System is NOT inside `messages` array |
 | `anthropic_provider_sends_tool_use_blocks_not_function_wrapper` | Tool serialization |
 | `anthropic_provider_streams_text_and_tool_use_end_to_end` | Whole flow: connect, parse SSE, accumulate, return `Completion` |
 | `anthropic_provider_sends_structured_tool_choice` | Request body has `tool_choice = { "type": "auto" }` |
-| `anthropic_provider_sends_manual_thinking_for_3_7` | Request body has `thinking.type = "enabled"` + `temperature: 1` |
-| `anthropic_provider_omits_thinking_for_4_x_and_haiku` | Request body has no `thinking` field |
+| `anthropic_provider_omits_thinking_by_default` | Request body has no `thinking` field unless configured |
 | `anthropic_provider_runs_two_turn_loop_with_tool_call` | End-to-end: `AgentLoop` with a `ScriptedAnthropicServer` returning tool_use → tool result → end_turn |
 
 Tests 1–9 use `httpmock`. Test 10 uses `httpmock` for the request body assertions plus the existing `AgentLoop` from `hermes-loop` to drive a real two-turn flow (mirroring `openai_stream.rs`'s end-to-end test).
@@ -392,7 +415,7 @@ No `examples/anthropic_smoke.rs` that talks to api.anthropic.com. A future phase
 
 - New code only. No modifications to `OpenAiProvider`, `EchoProvider`, `AgentLoop`, `StreamAccumulator`, `Provider` trait, or any `hermes-core` type.
 - `lib.rs` of `hermes-providers` gains `pub mod anthropic;` and `pub use anthropic::AnthropicProvider;`.
-- `hermes-runtime/src/lib.rs` adds one constructor and one `use` line.
+- `hermes-runtime/src/lib.rs` adds Anthropic constructors and one `use` line.
 - `hermes-cli/src/main.rs` adds one match arm.
 - No public API breakage.
 
@@ -403,7 +426,7 @@ No `examples/anthropic_smoke.rs` that talks to api.anthropic.com. A future phase
 - **Prompt caching** (`cache_control` on system, messages, tools).
 - **Per-model `max_tokens` resolution table** (the 20+ entry dict in Hermes's `_ANTHROPIC_OUTPUT_LIMITS`).
 - **Multimodal input** (Anthropic `image` source block with base64 + media_type from `ContentPart::ImageUrl`).
-- **Third-party endpoint detection** (MiniMax Bearer, Azure `api-version`, Kimi `/coding` UA spoof, DeepSeek `/anthropic` round-trip rules, AWS Bedrock model-id shape).
+- **Third-party endpoint detection** (MiniMax Bearer, Azure `api-version`, Kimi `/coding` UA spoof, DeepSeek `/anthropic` round-trip rules, AWS Bedrock model-id shape). Simple custom API-key header support exists; richer auth/routing remains out of scope.
 - **Fast mode** (Opus 4.6 only).
 - **Per-model sampling param restrictions** (4.7+ stripping).
 - **Orphan tool block defensive strip** in `convert_messages_to_anthropic` (a `ContextCompressor` concern; Phase 7 territory).

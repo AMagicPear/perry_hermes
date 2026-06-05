@@ -16,7 +16,24 @@ pub struct AnthropicProvider {
     api_key_header: String,
     model: String,
     base_url: String,
+    request_options: AnthropicRequestOptions,
     client: reqwest::Client,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AnthropicRequestOptions {
+    pub thinking: Option<AnthropicThinking>,
+}
+
+#[derive(Debug, Clone)]
+pub enum AnthropicThinking {
+    Manual {
+        budget_tokens: u32,
+    },
+    Adaptive {
+        display: String,
+        effort: Option<String>,
+    },
 }
 
 impl AnthropicProvider {
@@ -26,6 +43,7 @@ impl AnthropicProvider {
             api_key_header: "x-api-key".into(),
             model: model.into(),
             base_url: "https://api.anthropic.com/v1".into(),
+            request_options: AnthropicRequestOptions::default(),
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(120))
                 .build()
@@ -40,6 +58,11 @@ impl AnthropicProvider {
 
     pub fn with_api_key_header(mut self, header_name: impl Into<String>) -> Self {
         self.api_key_header = header_name.into();
+        self
+    }
+
+    pub fn with_request_options(mut self, options: AnthropicRequestOptions) -> Self {
+        self.request_options = options;
         self
     }
 }
@@ -60,6 +83,13 @@ struct MessagesRequest {
     thinking: Option<ThinkingParam>,
     #[serde(skip_serializing_if = "Option::is_none")]
     temperature: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<OutputConfig>,
+}
+
+#[derive(Serialize)]
+struct OutputConfig {
+    effort: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -111,17 +141,21 @@ enum WireToolChoice {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum ThinkingParam {
     Enabled { budget_tokens: u32 },
+    Adaptive { display: String },
 }
 
-fn build_request_body(
+fn build_request_body_with_options(
     model: &str,
     messages: &[Message],
     tools: &[ToolSchema],
     stream: bool,
+    options: AnthropicRequestOptions,
 ) -> MessagesRequest {
     let (system, messages) = convert_messages_to_anthropic(messages);
     let tools = convert_tools(tools);
     let has_tools = !tools.is_empty();
+    let manual_thinking = matches!(options.thinking, Some(AnthropicThinking::Manual { .. }));
+    let output_config = build_output_config(&options.thinking);
 
     MessagesRequest {
         model: model.to_string(),
@@ -135,8 +169,9 @@ fn build_request_body(
         },
         max_tokens: 16_384,
         stream,
-        thinking: build_thinking_param(model),
-        temperature: temperature_for(model),
+        thinking: build_thinking_param(options.thinking),
+        temperature: if manual_thinking { Some(1.0) } else { None },
+        output_config,
     }
 }
 
@@ -252,29 +287,27 @@ fn content_to_text(content: &Content) -> String {
     }
 }
 
-fn build_thinking_param(model: &str) -> Option<ThinkingParam> {
-    let lower = model.to_lowercase();
-    if lower.contains("haiku") {
-        None
-    } else if supports_manual_thinking(model) {
-        Some(ThinkingParam::Enabled {
-            budget_tokens: 8_000,
-        })
-    } else {
-        None
+fn build_thinking_param(thinking: Option<AnthropicThinking>) -> Option<ThinkingParam> {
+    match thinking {
+        Some(AnthropicThinking::Manual { budget_tokens }) => {
+            Some(ThinkingParam::Enabled { budget_tokens })
+        }
+        Some(AnthropicThinking::Adaptive { display, effort: _ }) => {
+            Some(ThinkingParam::Adaptive { display })
+        }
+        None => None,
     }
 }
 
-fn supports_manual_thinking(model: &str) -> bool {
-    let lower = model.to_lowercase();
-    lower.contains("3-7") || lower.contains("3.7")
-}
-
-fn temperature_for(model: &str) -> Option<f32> {
-    if supports_manual_thinking(model) {
-        Some(1.0)
-    } else {
-        None
+fn build_output_config(thinking: &Option<AnthropicThinking>) -> Option<OutputConfig> {
+    match thinking {
+        Some(AnthropicThinking::Adaptive {
+            effort: Some(effort),
+            ..
+        }) => Some(OutputConfig {
+            effort: effort.clone(),
+        }),
+        _ => None,
     }
 }
 
@@ -286,7 +319,13 @@ impl Provider for AnthropicProvider {
         tools: &[ToolSchema],
         cancel: CancellationToken,
     ) -> Result<CompletionStream, ProviderError> {
-        let body = build_request_body(&self.model, messages, tools, true);
+        let body = build_request_body_with_options(
+            &self.model,
+            messages,
+            tools,
+            true,
+            self.request_options.clone(),
+        );
         let url = format!("{}/messages", self.base_url);
 
         let resp = tokio::select! {
@@ -385,6 +424,9 @@ fn parse_sse_data_payload(
         "content_block_stop" | "message_stop" | "ping" => Ok(None),
         "message_delta" => {
             if let Some(usage) = value.get("usage") {
+                if let Some(input) = usage.get("input_tokens").and_then(|v| v.as_u64()) {
+                    state.usage.input_tokens = input;
+                }
                 if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
                     state.usage.output_tokens = output;
                 }
@@ -610,7 +652,7 @@ mod tests {
 
     #[test]
     fn request_body_uses_structured_tool_choice_and_input_schema() {
-        let body = build_request_body(
+        let body = build_request_body_with_options(
             "claude-sonnet-4-5",
             &[msg(Role::User, Content::Text("hi".into()))],
             &[ToolSchema {
@@ -619,6 +661,7 @@ mod tests {
                 parameters: serde_json::json!({ "type": "object" }),
             }],
             true,
+            AnthropicRequestOptions::default(),
         );
 
         let json = serde_json::to_value(body).unwrap();
@@ -631,19 +674,81 @@ mod tests {
     }
 
     #[test]
-    fn thinking_is_only_enabled_for_claude_3_7() {
-        let body = build_request_body("claude-3-7-sonnet-latest", &[], &[], true);
+    fn thinking_defaults_to_off_for_claude_3_7() {
+        let body = build_request_body_with_options(
+            "claude-3-7-sonnet-latest",
+            &[],
+            &[],
+            true,
+            AnthropicRequestOptions::default(),
+        );
+        let json = serde_json::to_value(body).unwrap();
+        assert!(json.get("thinking").is_none());
+        assert!(json.get("temperature").is_none());
+    }
+
+    #[test]
+    fn manual_thinking_is_explicit() {
+        let body = build_request_body_with_options(
+            "claude-3-7-sonnet-latest",
+            &[],
+            &[],
+            true,
+            AnthropicRequestOptions {
+                thinking: Some(AnthropicThinking::Manual {
+                    budget_tokens: 8_000,
+                }),
+            },
+        );
         let json = serde_json::to_value(body).unwrap();
         assert_eq!(
             json["thinking"],
             serde_json::json!({ "type": "enabled", "budget_tokens": 8000 })
         );
         assert_eq!(json["temperature"], serde_json::json!(1.0));
+    }
 
-        let body = build_request_body("claude-sonnet-4-5", &[], &[], true);
+    #[test]
+    fn adaptive_thinking_is_explicit() {
+        let body = build_request_body_with_options(
+            "claude-opus-4-8",
+            &[],
+            &[],
+            true,
+            AnthropicRequestOptions {
+                thinking: Some(AnthropicThinking::Adaptive {
+                    display: "summarized".into(),
+                    effort: None,
+                }),
+            },
+        );
         let json = serde_json::to_value(body).unwrap();
-        assert!(json.get("thinking").is_none());
+        assert_eq!(
+            json["thinking"],
+            serde_json::json!({ "type": "adaptive", "display": "summarized" })
+        );
         assert!(json.get("temperature").is_none());
+    }
+
+    #[test]
+    fn adaptive_thinking_can_set_effort() {
+        let body = build_request_body_with_options(
+            "claude-opus-4-8",
+            &[],
+            &[],
+            true,
+            AnthropicRequestOptions {
+                thinking: Some(AnthropicThinking::Adaptive {
+                    display: "summarized".into(),
+                    effort: Some("medium".into()),
+                }),
+            },
+        );
+        let json = serde_json::to_value(body).unwrap();
+        assert_eq!(
+            json["output_config"],
+            serde_json::json!({ "effort": "medium" })
+        );
     }
 
     #[test]
@@ -666,5 +771,26 @@ mod tests {
         assert_eq!(deltas[1].content_delta.as_deref(), Some("Hi"));
         assert_eq!(deltas[2].usage.unwrap().output_tokens, 4);
         assert_eq!(deltas[2].finish_reason, Some(FinishReason::Stop));
+    }
+
+    #[test]
+    fn message_delta_usage_can_update_input_tokens() {
+        let input = b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"output_tokens\":0}}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"input_tokens\":8,\"output_tokens\":4}}\n\n";
+        let s = parse_sse_chunks(stream::iter(vec![Ok::<_, reqwest::Error>(
+            Bytes::copy_from_slice(input),
+        )]));
+
+        let deltas = futures::executor::block_on(async move {
+            let mut out = Vec::new();
+            futures::pin_mut!(s);
+            while let Some(item) = s.next().await {
+                out.push(item.unwrap());
+            }
+            out
+        });
+
+        let usage = deltas[1].usage.unwrap();
+        assert_eq!(usage.input_tokens, 8);
+        assert_eq!(usage.output_tokens, 4);
     }
 }

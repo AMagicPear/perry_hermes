@@ -13,7 +13,9 @@ use clap::Parser;
 
 use hermes_core::error::LoopError;
 use hermes_core::message::{Content, Message, Role};
-use hermes_runtime::{AIAgent, AgentOptions, LoopEvent, DEFAULT_SYSTEM_PROMPT};
+use hermes_runtime::{
+    config::HermesConfig, AIAgent, AgentOptions, LoopEvent, DEFAULT_SYSTEM_PROMPT,
+};
 use tokio_util::sync::CancellationToken;
 
 mod ctrl_c;
@@ -38,6 +40,10 @@ struct Args {
     /// API base URL (default: provider-specific env var or built-in default)
     #[arg(long)]
     base_url: Option<String>,
+
+    /// TOML config file. CLI flags override overlapping config values.
+    #[arg(long)]
+    config: Option<PathBuf>,
 
     /// Max iterations per turn (default: 10, matching Python Hermes CLI)
     #[arg(long, default_value_t = 10)]
@@ -70,6 +76,13 @@ async fn dispatch(args: Args) -> anyhow::Result<()> {
         working_dir: working_dir.clone(),
         session_id: "cli".into(),
     };
+
+    if let Some(config_path) = &args.config {
+        let mut config = HermesConfig::from_path(config_path)?;
+        apply_cli_overrides(&args, &mut config);
+        let agent = AIAgent::from_config(config, options)?;
+        return run_repl(agent).await;
+    }
 
     match args.provider.as_str() {
         "echo" => {
@@ -117,6 +130,21 @@ async fn dispatch(args: Args) -> anyhow::Result<()> {
             run_repl(agent).await
         }
         other => bail!("unknown provider: {other}. Use 'openai', 'anthropic', or 'echo'."),
+    }
+}
+
+fn apply_cli_overrides(args: &Args, config: &mut HermesConfig) {
+    if let Some(model) = &args.model {
+        config.provider.model = Some(model.clone());
+    }
+    if let Some(base_url) = &args.base_url {
+        config.provider.base_url = Some(base_url.clone());
+    }
+    if args.max_iterations != 10 {
+        config.agent.max_iterations = Some(args.max_iterations);
+    }
+    if !args.disabled_toolsets.is_empty() {
+        config.agent.disabled_toolsets = args.disabled_toolsets.clone();
     }
 }
 

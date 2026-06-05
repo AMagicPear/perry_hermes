@@ -7,6 +7,6 @@ pub mod anthropic;
 pub mod echo;
 pub mod openai;
 
-pub use anthropic::AnthropicProvider;
+pub use anthropic::{AnthropicProvider, AnthropicRequestOptions, AnthropicThinking};
 pub use echo::EchoProvider;
 pub use openai::OpenAiProvider;

@@ -2,13 +2,15 @@
 
 > Vibe code 一个 Rust 版的 Nous Research 的 [hermes-agent](https://github.com/NousResearch/hermes-agent) —— 一个自进化的 AI Agent。
 
-当前进度：**Phase 0–6 已完成**（核心循环 + OpenAI 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断）。下一步进入 Phase 7：上下文压缩 / 预算模型。
+当前进度：**Phase 0–6、Phase 8 已完成，Phase 9 配置文件已初步可用**（核心循环 + OpenAI/Anthropic 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断 + TOML provider/agent 配置）。Phase 7 上下文压缩仍暂缓。
 
 ## 特性
 
 - **ReAct 风格 Agent 循环** — LLM 决策 → 工具调用 → 结果反馈 → 继续决策，直到任务完成
 - **工具错误非致命** — 执行失败不会崩溃循环，而是把错误信息反馈给 LLM，让它自行调整策略
-- **OpenAI 兼容** — 通过 `with_base_url()` 支持 OpenAI、DeepSeek、MiniMax、Ollama、vLLM 等任意兼容端点
+- **OpenAI 兼容** — 通过 `with_base_url()` 支持 OpenAI、DeepSeek、MiniMax、Ollama、vLLM 等任意兼容端点；普通 content 中的 `<think>...</think>` fallback 会被归一化为 reasoning
+- **Anthropic 兼容** — 支持 Anthropic Messages API，以及 MiMo 这类需要 `api-key` header 的兼容端点
+- **TOML 配置文件** — `--config` 可加载 provider / agent / thinking 配置，CLI flag 会覆盖同名配置
 - **协作式取消** — `CancellationToken` 贯穿所有异步调用，支持 Ctrl-C 优雅中断(第一次中断当前 turn，第二次退出 REPL)
 - **交互式 REPL CLI** — 多轮对话、工具调用实时渲染(emoji + 截断预览)、`/quit`/`/exit` 斜杠命令、`--disabled-toolsets` 细粒度控制
 - **Toolset 过滤** — 通过 runtime 配置按 toolset 名启用/禁用工具(目前内置 `core` / `terminal`)
@@ -22,7 +24,7 @@ hermes-cli (交互式 REPL — Phase 4)
   └─ hermes-runtime (产品 API 门面 — AIAgent)
        └─ hermes-loop (Agent 循环状态机)
             ├─ hermes-core (类型、特征、错误 — 无 IO)
-            ├─ hermes-providers (OpenAI 适配器、Echo 模拟)
+            ├─ hermes-providers (OpenAI / Anthropic 适配器、Echo 模拟)
             └─ hermes-tools (BashTool)
 ```
 
@@ -31,7 +33,7 @@ hermes-cli (交互式 REPL — Phase 4)
 | Crate | 职责 | 关键类型/特征 |
 |---|---|---|
 | `hermes-core` | 核心类型、特征定义、错误类型，无 IO | `Provider`, `Tool`, `InMemoryRegistry`, `Message`, `Completion`, `FinishReason` |
-| `hermes-providers` | LLM 提供者实现 | `OpenAiProvider` (兼容 DeepSeek/MiniMax/Ollama/vLLM), `EchoProvider` |
+| `hermes-providers` | LLM 提供者实现 | `OpenAiProvider` (兼容 DeepSeek/MiniMax/Ollama/vLLM), `AnthropicProvider`, `EchoProvider` |
 | `hermes-tools` | 内置工具实现 | `BashTool` (bash 命令执行，30s 超时，50KB 输出截断，并发 drain stdout/stderr) |
 | `hermes-loop` | Agent 循环状态机 | `AgentLoop`, `LoopConfig`, `RunResult`, `LoopEvent` |
 | `hermes-runtime` | CLI/gateway 共用运行入口 | `AIAgent`, `AgentOptions`, `run_messages()`, `run_turn()` |
@@ -63,6 +65,15 @@ export OPENAI_MODEL="gpt-4o-mini"                     # 可选，默认 gpt-4o-m
 
 支持 OpenAI 兼容端点，例如 DeepSeek、MiniMax、Ollama 等，只需修改 `OPENAI_BASE_URL`。
 
+Anthropic / MiMo 兼容端点也可以用环境变量：
+
+```bash
+export ANTHROPIC_API_KEY="..."
+export ANTHROPIC_MODEL="mimo-v2.5"
+export ANTHROPIC_BASE_URL="https://api.xiaomimimo.com/anthropic/v1"
+export ANTHROPIC_API_KEY_HEADER="api-key"
+```
+
 ### 构建
 
 ```bash
@@ -89,7 +100,36 @@ cargo run -p hermes-cli -- --cwd /tmp
 
 # 调高最大迭代次数(默认 20)
 cargo run -p hermes-cli -- --max-iterations 50
+
+# 使用 TOML 配置文件
+cargo run -p hermes-cli -- --config hermes.toml
 ```
+
+示例 `hermes.toml`：
+
+```toml
+[provider]
+kind = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+model = "mimo-v2.5"
+base_url = "https://api.xiaomimimo.com/anthropic/v1"
+api_key_header = "api-key"
+
+[provider.thinking]
+mode = "off" # off | manual | adaptive
+# manual: budget_tokens = 8000
+# adaptive: display = "summarized", effort = "medium"
+
+[agent]
+max_iterations = 10
+disabled_toolsets = []
+
+[skills]
+enabled = ["rust"]
+paths = ["./skills"]
+```
+
+当前 `skills` 配置只保留 schema，占位给后续 Phase 9 Skills 加载；运行时还不会读取 Markdown skill 文件。
 
 REPL 内可用命令：
 
@@ -140,6 +180,7 @@ crates/hermes-loop/tests/
 crates/hermes-providers/tests/
   ├── openai.rs             # OpenAI 适配器 HTTP 测试（httpmock）
   ├── openai_stream.rs      # SSE streaming 测试
+  ├── anthropic.rs          # Anthropic/MiMo-compatible HTTP + SSE 测试
   └── tool_call_roundtrip.rs  # tool_calls 序列化往返测试
 
 crates/hermes-tools/tests/
@@ -168,8 +209,8 @@ crates/hermes-tools/tests/
 | Phase 5 | 流式输出：逐 token 输出 | ✅ |
 | Phase 6 | 中断：Ctrl-C 停止流式输出并保留 partial assistant message | ✅ |
 | Phase 7 | 上下文压缩：消息过长时自动摘要 | |
-| Phase 8 | Anthropic Provider：多 Provider 支持 | |
-| Phase 9 | Skills：加载 .md 文件作为系统提示词 | |
+| Phase 8 | Anthropic Provider：多 Provider 支持 | ✅ |
+| Phase 9 | 配置文件 + Skills：TOML provider/agent 配置已初步可用；Skills 加载待实现 | 🚧 |
 | Phase 10 | TUI：ratatui 多行编辑器 | |
 | Phase 11 | 平台网关：Telegram（grammY-rs） | |
 | Phase 12 | Curator：学习循环（Hermes 的灵魂） | |
@@ -179,6 +220,9 @@ crates/hermes-tools/tests/
 - `ToolContext.permissions` 已建模但未强制执行
 - 未知 `finish_reason` 会映射为 `FinishReason::Error`，但错误信息仍较粗
 - OpenAI-compatible provider 已支持 `Content::Parts` 的 text/image_url content array；其他多媒体 part 类型尚未建模
+- OpenAI-compatible provider 会把普通 content 中的 `<think>...</think>` fallback 解析为 reasoning；支持原生 `reasoning_content` 的端点仍优先使用原生字段
+- Anthropic provider 支持官方 `x-api-key` header，也可通过 `ANTHROPIC_API_KEY_HEADER=api-key` 或 TOML `api_key_header = "api-key"` 适配 MiMo 这类 Anthropic-compatible 端点
+- Anthropic thinking 默认关闭；如需发送 `thinking` 参数，必须在 TOML 中显式设置 `mode = "manual"` 或 `mode = "adaptive"`。第三方 Anthropic-compatible API 建议先保持 `off`。
 - 复用同一 `BashTool` 时 `child.kill().await` 的并发安全未充分测试
 
 ## License
