@@ -20,6 +20,30 @@ use tokio_util::sync::CancellationToken;
 
 pub use hermes_loop::LoopEvent;
 
+/// Per-run context that travels alongside the message list into `run_*`.
+///
+/// `HermesConfig` is the *static* configuration (provider, model, agent
+/// limits). `SessionContext` is the *dynamic* per-invocation context
+/// (which shell the agent is acting on behalf of, which directory to
+/// start in). The runtime is reusable across sessions; the caller
+/// supplies a fresh `SessionContext` for each `run_*` call.
+#[derive(Debug, Clone)]
+pub struct SessionContext {
+    pub working_dir: PathBuf,
+    pub session_id: String,
+}
+
+impl SessionContext {
+    /// A `SessionContext` for "the current shell session in the current
+    /// working directory." Useful for examples and single-shot tools.
+    pub fn current_shell() -> Self {
+        Self {
+            working_dir: std::env::current_dir().unwrap_or_default(),
+            session_id: "shell".into(),
+        }
+    }
+}
+
 pub const DEFAULT_SYSTEM_PROMPT: &str =
     "You are a careful assistant with access to a `bash` tool. \
 Use it to inspect the system or run shell commands when needed. When you have enough information \
