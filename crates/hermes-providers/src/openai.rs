@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use futures::Stream;
 use futures::StreamExt;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 use hermes_core::message::{Content, Message};
@@ -98,42 +98,6 @@ struct OaiFunctionDef<'a> {
     name: &'a str,
     description: &'a str,
     parameters: &'a serde_json::Value,
-}
-
-#[derive(Deserialize)]
-struct ChatResponse {
-    choices: Vec<Choice>,
-    usage: Option<OaiUsage>,
-}
-
-#[derive(Deserialize)]
-struct Choice {
-    message: OaiRespMessage,
-    finish_reason: Option<String>,
-}
-
-#[derive(Deserialize)]
-struct OaiRespMessage {
-    content: Option<String>,
-    tool_calls: Option<Vec<OaiToolCall>>,
-}
-
-#[derive(Deserialize)]
-struct OaiToolCall {
-    id: String,
-    function: OaiFunctionCall,
-}
-
-#[derive(Deserialize)]
-struct OaiFunctionCall {
-    name: String,
-    arguments: String,
-}
-
-#[derive(Deserialize)]
-struct OaiUsage {
-    prompt_tokens: u64,
-    completion_tokens: u64,
 }
 
 fn build_request_body<'a>(
@@ -367,7 +331,6 @@ fn parse_sse_data_payload(payload: &str) -> Result<CompletionDelta, ProviderErro
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hermes_core::provider::ToolCallDelta;
 
     fn parse_sse_bytes(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
         parse_sse_for_test(input)
