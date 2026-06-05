@@ -76,6 +76,9 @@ async fn main() {
             LoopEvent::LengthLimit => eprintln!("[hit length limit]"),
             LoopEvent::IterationsExhausted => eprintln!("[max iterations]"),
             LoopEvent::Cancelled => eprintln!("[cancelled]"),
+            LoopEvent::ContentDelta(s) => eprint!("{s}"),
+            LoopEvent::ReasoningDelta(s) => eprint!("{s}"),
+            LoopEvent::ToolCallPartial(_) => {}
         }),
     )
     .await;

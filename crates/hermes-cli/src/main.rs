@@ -199,6 +199,17 @@ async fn run_repl<P: Provider, R: ToolRegistry>(
                 LoopEvent::LengthLimit => eprintln!("[hit length limit]"),
                 LoopEvent::IterationsExhausted => eprintln!("[max iterations]"),
                 LoopEvent::Cancelled => eprintln!("[cancelled]"),
+                LoopEvent::ContentDelta(s) => {
+                    eprint!("{s}");
+                    let _ = stdout.flush();
+                }
+                LoopEvent::ReasoningDelta(s) => {
+                    eprint!("\x1b[2m{s}\x1b[0m");
+                    let _ = stdout.flush();
+                }
+                LoopEvent::ToolCallPartial(_) => {
+                    // Silent — ToolCallStarted fires when complete.
+                }
             })
             .await;
 
