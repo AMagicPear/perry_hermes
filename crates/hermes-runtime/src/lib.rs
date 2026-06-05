@@ -120,15 +120,56 @@ impl AIAgent {
 /// the two entry points stay in lockstep.
 fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
     let registry = Arc::new(build_registry(&config.agent.disabled_toolsets));
+    let system_prompt = compose_system_prompt(config.agent.system_prompt.as_deref());
     AgentLoop::from_provider(
         provider,
         registry,
         LoopConfig {
             max_iterations: config.agent.max_iterations.unwrap_or(10),
-            system_prompt: config.agent.system_prompt.clone(),
+            system_prompt,
             ..Default::default()
         },
     )
+}
+
+/// Compute the default skills directory from the user's `HOME`.
+///
+/// Returns `None` when `HOME` is unset. Matches the existing
+/// `~/.perry_hermes/config.toml` convention used by the CLI.
+fn default_skills_dir() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes").join("skills"))
+}
+
+/// Compose the final system prompt: user-supplied prompt (or the
+/// pre-unify default), plus a skills index block when skills exist.
+///
+/// Fixes the regression from `refactor(runtime): unify AIAgent API on
+/// HermesConfig + SessionContext`, which made `DEFAULT_SYSTEM_PROMPT`
+/// dead code. When the user does not supply a system prompt, this
+/// function falls back to that default.
+fn compose_system_prompt(user_prompt: Option<&str>) -> Option<String> {
+    let skills = match default_skills_dir() {
+        Some(d) => match hermes_skills::load_all(&d) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(
+                    "failed to scan skills dir {}: {e}",
+                    d.display()
+                );
+                Vec::new()
+            }
+        },
+        None => Vec::new(),
+    };
+    let skills_block = hermes_skills::render_system_prompt_block(&skills);
+
+    let base = user_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
+
+    if skills_block.is_empty() {
+        Some(base.to_string())
+    } else {
+        Some(format!("{base}\n\n{skills_block}"))
+    }
 }
 
 fn build_provider(config: &ProviderConfig) -> anyhow::Result<Box<dyn Provider>> {
