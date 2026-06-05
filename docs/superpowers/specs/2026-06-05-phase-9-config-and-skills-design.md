@@ -1,5 +1,7 @@
 # Phase 9 — Config File and Skills Design
 
+> **Superseded by** `2026-06-05-unify-runtime-config-design.md`. The CLI now requires a config file (looked up in `~/.perry_hermes/config.toml` → `./hermes.toml`); environment-variable fallbacks (`OPENAI_MODEL`, `ANTHROPIC_BASE_URL`, etc.) and provider-specific CLI flags (`--provider`, `--model`, `--base-url`, `--max-iterations`, `--disabled-toolsets`) are removed. `HermesConfig` is the single source of truth; `AIAgent` exposes only `from_config` and `new`; per-run `working_dir`/`session_id` travel in a `SessionContext` parameter.
+
 **Date:** 2026-06-05
 **Status:** Config file partially implemented; Skills runtime loading deferred.
 
