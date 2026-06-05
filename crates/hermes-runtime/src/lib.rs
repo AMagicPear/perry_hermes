@@ -8,7 +8,7 @@ use hermes_core::provider::Provider;
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::{ToolContext, ToolPermissions};
 use hermes_loop::{AgentLoop, LoopConfig, RunResult};
-use hermes_providers::{EchoProvider, OpenAiProvider};
+use hermes_providers::{AnthropicProvider, EchoProvider, OpenAiProvider};
 use hermes_tools::BashTool;
 use tokio_util::sync::CancellationToken;
 
@@ -54,6 +54,33 @@ impl AIAgent {
     ) -> Self {
         Self::new(
             OpenAiProvider::new(api_key, model).with_base_url(base_url),
+            options,
+        )
+    }
+
+    pub fn anthropic(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        base_url: impl Into<String>,
+        options: AgentOptions,
+    ) -> Self {
+        Self::new(
+            AnthropicProvider::new(api_key, model).with_base_url(base_url),
+            options,
+        )
+    }
+
+    pub fn anthropic_with_api_key_header(
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+        base_url: impl Into<String>,
+        api_key_header: impl Into<String>,
+        options: AgentOptions,
+    ) -> Self {
+        Self::new(
+            AnthropicProvider::new(api_key, model)
+                .with_base_url(base_url)
+                .with_api_key_header(api_key_header),
             options,
         )
     }

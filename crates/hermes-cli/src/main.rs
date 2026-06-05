@@ -27,15 +27,15 @@ use ctrl_c::{CtrlCAction, CtrlCHandler};
     long_about = None
 )]
 struct Args {
-    /// Provider: "openai" or "echo"
+    /// Provider: "openai", "anthropic", or "echo"
     #[arg(long, default_value = "openai")]
     provider: String,
 
-    /// Model name (default: env OPENAI_MODEL or "gpt-4o-mini")
+    /// Model name (default: provider-specific env var or built-in default)
     #[arg(long)]
     model: Option<String>,
 
-    /// API base URL (default: env OPENAI_BASE_URL)
+    /// API base URL (default: provider-specific env var or built-in default)
     #[arg(long)]
     base_url: Option<String>,
 
@@ -92,7 +92,31 @@ async fn dispatch(args: Args) -> anyhow::Result<()> {
             let agent = AIAgent::openai_compatible(api_key, model, base_url, options);
             run_repl(agent).await
         }
-        other => bail!("unknown provider: {other}. Use 'openai' or 'echo'."),
+        "anthropic" => {
+            let api_key = std::env::var("ANTHROPIC_API_KEY")
+                .context("ANTHROPIC_API_KEY is not set. Export it or use direnv.")?;
+            let model = args
+                .model
+                .clone()
+                .or_else(|| std::env::var("ANTHROPIC_MODEL").ok())
+                .unwrap_or_else(|| "claude-sonnet-4-5".into());
+            let base_url = args
+                .base_url
+                .clone()
+                .or_else(|| std::env::var("ANTHROPIC_BASE_URL").ok())
+                .unwrap_or_else(|| "https://api.anthropic.com/v1".into());
+            let api_key_header =
+                std::env::var("ANTHROPIC_API_KEY_HEADER").unwrap_or_else(|_| "x-api-key".into());
+            let agent = AIAgent::anthropic_with_api_key_header(
+                api_key,
+                model,
+                base_url,
+                api_key_header,
+                options,
+            );
+            run_repl(agent).await
+        }
+        other => bail!("unknown provider: {other}. Use 'openai', 'anthropic', or 'echo'."),
     }
 }
 

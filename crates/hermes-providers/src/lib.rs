@@ -3,8 +3,10 @@
 //!
 //! See `plans/rust-port-design.md` for the full roadmap.
 
+pub mod anthropic;
 pub mod echo;
 pub mod openai;
 
+pub use anthropic::AnthropicProvider;
 pub use echo::EchoProvider;
 pub use openai::OpenAiProvider;

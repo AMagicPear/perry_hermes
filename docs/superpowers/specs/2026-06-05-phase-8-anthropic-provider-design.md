@@ -1,7 +1,7 @@
 # Phase 8 — Anthropic Provider
 
 **Date:** 2026-06-05
-**Status:** Implemented.
+**Status:** Implemented in this branch.
 **Scope implemented:** `hermes-providers` (new `AnthropicProvider`), `hermes-runtime` (new `AIAgent::anthropic` constructor), `hermes-cli` (new `--provider anthropic` flag).
 
 ## 1. Goals
@@ -20,9 +20,9 @@ Explicitly deferred to later phases (these would each be their own brainstorm ro
 - **OAuth / setup-tokens / Claude Code credentials / Entra ID bearer auth.** Phase 8 sends the API key as the `x-api-key` header. The `_is_oauth_token` / `_requires_bearer_auth` / `read_claude_code_credentials` / `refresh_anthropic_oauth_pure` machinery in Hermes's adapter is not ported.
 - **Prompt caching** (`cache_control` blocks on system / messages / tools). Not in the request body. Hermes's `prompt_caching.py` and `_evict_old_screenshots` are not ported.
 - **Third-party endpoint detection** (MiniMax Bearer auth, Azure `api-version` query param, Kimi `/coding` User-Agent spoof, DeepSeek `/anthropic` round-trip rules, AWS Bedrock model-id shape). `with_base_url()` exists and works against any Anthropic-compatible host, but no endpoint-specific behaviors are baked in.
-- **Multimodal input** (`ContentPart::ImageUrl` → Anthropic `image` source block with base64 / media_type). `Content::Parts` is serialized as a plain text block when only text is present; image parts are dropped with a `tracing::warn!` (see §5.3).
-- **Per-model `max_tokens` resolution table** (Hermes has a 20+ entry dict for Claude 3/3.5/3.7/4/4.5/4.6/4.7/4.8 plus third-party overrides). Phase 8 hard-codes a single `max_tokens = 16384` in the request body. The Anthropic API accepts any positive value, so this is safe across all current models. A future phase can introduce a model→tokens table.
-- **Per-model sampling-param restrictions** (Opus 4.7+ rejects any non-default `temperature` / `top_p` / `top_k`). Phase 8 only sends `temperature = 1` when the model is in manual-thinking mode (3.7+ pre-4.6) per Anthropic's requirement. We do not strip these params on 4.7+ since the default is already correct for adaptive-thinking mode and the manual branch is not taken for 4.7+.
+- **Multimodal input** (`ContentPart::ImageUrl` → Anthropic `image` source block with base64 / media_type). `Content::Parts` is serialized as plain text by joining text parts with `\n`; image parts are dropped in Phase 8.
+- **Per-model `max_tokens` resolution table** (Hermes has a 20+ entry dict for Claude 3/3.5/3.7/4/4.5/4.6/4.7/4.8 plus third-party overrides). Phase 8 hard-codes a single `max_tokens = 16384` in the request body. This is a pragmatic default for the provider abstraction; a future phase can introduce a model→tokens table and lower the value for models/endpoints that reject it.
+- **Per-model sampling-param restrictions** (Opus 4.7+ rejects any non-default `temperature` / `top_p` / `top_k`). Phase 8 only sends `temperature = 1` when the model name indicates Claude 3.7 manual thinking. For Claude 4.x and unknown models it omits `thinking` and sampling params.
 - **Fast mode** (Opus 4.6 only, `extra_body.speed = "fast"` + `fast-mode-2026-02-01` beta header). Not sent.
 - **Bedrock / Vertex / Azure-native** clients. Out of scope; `AnthropicProvider` is direct-Messages-API only.
 - **The `ProviderConfig` enum / `AIAgent::from_config` factory / `--config` CLI flag.** This is a follow-up phase. Phase 8's `AIAgent::anthropic()` is the building block that future config code calls.
@@ -54,7 +54,7 @@ Explicitly deferred to later phases (these would each be their own brainstorm ro
 │ hermes-providers     │  AnthropicProvider::stream (new)
 │ anthropic.rs         │    — POST {base}/messages with x-api-key + anthropic-version headers
 │                      │    — wire serialization (system→top-level, tool→user+tool_result)
-│                      │    — adaptive thinking for 4.6+, manual for 3.7+ pre-4.6, none for haiku
+│                      │    — manual thinking for Claude 3.7 only; no historical thinking replay
 │                      │    — Anthropic SSE → CompletionDelta (event-type dispatch)
 │                      │  OpenAiProvider::stream (unchanged)
 │                      │  EchoProvider::stream (unchanged)
@@ -69,7 +69,7 @@ No `hermes-core` changes. The `Provider` trait and `CompletionDelta` / `StreamAc
 2. Loop calls `provider.stream(&messages, &tools, cancel)`.
 3. Anthropic provider serializes:
    - Extract `system` from messages into a top-level field.
-   - Convert remaining messages: assistant text → `content: [{type: "text", text}]`; assistant tool_calls → append `tool_use` blocks with parsed `arguments`; assistant reasoning → `thinking` block (or text if model doesn't support it); user text → `content: text`; tool role → merge into trailing user message as `tool_result` block.
+   - Convert remaining messages: assistant text → `content: [{type: "text", text}]`; assistant tool_calls → append `tool_use` blocks with parsed `arguments`; historical assistant reasoning is not serialized back as `thinking` because `Message` does not preserve Anthropic signatures; user text → `content: text`; tool role → merge into trailing user message as `tool_result` block.
    - Convert tools: drop the OpenAI `function` wrapper.
    - Add `thinking` param per model family.
 4. POST to `{base_url}/messages` with `x-api-key`, `anthropic-version: 2023-06-01`, `content-type: application/json`, body `{model, system?, messages, tools?, max_tokens: 16384, stream: true, thinking?, temperature?}`.
@@ -144,50 +144,54 @@ Mirrors `OpenAiProvider` exactly. No `with_model` (the user picks at constructio
 
 ```rust
 #[derive(Serialize)]
-struct MessagesRequest<'a> {
-    model: &'a str,
+struct MessagesRequest {
+    model: String,
     #[serde(skip_serializing_if = "Option::is_none")]
-    system: Option<&'a str>,
-    messages: Vec<WireMessage<'a>>,
+    system: Option<String>,
+    messages: Vec<WireMessage>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<WireTool<'a>>,
+    tools: Vec<WireTool>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<&'a str>,           // "auto" | "any" | "tool" — see §5.4
+    tool_choice: Option<WireToolChoice>,    // { "type": "auto" } — see §5.4
     max_tokens: u32,                        // hard-coded 16384
     stream: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    thinking: Option<ThinkingParam<'a>>,
+    thinking: Option<ThinkingParam>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    temperature: Option<f32>,               // only 1.0, only for manual thinking
+    temperature: Option<f32>,               // only 1.0, only for Claude 3.7 manual thinking
 }
 
 #[derive(Serialize)]
-struct WireMessage<'a> {
-    role: &'a str,                          // "user" | "assistant"
-    content: WireMessageContent<'a>,        // string | Vec<WireContentBlock>
+struct WireMessage {
+    role: String,                           // "user" | "assistant"
+    content: WireMessageContent,            // string | Vec<WireContentBlock>
 }
 
 #[derive(Serialize)]
 #[serde(untagged)]
-enum WireMessageContent<'a> {
-    Text(&'a str),
-    Blocks(Vec<WireContentBlock<'a>>),
+enum WireMessageContent {
+    Text(String),
+    Blocks(Vec<WireContentBlock>),
 }
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum WireContentBlock<'a> {
-    Text { text: &'a str },
-    Thinking { thinking: &'a str },         // for round-tripping prior reasoning
-    ToolUse { id: &'a str, name: &'a str, input: &'a serde_json::Value },
-    ToolResult { tool_use_id: &'a str, content: &'a str, #[serde(skip_if = "Option::is_none")] is_error: Option<bool> },
+enum WireContentBlock {
+    Text { text: String },
+    ToolUse { id: String, name: String, input: serde_json::Value },
+    ToolResult { tool_use_id: String, content: String, #[serde(skip_serializing_if = "Option::is_none")] is_error: Option<bool> },
     // Image part intentionally omitted in Phase 8 (see §2).
 }
 
 #[derive(Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-enum ThinkingParam<'a> {
-    Adaptive { display: &'a str },          // "summarized" per Hermes default
+enum WireToolChoice {
+    Auto,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum ThinkingParam {
     Enabled { budget_tokens: u32 },
 }
 ```
@@ -202,10 +206,10 @@ Returns `(Option<String> /* system */, Vec<WireMessage>)`.
      - If `content` is `Content::Text(s)` → push `WireMessage { role: "user", content: WireMessageContent::Text(s) }`.
      - If `content` is `Content::Parts(parts)`:
        - If all parts are `ContentPart::Text` → join them with `\n` into a single text message (Anthropic accepts strings directly).
-       - If any part is `ContentPart::ImageUrl` → `tracing::warn!` and drop the image; emit a text-only message. (Phase 8 limitation; see §2.)
+      - If any part is `ContentPart::ImageUrl` → drop the image and emit a text-only message. (Phase 8 limitation; see §2.)
    - `Role::Assistant`:
      - `content` → emit text block.
-     - `reasoning` (if non-empty) → emit a `Thinking { thinking: text }` block **before** the text block (Hermes: thinking blocks precede text blocks per Anthropic protocol).
+     - `reasoning` is intentionally ignored on request serialization in Phase 8. Anthropic thinking blocks include signatures that must be preserved across turns; `Message` currently stores text reasoning only.
      - `tool_calls` → for each call, parse `arguments` (`serde_json::Value`) and emit a `ToolUse` block with `input = arguments`. We don't re-stringify — Anthropic accepts objects.
    - `Role::Tool`:
      - Push the tool result into a pending `tool_results: Vec<ToolResult>` accumulator. Don't emit a message yet.
@@ -214,7 +218,7 @@ Returns `(Option<String> /* system */, Vec<WireMessage>)`.
 
 ### 5.4 Tool choice
 
-Phase 8 sends `tool_choice: "auto"` when `tools` is non-empty (matches `OpenAiProvider::build_request_body`). Anthropic accepts a string `tool_choice` for backward compatibility (alongside the structured `{type: "auto"}` form). When `tools` is empty, omit the field.
+Phase 8 sends structured `tool_choice: { "type": "auto" }` when `tools` is non-empty. When `tools` is empty, omit the field.
 
 Hermes maps `tool_choice == "required"` to `{type: "any"}` and `tool_choice == "none"` to omitting tools entirely. Phase 8 does not model `tool_choice` in `AgentLoop` / `LoopConfig` (no caller exercises it), so we only emit `"auto"`. A future phase that surfaces `tool_choice` will need a richer mapping.
 
@@ -248,32 +252,22 @@ Dispatches on the JSON `type` field:
 ### 5.6 Thinking
 
 ```rust
-fn supports_adaptive_thinking(model: &str) -> bool {
-    let m = model.to_lowercase().replace('.', "-");
-    m.contains("4-6") || m.contains("4-7") || m.contains("4-8")
-}
-
-fn build_thinking_param(model: &str) -> Option<ThinkingParam<'static>> {
+fn build_thinking_param(model: &str) -> Option<ThinkingParam> {
     let lower = model.to_lowercase();
-    if lower.contains("haiku") { return None; }     // haiku: no thinking at all
-    if supports_adaptive_thinking(model) {
-        Some(ThinkingParam::Adaptive { display: "summarized" })
-    } else {
+    if lower.contains("3-7") || lower.contains("3.7") {
         Some(ThinkingParam::Enabled { budget_tokens: 8000 })
+    } else {
+        None
     }
 }
 
 fn temperature_for(model: &str) -> Option<f32> {
-    // Anthropic requires temperature=1 when manual thinking is enabled on
-    // older models; adaptive thinking doesn't need it set.
     let lower = model.to_lowercase();
-    if lower.contains("haiku") { return None; }
-    if supports_adaptive_thinking(model) { return None; }
-    Some(1.0)
+    if lower.contains("3-7") || lower.contains("3.7") { Some(1.0) } else { None }
 }
 ```
 
-Detection matches Hermes's substring approach. The dot-to-hyphen normalization handles `claude-opus-4.6` (a common form) and `claude-opus-4-6` (Anthropic's canonical form) the same way. Future models (4.9, 5.x) will fall through to manual mode until updated — same behavior as Hermes. If a user picks an unknown model, the worst case is Anthropic returns 400 with a clear "thinking is not supported" error, which the loop surfaces as `ProviderError::InvalidResponse`.
+Phase 8 keeps thinking conservative: enable manual extended thinking only for model names that contain `3-7` or `3.7`, and omit thinking for Claude 4.x / unknown models. This avoids sending unsupported adaptive-thinking shapes and avoids replaying unsigned historical thinking blocks.
 
 ### 5.7 Finish reason
 
@@ -347,22 +341,17 @@ Mid-stream errors propagate through the byte stream as `Some(Err(ProviderError))
 | `convert_messages_pulls_system_out_of_messages` | System → top-level field |
 | `convert_messages_preserves_user_text` | Plain user text → `WireMessageContent::Text` |
 | `convert_messages_joins_text_parts` | `Content::Parts([Text, Text])` → joined string |
-| `convert_messages_drops_image_part_with_warning` | Image → `tracing::warn!` + text fallback (Phase 8 limitation) |
-| `convert_messages_emits_tool_use_blocks_for_assistant` | Tool calls → `ToolUse` blocks, `arguments` parsed to object |
-| `convert_messages_emits_thinking_block_before_text_for_reasoning` | Reasoning → `Thinking` block, ordering |
+| `convert_messages_drops_image_part` | Image → text fallback (Phase 8 limitation) |
+| `convert_messages_emits_tool_use_blocks_for_assistant` | Tool calls → `ToolUse` blocks, `arguments` as object |
+| `convert_messages_does_not_replay_unsigned_reasoning` | Reasoning text is not serialized as `thinking` |
 | `convert_messages_merges_consecutive_tool_results_into_user` | Multiple `Role::Tool` → one user message with `tool_result` blocks |
 | `convert_messages_renames_tool_call_id_to_tool_use_id` | Field mapping |
 | `convert_messages_handles_assistant_with_text_and_tools` | Mixed text + tool_use on same assistant turn |
 | `convert_tools_strips_function_wrapper` | Tool schema conversion |
-| `supports_adaptive_thinking_detects_4_6_plus` | All six substring variants |
-| `supports_adaptive_thinking_skips_haiku` | Haiku → false |
-| `supports_adaptive_thinking_handles_dotted_and_hyphenated_names` | `claude-opus-4.6` and `claude-opus-4-6` both work |
-| `build_thinking_param_returns_adaptive_for_4_6_plus` | New format |
-| `build_thinking_param_returns_manual_for_pre_4_6` | Old format with `budget_tokens: 8000` |
-| `build_thinking_param_returns_none_for_haiku` | No thinking field |
-| `temperature_for_returns_some_1_for_pre_4_6` | Manual mode requirement |
-| `temperature_for_returns_none_for_adaptive_models` | No sampling param sent |
-| `temperature_for_returns_none_for_haiku` | No thinking, no temperature |
+| `build_thinking_param_returns_manual_for_3_7` | `thinking.type = "enabled"` with `budget_tokens: 8000` |
+| `build_thinking_param_returns_none_for_4_x_and_haiku` | No thinking field |
+| `temperature_for_returns_some_1_for_3_7` | Manual mode requirement |
+| `temperature_for_returns_none_for_4_x_and_haiku` | No sampling param sent |
 | `parse_message_start_yields_input_usage` | SSE → `usage` |
 | `parse_content_block_delta_text_yields_content_delta` | text_delta |
 | `parse_content_block_delta_input_json_yields_arguments_delta` | input_json_delta |
@@ -388,9 +377,9 @@ Mid-stream errors propagate through the byte stream as `Some(Err(ProviderError))
 | `anthropic_provider_sends_top_level_system_field` | System is NOT inside `messages` array |
 | `anthropic_provider_sends_tool_use_blocks_not_function_wrapper` | Tool serialization |
 | `anthropic_provider_streams_text_and_tool_use_end_to_end` | Whole flow: connect, parse SSE, accumulate, return `Completion` |
-| `anthropic_provider_sends_adaptive_thinking_for_4_6_plus` | Request body has `thinking.type = "adaptive"` |
-| `anthropic_provider_sends_manual_thinking_for_pre_4_6` | Request body has `thinking.type = "enabled"` + `temperature: 1` |
-| `anthropic_provider_omits_thinking_for_haiku` | Haiku request body has no `thinking` field |
+| `anthropic_provider_sends_structured_tool_choice` | Request body has `tool_choice = { "type": "auto" }` |
+| `anthropic_provider_sends_manual_thinking_for_3_7` | Request body has `thinking.type = "enabled"` + `temperature: 1` |
+| `anthropic_provider_omits_thinking_for_4_x_and_haiku` | Request body has no `thinking` field |
 | `anthropic_provider_runs_two_turn_loop_with_tool_call` | End-to-end: `AgentLoop` with a `ScriptedAnthropicServer` returning tool_use → tool result → end_turn |
 
 Tests 1–9 use `httpmock`. Test 10 uses `httpmock` for the request body assertions plus the existing `AgentLoop` from `hermes-loop` to drive a real two-turn flow (mirroring `openai_stream.rs`'s end-to-end test).
@@ -418,5 +407,5 @@ No `examples/anthropic_smoke.rs` that talks to api.anthropic.com. A future phase
 - **Fast mode** (Opus 4.6 only).
 - **Per-model sampling param restrictions** (4.7+ stripping).
 - **Orphan tool block defensive strip** in `convert_messages_to_anthropic` (a `ContextCompressor` concern; Phase 7 territory).
-- **Preserved thinking blocks with signatures** (would require extending `Message` with a side channel for raw `thinking` blocks; currently we lose signatures on round-trip, which is fine for adaptive mode but might bite manual mode once the user opts out of adaptive).
+- **Preserved thinking blocks with signatures** (would require extending `Message` with a side channel for raw `thinking` blocks; Phase 8 does not replay historical reasoning as Anthropic `thinking` blocks).
 - **Reading `retry-after` from 429 responses** (Hermes hardcodes 1s; we do the same).
