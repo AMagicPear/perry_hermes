@@ -16,7 +16,8 @@ cargo run -p hermes-providers --example live_smoke
 cargo run -p hermes-runtime --example live_tool_use -- "what time is it?"
 
 # CLI smoke (offline, no API key needed)
-echo "hello" | cargo run -p hermes-cli --quiet -- --provider echo
+echo '[provider]\nkind = "echo"' > /tmp/hermes-smoke.toml
+echo "hello" | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.toml
 ```
 
 direnv auto-loads `.envrc` on `cd` — no manual env var exports needed once set up.
@@ -85,4 +86,4 @@ Current code is authoritative. `plans/rust-port-design.md` is a historical desig
 
 - ~~No streaming yet (Phase 5)~~ — resolved.
 - No `IterationBudget` (refund / grace call / subagent budget) — `LoopConfig.max_iterations` is a flat `u32`. (Phase 7)
-- `Toolset` filtering works at registry construction time (via `--disabled-toolsets`) but is not reactive to per-turn changes.
+- `Toolset` filtering is configured at startup via `[agent].disabled_toolsets` in the TOML config (e.g. `disabled_toolsets = ["terminal"]`); it is not reactive to per-turn changes.

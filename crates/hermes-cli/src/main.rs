@@ -186,7 +186,6 @@ async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow::Result<()
 
         match result {
             Ok(run_result) => {
-                let _ = &run_result.final_message;
                 history = run_result.messages;
 
                 eprintln!(

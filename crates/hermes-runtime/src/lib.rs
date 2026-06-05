@@ -193,7 +193,7 @@ fn anthropic_request_options(thinking: Option<&ThinkingConfig>) -> AnthropicRequ
     AnthropicRequestOptions { thinking: resolved }
 }
 
-pub fn build_registry(disabled_toolsets: &[String]) -> InMemoryRegistry {
+fn build_registry(disabled_toolsets: &[String]) -> InMemoryRegistry {
     if disabled_toolsets
         .iter()
         .any(|s| s == "core" || s == "terminal")
