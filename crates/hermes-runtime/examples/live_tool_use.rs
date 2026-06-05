@@ -19,7 +19,7 @@ use std::time::Duration;
 use hermes_core::message::Content;
 use hermes_core::LoopError;
 use hermes_providers::OpenAiProvider;
-use hermes_runtime::{AIAgent, LoopEvent, SessionContext};
+use hermes_runtime::{AIAgent, HermesConfig, LoopEvent, SessionContext};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -46,7 +46,7 @@ async fn main() {
     eprintln!();
 
     let provider = OpenAiProvider::new(&api_key, &model).with_base_url(&base_url);
-    let agent = AIAgent::new(provider, hermes_runtime::config::HermesConfig::default());
+    let agent = AIAgent::new(provider, HermesConfig::default());
     let session = SessionContext::current_shell();
     let cancel = CancellationToken::new();
 
