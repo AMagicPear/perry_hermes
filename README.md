@@ -16,7 +16,7 @@
 - **Toolset 过滤** — 通过 runtime 配置按 toolset 名启用/禁用工具(目前内置 `core` / `terminal`)
 - **Skills 加载** — `~/.perry_hermes/skills/` 下的 `.md` skill 文件在运行时自动加载，名称和描述注入 system prompt
 - **健壮的 BashTool** — stdout/stderr 并发 drain 避免管道死锁；输出采用 head+tail 40%/60% 截断策略，与 Python Hermes 对齐
-- **严格的分层架构** — 依赖方向始终向下，无循环依赖
+- **严格的分层架构** — `hermes-core` 保持传输无关；`hermes-runtime` 只保留薄组装入口，内部职责集中在 `agent`、`prompting`、`provider_factory`、`tool_catalog` 几个模块
 
 ## 架构
 
@@ -38,7 +38,7 @@ hermes-cli (交互式 REPL — Phase 4)
 | `hermes-providers` | LLM 提供者实现 | `OpenAiProvider` (兼容 DeepSeek/MiniMax/Ollama/vLLM), `AnthropicProvider`, `EchoProvider` |
 | `hermes-tools` | 内置工具实现 | `BashTool` (bash 命令执行，30s 超时，50KB 输出截断，并发 drain stdout/stderr) |
 | `hermes-loop` | Agent 循环状态机 | `AgentLoop`, `LoopConfig`, `RunResult`, `LoopEvent` |
-| `hermes-runtime` | CLI/gateway 共用运行入口 | `AIAgent`, `HermesConfig`, `SessionContext`, `run_messages`, `run_turn` |
+| `hermes-runtime` | CLI/gateway 共用运行入口，内部按组装职责拆分 | `AIAgent`, `HermesConfig`, `SessionContext`, `run_messages`, `run_turn` |
 | `hermes-cli` | 交互式 REPL 二进制 | `hermes` 命令，clap 参数解析，多轮历史，事件渲染 |
 
 ### 核心边界
@@ -47,6 +47,7 @@ hermes-cli (交互式 REPL — Phase 4)
 - **`Tool`** — 异步 `execute(args, ctx, cancel) -> ToolOutput`，工具调用的统一抽象
 - **`InMemoryRegistry`** — 工具名到 `Arc<dyn Tool>` 的简单映射，运行时负责按 toolset 过滤
 - **`LoopEvent`** — agent 到 CLI/gateway 的展示事件；平台适配器决定怎么渲染
+- **`ProviderError::Transport`** — 在 `hermes-core` 中保持传输无关，具体 HTTP 错误在 provider 边界转换为字符串上下文
 
 ## 快速开始
 
@@ -188,6 +189,7 @@ crates/hermes-tools/tests/
 ```
 
 项目采用 **TDD 工作流**：RED → GREEN → REFACTOR，严格先写失败测试再写实现代码。
+同时会定期删减重复、低信噪比测试，优先保留能守住模块边界和用户可观察行为的测试。
 
 ## 设计文档
 

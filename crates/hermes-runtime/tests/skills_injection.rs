@@ -218,6 +218,38 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
 }
 
 #[tokio::test]
+async fn runtime_new_preserves_user_prompt_without_skills_dir() {
+    unsafe { std::env::remove_var("HOME") };
+
+    let provider = CaptureProvider::default();
+    let captured = Arc::clone(&provider.captured);
+    let mut config = config_for_echo();
+    config.agent.system_prompt = Some("ONLY-CUSTOM".into());
+    let agent = AIAgent::new(provider, config);
+    let session = SessionContext {
+        working_dir: PathBuf::from("/tmp"),
+        session_id: "t".into(),
+    };
+
+    agent
+        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .await
+        .unwrap();
+
+    let msgs = captured.lock().unwrap();
+    let system = msgs
+        .iter()
+        .find(|m| m.role == hermes_core::message::Role::System)
+        .expect("a System message should have been injected");
+    let text = match &system.content {
+        hermes_core::message::Content::Text(s) => s.clone(),
+        _ => panic!("system message should be text"),
+    };
+
+    assert_eq!(text, "ONLY-CUSTOM");
+}
+
+#[tokio::test]
 async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present() {
     let home = tempfile::tempdir().unwrap();
     let skills = skills_dir_for(home.path());

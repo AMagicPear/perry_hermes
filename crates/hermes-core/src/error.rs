@@ -11,7 +11,7 @@ pub enum ProviderError {
     #[error("authentication failed: {0}")]
     Auth(String),
     #[error("transport error: {0}")]
-    Transport(#[from] reqwest::Error),
+    Transport(String),
     #[error("invalid response: {0}")]
     InvalidResponse(String),
     #[error("cancelled")]

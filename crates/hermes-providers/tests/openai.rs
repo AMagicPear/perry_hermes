@@ -68,3 +68,24 @@ async fn openai_provider_maps_429_to_rate_limited() {
 
     assert!(matches!(err, ProviderError::RateLimited { .. }));
 }
+
+#[tokio::test]
+async fn openai_provider_transport_error_is_transport_agnostic() {
+    let provider = OpenAiProvider::new("k", "gpt-4o-mini").with_base_url("http://127.0.0.1:1/v1");
+    let cancel = CancellationToken::new();
+
+    let err = match provider.stream(&[user_message("hi")], &[], cancel).await {
+        Err(e) => e,
+        Ok(_) => panic!("expected transport error, got Ok"),
+    };
+
+    match err {
+        ProviderError::Transport(msg) => {
+            assert!(
+                !msg.is_empty(),
+                "transport error should preserve context for debugging"
+            );
+        }
+        other => panic!("expected Transport(String), got {other:?}"),
+    }
+}
