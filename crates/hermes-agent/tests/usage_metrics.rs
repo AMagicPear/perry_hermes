@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
+use hermes_agent::{AgentLoop, LoopConfig};
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::{CompletionDelta, FinishReason};
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::ToolContext;
-use hermes_loop::{AgentLoop, LoopConfig};
 use tokio_util::sync::CancellationToken;
 
 mod support;

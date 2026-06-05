@@ -1,25 +1,9 @@
-//! Live end-to-end smoke for Phase 3: OpenAI/MiniMax + AgentLoop + BashTool.
-//!
-//! Sends a question that requires using bash to the model, watches the
-//! LLM call the tool, and prints the final answer. Same env-var
-//! contract as `live_smoke` in `hermes-providers/examples/`:
-//!
-//! ```bash
-//! # with direnv autoloading .envrc:
-//! cargo run -p hermes-runtime --example live_tool_use -- "what's my kernel version?"
-//!
-//! # or inline:
-//! OPENAI_API_KEY=sk-... OPENAI_BASE_URL=https://api.minimaxi.com/v1 \
-//!   OPENAI_MODEL=MiniMax-M3 \
-//!   cargo run -p hermes-runtime --example live_tool_use -- "what's my kernel version?"
-//! ```
-
 use std::time::Duration;
 
+use hermes_agent::{AIAgent, HermesConfig, LoopEvent, SessionContext};
 use hermes_core::message::Content;
 use hermes_core::LoopError;
 use hermes_providers::OpenAiProvider;
-use hermes_runtime::{AIAgent, HermesConfig, LoopEvent, SessionContext};
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -28,8 +12,6 @@ async fn main() {
         Ok(k) => k,
         Err(_) => {
             eprintln!("error: OPENAI_API_KEY is not set");
-            eprintln!();
-            eprintln!("either export it, or use direnv to auto-load a project-local .envrc.");
             std::process::exit(2);
         }
     };
@@ -41,10 +23,6 @@ async fn main() {
         .nth(1)
         .unwrap_or_else(|| "what's my kernel version? use bash.".into());
 
-    eprintln!("→ POST {base_url}/chat/completions (model={model})");
-    eprintln!("→ user: {user_text}");
-    eprintln!();
-
     let provider = OpenAiProvider::new(&api_key, &model).with_base_url(&base_url);
     let agent = AIAgent::new(provider, HermesConfig::default());
     let session = SessionContext::current_shell();
@@ -54,13 +32,8 @@ async fn main() {
     let result = tokio::time::timeout(
         Duration::from_secs(180),
         agent.run_turn(&user_text, &session, cancel, |event| match event {
-            LoopEvent::Thinking => {
-                eprint!("… thinking");
-                let _ = std::io::Write::flush(&mut std::io::stderr());
-            }
-            LoopEvent::AssistantMessage(_) => {
-                eprintln!();
-            }
+            LoopEvent::Thinking => {}
+            LoopEvent::AssistantMessage(_) => {}
             LoopEvent::ToolCallStarted { call, .. } => {
                 eprintln!("→ tool: {}({})", call.name, call.arguments);
             }
@@ -104,7 +77,6 @@ async fn main() {
                 Content::Parts(_) => "<multimodal content>".into(),
             };
             println!("{text}");
-            eprintln!();
             eprintln!(
                 "← iterations={} tool_calls={} in={} out={} elapsed={:?}",
                 r.metrics.iterations,

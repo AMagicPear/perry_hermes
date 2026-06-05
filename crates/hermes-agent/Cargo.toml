@@ -1,21 +1,22 @@
 [package]
-name = "hermes-runtime"
+name = "hermes-agent"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "User-facing AIAgent facade — the product API"
+description = "Consolidated agent runtime engine and built-in tools"
 
 [dependencies]
-# Runtime is the composition point — it depends on the loop, providers,
-# and tools so it can wire them together. See plans/rust-port-design.md §5.
 hermes-core.workspace = true
-hermes-loop.workspace = true
 hermes-providers.workspace = true
-hermes-tools.workspace = true
 hermes-skills = { path = "../hermes-skills" }
 anyhow.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+jsonschema.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 toml.workspace = true
@@ -24,10 +25,10 @@ tracing-subscriber.workspace = true
 
 [dev-dependencies]
 async-trait.workspace = true
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 futures.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [[example]]
 name = "live_tool_use"

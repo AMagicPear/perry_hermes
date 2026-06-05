@@ -16,18 +16,16 @@
 - **Toolset 过滤** — 通过 runtime 配置按 toolset 名启用/禁用工具(目前内置 `core` / `terminal`)
 - **Skills 加载** — `~/.perry_hermes/skills/` 下的 `.md` skill 文件在运行时自动加载，名称和描述注入 system prompt
 - **健壮的 BashTool** — stdout/stderr 并发 drain 避免管道死锁；输出采用 head+tail 40%/60% 截断策略，与 Python Hermes 对齐
-- **严格的分层架构** — `hermes-core` 保持传输无关；`hermes-runtime` 只保留薄组装入口，内部职责集中在 `agent`、`prompting`、`provider_factory`、`tool_catalog` 几个模块
+- **严格的分层架构** — `hermes-core` 保持传输无关；`hermes-agent` 集中运行时内核、循环状态机、built-in tools 和组装逻辑，`hermes-cli` 保持为外层产品入口
 
 ## 架构
 
 ```
 hermes-cli (交互式 REPL — Phase 4)
-  └─ hermes-runtime (产品 API 门面 — AIAgent)
-       └─ hermes-loop (Agent 循环状态机)
-            ├─ hermes-core (类型、特征、错误 — 无 IO)
-            ├─ hermes-providers (OpenAI / Anthropic 适配器、Echo 模拟)
-            ├─ hermes-tools (BashTool)
-            └─ hermes-skills (SKILL.md 加载 + system prompt 注入)
+  └─ hermes-agent (AIAgent + AgentLoop + built-in tools)
+       ├─ hermes-core (类型、特征、错误 — 无 IO)
+       ├─ hermes-providers (OpenAI / Anthropic 适配器、Echo 模拟)
+       └─ hermes-skills (SKILL.md 加载 + system prompt 注入)
 ```
 
 ### 核心 Crate
@@ -36,9 +34,7 @@ hermes-cli (交互式 REPL — Phase 4)
 |---|---|---|
 | `hermes-core` | 核心类型、特征定义、错误类型，无 IO | `Provider`, `Tool`, `InMemoryRegistry`, `Message`, `Completion`, `FinishReason` |
 | `hermes-providers` | LLM 提供者实现 | `OpenAiProvider` (兼容 DeepSeek/MiniMax/Ollama/vLLM), `AnthropicProvider`, `EchoProvider` |
-| `hermes-tools` | 内置工具实现 | `BashTool` (bash 命令执行，30s 超时，50KB 输出截断，并发 drain stdout/stderr) |
-| `hermes-loop` | Agent 循环状态机 | `AgentLoop`, `LoopConfig`, `RunResult`, `LoopEvent` |
-| `hermes-runtime` | CLI/gateway 共用运行入口，内部按组装职责拆分 | `AIAgent`, `HermesConfig`, `SessionContext`, `run_messages`, `run_turn` |
+| `hermes-agent` | 运行时内核 crate，集中 loop/runtime/tools | `AIAgent`, `AgentLoop`, `LoopConfig`, `RunResult`, `LoopEvent`, `SessionContext`, `BashTool` |
 | `hermes-cli` | 交互式 REPL 二进制 | `hermes` 命令，clap 参数解析，多轮历史，事件渲染 |
 
 ### 核心边界
@@ -145,7 +141,7 @@ REPL 内可用命令：
 cargo run -p hermes-providers --example live_smoke -- "say hi"
 
 # 带工具调用的完整 Agent(单 turn,程序化)
-cargo run -p hermes-runtime --example live_tool_use -- "what time is it?"
+cargo run -p hermes-agent --example live_tool_use -- "what time is it?"
 ```
 
 ## 开发
@@ -156,7 +152,7 @@ cargo run -p hermes-runtime --example live_tool_use -- "what time is it?"
 cargo build                              # 构建所有 crate
 cargo test                               # 运行所有测试
 cargo test -p hermes-core                # 测试单个 crate
-cargo test -p hermes-loop --test tool_dispatch  # 运行单个集成测试
+cargo test -p hermes-agent --test tool_dispatch  # 运行单个集成测试
 cargo clippy --all-targets --all-features -- -D warnings  # Lint
 ```
 
@@ -171,11 +167,12 @@ echo "hello" | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.tom
 ### 测试结构
 
 ```
-crates/hermes-loop/tests/
+crates/hermes-agent/tests/
   ├── echo_loop.rs          # Echo 模拟循环测试
   ├── tool_dispatch.rs      # 工具调度集成测试
   ├── arg_validation.rs     # 工具参数校验测试
   ├── usage_metrics.rs      # streaming usage 指标测试
+  ├── bash.rs               # BashTool 实际执行测试
   └── support/              # loop 集成测试共享 provider
 
 crates/hermes-providers/tests/
@@ -183,9 +180,6 @@ crates/hermes-providers/tests/
   ├── openai_stream.rs      # SSE streaming 测试
   ├── anthropic.rs          # Anthropic/MiMo-compatible HTTP + SSE 测试
   └── tool_call_roundtrip.rs  # tool_calls 序列化往返测试
-
-crates/hermes-tools/tests/
-  └── bash.rs               # BashTool 实际执行测试
 ```
 
 项目采用 **TDD 工作流**：RED → GREEN → REFACTOR，严格先写失败测试再写实现代码。

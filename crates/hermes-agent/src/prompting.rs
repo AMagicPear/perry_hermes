@@ -9,8 +9,6 @@ fn default_skills_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes").join("skills"))
 }
 
-/// Compose the final system prompt: user-supplied prompt (or the
-/// default prompt), plus a skills index block when skills exist.
 pub fn compose_system_prompt(user_prompt: Option<&str>) -> Option<String> {
     let skills = match default_skills_dir() {
         Some(d) => match hermes_skills::load_all(&d) {

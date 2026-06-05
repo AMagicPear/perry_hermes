@@ -1,25 +1,17 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::{AgentLoop, LoopConfig, LoopEvent, RunResult};
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::Provider;
 use hermes_core::tool::{ToolContext, ToolPermissions};
-use hermes_loop::{AgentLoop, LoopConfig, RunResult};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::HermesConfig;
 use crate::provider_factory::build_provider;
 use crate::prompting::compose_system_prompt;
 use crate::tool_catalog::build_registry;
-use crate::LoopEvent;
 
-/// Per-run context that travels alongside the message list into `run_*`.
-///
-/// `HermesConfig` is the static configuration (provider, model, agent
-/// limits). `SessionContext` is the dynamic per-invocation context
-/// (which shell the agent is acting on behalf of, which directory to
-/// start in). The runtime is reusable across sessions; the caller
-/// supplies a fresh `SessionContext` for each `run_*` call.
 #[derive(Debug, Clone)]
 pub struct SessionContext {
     pub working_dir: PathBuf,
@@ -40,9 +32,6 @@ pub struct AIAgent {
 }
 
 impl AIAgent {
-    /// Build an agent from a TOML-derived `HermesConfig`. The config
-    /// determines the provider; `new` is the programmatic escape hatch
-    /// for callers that already have a `Provider` in hand.
     pub fn from_config(config: HermesConfig) -> anyhow::Result<Self> {
         let provider = build_provider(&config.provider)?;
         Ok(Self {
@@ -50,9 +39,6 @@ impl AIAgent {
         })
     }
 
-    /// Build an agent from a caller-supplied `Provider` and a
-    /// `HermesConfig`. The `config.provider` field is ignored; only
-    /// `config.agent` shapes the loop.
     pub fn new(provider: impl Provider + 'static, config: HermesConfig) -> Self {
         Self {
             loop_: build_loop(Arc::new(provider), &config),
@@ -305,10 +291,10 @@ mod tests {
         let provider = OneToolCallProvider {
             calls: Arc::new(Mutex::new(0)),
         };
-        let loop_ = hermes_loop::AgentLoop::new(
+        let loop_ = AgentLoop::new(
             provider,
             Arc::new(registry),
-            hermes_loop::LoopConfig {
+            LoopConfig {
                 max_iterations: 3,
                 ..Default::default()
             },

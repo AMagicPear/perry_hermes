@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use hermes_core::registry::InMemoryRegistry;
-use hermes_tools::BashTool;
+
+use crate::tools::BashTool;
 
 pub fn build_registry(disabled_toolsets: &[String]) -> InMemoryRegistry {
     if disabled_toolsets

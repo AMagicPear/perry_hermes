@@ -1,23 +1,5 @@
 //! The agent loop — calls the LLM, reacts to `finish_reason`, dispatches
 //! tools, returns a `RunResult`.
-//!
-//! State machine (see `plans/rust-port-design.md` §1 and §4):
-//!
-//!   loop {
-//!     check cancel / budget / iteration limit
-//!     ask the provider
-//!     match finish_reason:
-//!       Stop / Length          → return
-//!       ContentFilter / Error  → return Err
-//!       ToolUse                → for each call: validate args, dispatch
-//!                                tool, append `role: tool` message,
-//!                                continue loop
-//!   }
-//!
-//! Tools errors are NOT fatal — they become `role: tool` content
-//! "Error: …" messages so the LLM can see what went wrong and choose
-//! to retry or pivot. This is the key design decision that makes the
-//! agent robust to flaky tools.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,23 +13,16 @@ use hermes_core::provider::{FinishReason, Provider, ToolCallDelta};
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::{ToolContext, ToolOutput};
 
-/// The agent loop: stream model output, dispatch requested tools, and keep the
-/// conversation trajectory.
 pub struct AgentLoop {
     provider: Arc<dyn Provider>,
     registry: Arc<InMemoryRegistry>,
     config: LoopConfig,
 }
 
-/// Configuration for a single `run()` invocation.
 #[derive(Debug, Clone)]
 pub struct LoopConfig {
-    /// Maximum number of LLM calls before the loop gives up.
     pub max_iterations: u32,
-    /// Wall-clock cap.
     pub max_duration: Duration,
-    /// Optional system prompt prepended to messages if not already
-    /// present.
     pub system_prompt: Option<String>,
 }
 
@@ -61,7 +36,6 @@ impl Default for LoopConfig {
     }
 }
 
-/// Accumulated counts and timing for a single `run()` call.
 #[derive(Debug, Clone, Default)]
 pub struct LoopMetrics {
     pub iterations: u32,
@@ -71,9 +45,6 @@ pub struct LoopMetrics {
     pub duration: Duration,
 }
 
-/// The return value of `run()`. Carries the final assistant message,
-/// the full trajectory (so callers can compress / save / inspect), and
-/// aggregate metrics.
 #[derive(Debug, Clone)]
 pub struct RunResult {
     pub final_message: Message,
@@ -81,18 +52,11 @@ pub struct RunResult {
     pub metrics: LoopMetrics,
 }
 
-/// Side-channel events emitted as the loop progresses. The CLI uses
-/// these to drive the spinner / activity feed; tests collect them via
-/// the `on_event` callback.
 #[derive(Debug, Clone)]
 pub enum LoopEvent {
     Thinking,
-    /// One text token from a streaming assistant message.
     ContentDelta(String),
-    /// One reasoning token (o1, extended thinking).
     ReasoningDelta(String),
-    /// A delta for a streaming tool call. Silent-accumulated by the loop;
-    /// `ToolCallStarted` fires only when the call is complete.
     ToolCallPartial(ToolCallDelta),
     AssistantMessage(Message),
     ToolCallStarted {
@@ -129,9 +93,6 @@ impl AgentLoop {
         }
     }
 
-    /// Run a full conversation. May iterate multiple times — each
-    /// `ToolUse` finish reason dispatches the tool, appends a
-    /// `role: tool` result, and asks the provider again.
     pub async fn run(
         &self,
         initial_messages: Vec<Message>,
@@ -143,8 +104,6 @@ impl AgentLoop {
         let mut metrics = LoopMetrics::default();
         let started = Instant::now();
 
-        // If a system prompt is configured, inject it at the front
-        // unless the user already supplied one.
         if let Some(sys) = &self.config.system_prompt {
             if !messages.iter().any(|m| m.role == Role::System) {
                 messages.insert(
@@ -161,7 +120,6 @@ impl AgentLoop {
         }
 
         loop {
-            // ── 1. Exit checks ─────────────────────────────────────
             if cancel.is_cancelled() {
                 on_event(LoopEvent::Cancelled);
                 return Err(LoopError::Cancelled);
@@ -174,10 +132,8 @@ impl AgentLoop {
                 return Err(LoopError::Timeout(started.elapsed()));
             }
 
-            // ── 2. Resolve tool schemas ────────────────────────────
             let tools = self.registry.schemas();
 
-            // ── 3. Call the LLM (streaming) ────────────────────────
             on_event(LoopEvent::Thinking);
             let mut stream = self
                 .provider
@@ -219,12 +175,10 @@ impl AgentLoop {
             metrics.input_tokens += completion.usage.input_tokens;
             metrics.output_tokens += completion.usage.output_tokens;
 
-            // ── 4. Persist the assistant message ──────────────────
             let assistant_msg = completion.message.clone();
             messages.push(assistant_msg.clone());
             on_event(LoopEvent::AssistantMessage(assistant_msg.clone()));
 
-            // ── 5. React to finish reason ──────────────────────────
             match completion.finish_reason {
                 FinishReason::Stop => {
                     metrics.duration = started.elapsed();
@@ -243,9 +197,7 @@ impl AgentLoop {
                         metrics,
                     });
                 }
-                FinishReason::ContentFilter => {
-                    return Err(LoopError::ContentFilter);
-                }
+                FinishReason::ContentFilter => return Err(LoopError::ContentFilter),
                 FinishReason::Error => {
                     return Err(LoopError::Provider(ProviderError::Other(
                         "provider returned finish_reason=error".into(),
@@ -253,10 +205,7 @@ impl AgentLoop {
                 }
                 FinishReason::ToolUse => {
                     let calls = assistant_msg.tool_calls.clone().unwrap_or_default();
-
                     if calls.is_empty() {
-                        // Provider said tool_use but sent no tool_calls.
-                        // Bail rather than loop forever.
                         return Err(LoopError::Provider(ProviderError::InvalidResponse(
                             "finish_reason=tool_use but no tool_calls".into(),
                         )));
@@ -274,10 +223,6 @@ impl AgentLoop {
 
                         let result = self.dispatch_tool(&call, &ctx, cancel.clone()).await;
 
-                        // Tool errors are NOT fatal — they become
-                        // `role: tool` content "Error: …" messages
-                        // so the LLM can see what failed and decide
-                        // what to do.
                         let tool_msg = match &result {
                             Ok(out) => Message {
                                 role: Role::Tool,
@@ -301,8 +246,6 @@ impl AgentLoop {
                         });
                         metrics.tool_calls += 1;
                     }
-                    // Loop continues — LLM sees the tool results and
-                    // decides what's next.
                 }
             }
         }
@@ -319,10 +262,6 @@ impl AgentLoop {
             .get(&call.name)
             .ok_or_else(|| hermes_core::error::ToolError::NotFound(call.name.clone()))?;
 
-        // Validate the LLM's arguments against the tool's JSON Schema
-        // before invoking. Phase 3: always validate, no caching of
-        // the compiled schema (a future phase will cache in the
-        // registry).
         let args = validate_args(&call.arguments, tool.parameters_schema())
             .map_err(|e| hermes_core::error::ToolError::InvalidArgs(e.to_string()))?;
 
@@ -330,10 +269,6 @@ impl AgentLoop {
     }
 }
 
-/// Validate `args` against the tool's JSON Schema (draft-07). LLM
-/// output is raw JSON; the schema is the only contract. Compilation is
-/// fast enough to do per-call for now; a future phase will cache the
-/// compiled `JSONSchema` in the registry.
 fn validate_args(
     args: &serde_json::Value,
     schema: serde_json::Value,

@@ -1,9 +1,4 @@
 //! `BashTool` — run a shell command, return its combined output.
-//!
-//! Phase 3 minimum: spawn `bash -c <command>`, capture stdout + stderr,
-//! return as `ToolOutput.content` with a non-zero-exit footer. No
-//! sandboxing yet — don't run this on a machine you care about. A
-//! later phase will move this into a WASM/sandbox per the design doc.
 
 use std::process::Stdio;
 
@@ -16,16 +11,13 @@ use tokio::process::Command;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-/// Truncate output keeping a head+tail strategy (aligned with Python Hermes).
-/// Preserves the first 40% and last 60% of the character budget, since error
-/// messages often appear early and recent output is usually more relevant.
 fn truncate_output(s: &str, max_chars: usize) -> String {
     let char_count = s.chars().count();
     if char_count <= max_chars {
         return s.to_string();
     }
-    let head_chars = max_chars * 2 / 5; // 40%
-    let tail_chars = max_chars - head_chars; // 60%
+    let head_chars = max_chars * 2 / 5;
+    let tail_chars = max_chars - head_chars;
     let head: String = s.chars().take(head_chars).collect();
     let tail: String = s.chars().skip(char_count - tail_chars).collect();
     let omitted = char_count - head_chars - tail_chars;
@@ -119,15 +111,12 @@ impl Tool for BashTool {
             biased;
             _ = cancel.cancelled() => {
                 let _ = child.kill().await;
-                return Err(ToolError::Cancelled);
+                Err(ToolError::Cancelled)
             }
             _ = tokio::time::sleep(timeout) => {
                 let _ = child.kill().await;
-                return Err(ToolError::Timeout(timeout_secs));
+                Err(ToolError::Timeout(timeout_secs))
             }
-            // Concurrently drain stdout and stderr to avoid pipe deadlock:
-            // if the child fills one pipe buffer while we're blocked reading
-            // the other, both sides stall and we hit the timeout.
             result = async {
                 let (stdout_bytes, stderr_bytes) = tokio::join!(
                     async {

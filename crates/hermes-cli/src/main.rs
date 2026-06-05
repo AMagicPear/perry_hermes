@@ -10,9 +10,9 @@ use std::sync::Arc;
 use anyhow::{bail, Context};
 use clap::Parser;
 
+use hermes_agent::{AIAgent, HermesConfig, LoopEvent, SessionContext};
 use hermes_core::error::LoopError;
 use hermes_core::message::{Content, Message, Role};
-use hermes_runtime::{AIAgent, HermesConfig, LoopEvent, SessionContext};
 use tokio_util::sync::CancellationToken;
 
 mod ctrl_c;

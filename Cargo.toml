@@ -1,11 +1,9 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/hermes-agent",
     "crates/hermes-core",
     "crates/hermes-providers",
-    "crates/hermes-tools",
-    "crates/hermes-loop",
-    "crates/hermes-runtime",
     "crates/hermes-skills",
     "crates/hermes-cli",
     # "crates/hermes-gateway",  # phase 11+
@@ -59,8 +57,6 @@ httpmock = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 
 # Internal
+hermes-agent = { path = "crates/hermes-agent" }
 hermes-core = { path = "crates/hermes-core" }
 hermes-providers = { path = "crates/hermes-providers" }
-hermes-tools = { path = "crates/hermes-tools" }
-hermes-loop = { path = "crates/hermes-loop" }
-hermes-runtime = { path = "crates/hermes-runtime" }
