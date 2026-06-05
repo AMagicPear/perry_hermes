@@ -5,6 +5,7 @@
 //! intended to compile in ~1s and to be trivially mockable from every other
 //! crate in the workspace.
 
+pub mod accumulator;
 pub mod error;
 pub mod message;
 pub mod provider;
