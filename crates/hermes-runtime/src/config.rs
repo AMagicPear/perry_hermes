@@ -8,8 +8,6 @@ pub struct HermesConfig {
     pub provider: ProviderConfig,
     #[serde(default)]
     pub agent: AgentConfig,
-    #[serde(default)]
-    pub skills: SkillsConfig,
 }
 
 impl HermesConfig {
@@ -75,14 +73,6 @@ pub struct AgentConfig {
     pub system_prompt: Option<String>,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
-pub struct SkillsConfig {
-    #[serde(default)]
-    pub enabled: Vec<String>,
-    #[serde(default)]
-    pub paths: Vec<String>,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,10 +95,6 @@ effort = "medium"
 [agent]
 max_iterations = 12
 disabled_toolsets = ["terminal"]
-
-[skills]
-enabled = ["rust"]
-paths = ["./skills"]
 "#;
 
         let config: HermesConfig = toml::from_str(input).unwrap();
@@ -130,8 +116,6 @@ paths = ["./skills"]
         assert_eq!(thinking.effort.as_deref(), Some("medium"));
         assert_eq!(config.agent.max_iterations, Some(12));
         assert_eq!(config.agent.disabled_toolsets, vec!["terminal"]);
-        assert_eq!(config.skills.enabled, vec!["rust"]);
-        assert_eq!(config.skills.paths, vec!["./skills"]);
     }
 
     #[test]
@@ -145,6 +129,5 @@ kind = "echo"
 
         assert_eq!(config.provider.kind, ProviderKind::Echo);
         assert_eq!(config.agent, AgentConfig::default());
-        assert_eq!(config.skills, SkillsConfig::default());
     }
 }

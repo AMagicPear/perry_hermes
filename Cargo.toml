@@ -6,6 +6,7 @@ members = [
     "crates/hermes-tools",
     "crates/hermes-loop",
     "crates/hermes-runtime",
+    "crates/hermes-skills",
     "crates/hermes-cli",
     # "crates/hermes-gateway",  # phase 11+
     # "crates/hermes-tui",      # phase 10+
@@ -43,6 +44,9 @@ jsonschema = "0.18"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
+
+# Temp dir (dev)
+tempfile = "3"
 
 # HTTP (used by hermes-providers)
 reqwest = { version = "0.12", features = ["json", "stream"] }

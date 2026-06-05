@@ -13,6 +13,7 @@ hermes-core.workspace = true
 hermes-loop.workspace = true
 hermes-providers.workspace = true
 hermes-tools.workspace = true
+hermes-skills = { path = "../hermes-skills" }
 anyhow.workspace = true
 serde.workspace = true
 tokio.workspace = true
@@ -26,6 +27,7 @@ async-trait.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 futures.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 
 [[example]]
 name = "live_tool_use"

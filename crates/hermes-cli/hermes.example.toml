@@ -17,7 +17,3 @@ base_url = "https://api.openai.com/v1"
 max_iterations = 10
 disabled_toolsets = []
 # system_prompt = "..."   # optional full replacement of the default
-
-[skills]
-enabled = []
-paths = ["./skills"]

@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+当前进度：**Phase 0–6、Phase 8–9 已完成**（核心循环 + OpenAI/Anthropic 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断 + TOML provider/agent 配置 + Skills 加载）。Phase 7 上下文压缩仍暂缓。
+
 ## Build & Test
 
 ```bash
@@ -31,8 +33,9 @@ hermes-cli (interactive REPL — Phase 4)
   └─ hermes-runtime (product API facade — AIAgent)
        └─ hermes-loop (agent loop state machine)
             ├─ hermes-core (types, traits, errors — no IO)
-            ├─ hermes-providers (OpenAI adapter, echo mock)
-            └─ hermes-tools (BashTool)
+            ├─ hermes-providers (OpenAI / Anthropic 适配器、Echo 模拟)
+            ├─ hermes-tools (BashTool)
+            └─ hermes-skills (SKILL.md 加载 + system prompt 注入)  # 新增
 ```
 
 `hermes-providers` and `hermes-tools` are independent — adding a tool never touches providers, and vice versa.
@@ -48,7 +51,7 @@ hermes-cli (interactive REPL — Phase 4)
 
 **OpenAI adapter** (`hermes-providers/src/openai.rs`): `OpenAiProvider::with_base_url()` lets it talk to any OpenAI-compatible endpoint (DeepSeek, MiniMax, Ollama, vLLM). The `tool_calls` field round-trips: assistant's `tool_calls` are serialized back into the next request body so the LLM remembers which tools it called. OpenAI sends `arguments` as a JSON **string** (not object) — must `serde_json::from_str` on parse and `to_string` on serialize. `tool_choice: "auto"` is **omitted** when the tool list is empty (some providers reject it). `finish_reason` is parsed via `FinishReason::from_provider_str` (renamed from `from_str` to avoid colliding with the std `FromStr` trait).
 
-**Runtime + CLI** (`crates/hermes-runtime/src/lib.rs`, `crates/hermes-cli/src/main.rs`): runtime is the shared composition point for CLI and future gateway. `AIAgent::from_config(HermesConfig)` and `AIAgent::new(provider, HermesConfig)` are the two constructors; runtime builds the registry, loop, and resolves the `Provider` from the config. Per-run `working_dir` / `session_id` travel in a `SessionContext` passed to `run_turn` / `run_messages` (the runtime is reusable across sessions). CLI only parses args, resolves the config path (`--config` → `~/.perry_hermes/config.toml` → `./hermes.toml`, error if none), maintains REPL history, and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's `history`. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the loop. Slash commands: `/quit`, `/exit`. Provider-specific things (`OPENAI_API_KEY` etc.) live in `[provider]` of the TOML file; the runtime never reads the environment for defaults.
+**Runtime + CLI** (`crates/hermes-runtime/src/lib.rs`, `crates/hermes-cli/src/main.rs`): runtime is the shared composition point for CLI and future gateway. `AIAgent::from_config(HermesConfig)` and `AIAgent::new(provider, HermesConfig)` are the two constructors; runtime builds the registry, loop, and resolves the `Provider` from the config. Per-run `working_dir` / `session_id` travel in a `SessionContext` passed to `run_turn` / `run_messages` (the runtime is reusable across sessions). CLI only parses args, resolves the config path (`--config` → `~/.perry_hermes/config.toml` → `./hermes.toml`, error if none), maintains REPL history, and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's `history`. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the loop. Slash commands: `/quit`, `/exit`. Provider-specific things (`OPENAI_API_KEY` etc.) live in `[provider]` of the TOML file; the runtime never reads the environment for defaults. Skills live in `~/.perry_hermes/skills/`; the runtime loads them at `AIAgent::from_config` time and injects a name+description index into the system prompt.
 
 ## TDD Workflow
 

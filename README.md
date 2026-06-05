@@ -2,7 +2,7 @@
 
 > Vibe code 一个 Rust 版的 Nous Research 的 [hermes-agent](https://github.com/NousResearch/hermes-agent) —— 一个自进化的 AI Agent。
 
-当前进度：**Phase 0–6、Phase 8 已完成，Phase 9 配置文件已初步可用**（核心循环 + OpenAI/Anthropic 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断 + TOML provider/agent 配置）。Phase 7 上下文压缩仍暂缓。
+当前进度：**Phase 0–6、Phase 8–9 已完成**（核心循环 + OpenAI/Anthropic 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断 + TOML provider/agent 配置 + Skills 加载）。Phase 7 上下文压缩仍暂缓。
 
 ## 特性
 
@@ -14,6 +14,7 @@
 - **协作式取消** — `CancellationToken` 贯穿所有异步调用，支持 Ctrl-C 优雅中断(第一次中断当前 turn，第二次退出 REPL)
 - **交互式 REPL CLI** — 多轮对话、工具调用实时渲染(emoji + 截断预览)、`/quit`/`/exit` 斜杠命令、`[agent].disabled_toolsets` 细粒度控制
 - **Toolset 过滤** — 通过 runtime 配置按 toolset 名启用/禁用工具(目前内置 `core` / `terminal`)
+- **Skills 加载** — `~/.perry_hermes/skills/` 下的 `.md` skill 文件在运行时自动加载，名称和描述注入 system prompt
 - **健壮的 BashTool** — stdout/stderr 并发 drain 避免管道死锁；输出采用 head+tail 40%/60% 截断策略，与 Python Hermes 对齐
 - **严格的分层架构** — 依赖方向始终向下，无循环依赖
 
@@ -25,7 +26,8 @@ hermes-cli (交互式 REPL — Phase 4)
        └─ hermes-loop (Agent 循环状态机)
             ├─ hermes-core (类型、特征、错误 — 无 IO)
             ├─ hermes-providers (OpenAI / Anthropic 适配器、Echo 模拟)
-            └─ hermes-tools (BashTool)
+            ├─ hermes-tools (BashTool)
+            └─ hermes-skills (SKILL.md 加载 + system prompt 注入)
 ```
 
 ### 核心 Crate
@@ -126,13 +128,7 @@ mode = "off" # off | manual | adaptive
 [agent]
 max_iterations = 10
 disabled_toolsets = []
-
-[skills]
-enabled = ["rust"]
-paths = ["./skills"]
 ```
-
-当前 `skills` 配置只保留 schema，占位给后续 Phase 9 Skills 加载；运行时还不会读取 Markdown skill 文件。
 
 REPL 内可用命令：
 
@@ -214,7 +210,7 @@ crates/hermes-tools/tests/
 | Phase 6 | 中断：Ctrl-C 停止流式输出并保留 partial assistant message | ✅ |
 | Phase 7 | 上下文压缩：消息过长时自动摘要 | |
 | Phase 8 | Anthropic Provider：多 Provider 支持 | ✅ |
-| Phase 9 | 配置文件 + Skills：TOML provider/agent 配置已初步可用；Skills 加载待实现 | 🚧 |
+| Phase 9 | Skills 加载：SKILL.md 加载 + system prompt 注入 | ✅ |
 | Phase 10 | TUI：ratatui 多行编辑器 | |
 | Phase 11 | 平台网关：Telegram（grammY-rs） | |
 | Phase 12 | Curator：学习循环（Hermes 的灵魂） | |

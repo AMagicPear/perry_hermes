@@ -1702,6 +1702,8 @@ pub trait SkillLoader: Send + Sync {
 
 Hermes 中的 `agent/skill_commands.py` 和 `tools/skills_hub.py` 是真正的参考;这个 Rust 版本是最低可用版本。
 
+The current implementation is documented at `docs/superpowers/specs/2026-06-05-phase-9-skills-loading-design.md` and the implementation plan at `docs/superpowers/plans/2026-06-05-phase-9-skills-loading.md`.
+
 ### 9.4 Curator(第 12 阶段 — Hermes 的灵魂)
 
 **curator 不是 agent 循环的一部分。** 它是一个独立的进程/后台任务,观察已完成的运行并决定:
