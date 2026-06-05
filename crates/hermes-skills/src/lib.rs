@@ -4,6 +4,7 @@
 //! for the full design.
 
 pub mod frontmatter;
+pub mod layout;
 pub mod validate;
 
 use std::path::PathBuf;
