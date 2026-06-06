@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hermes_core::message::{Content, Message, Role};
+use hermes_core::message::Message;
 use hermes_core::provider::Provider;
 use hermes_core::tool::{ToolContext, ToolPermissions};
 use tokio::sync::Mutex as TokioMutex;
@@ -54,19 +54,8 @@ impl AIAgent {
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
-        self.run_messages(
-            vec![Message {
-                role: Role::User,
-                content: Content::Text(user_text.to_string()),
-                reasoning: None,
-                tool_call_id: None,
-                tool_calls: None,
-            }],
-            session,
-            cancel,
-            on_event,
-        )
-        .await
+        self.run_messages(vec![Message::user(user_text)], session, cancel, on_event)
+            .await
     }
 
     pub async fn run_messages(

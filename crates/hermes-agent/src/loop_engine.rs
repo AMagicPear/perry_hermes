@@ -12,7 +12,7 @@ use hermes_core::context_engine::{
     CompressError, CompressionSkipReason, CompressionTrigger, ContextEngine,
 };
 use hermes_core::error::{LoopError, ProviderError};
-use hermes_core::message::{Content, Message, Role, ToolCall};
+use hermes_core::message::{Message, Role, ToolCall};
 use hermes_core::provider::{FinishReason, Provider, ToolCallDelta};
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::{ToolContext, ToolOutput};
@@ -197,16 +197,7 @@ impl AgentLoop {
 
         if let Some(sys) = &self.config.system_prompt {
             if !messages.iter().any(|m| m.role == Role::System) {
-                messages.insert(
-                    0,
-                    Message {
-                        role: Role::System,
-                        content: Content::Text(sys.clone()),
-                        reasoning: None,
-                        tool_call_id: None,
-                        tool_calls: None,
-                    },
-                );
+                messages.insert(0, Message::system(sys.clone()));
             }
         }
 
@@ -393,20 +384,8 @@ impl AgentLoop {
                         let result = self.dispatch_tool(&call, &ctx, cancel.clone()).await;
 
                         let tool_msg = match &result {
-                            Ok(out) => Message {
-                                role: Role::Tool,
-                                content: Content::Text(out.content.clone()),
-                                reasoning: None,
-                                tool_call_id: Some(call.id.clone()),
-                                tool_calls: None,
-                            },
-                            Err(e) => Message {
-                                role: Role::Tool,
-                                content: Content::Text(format!("Error: {e}")),
-                                reasoning: None,
-                                tool_call_id: Some(call.id.clone()),
-                                tool_calls: None,
-                            },
+                            Ok(out) => Message::tool_result(call.id.clone(), out.content.clone()),
+                            Err(e) => Message::tool_result(call.id.clone(), format!("Error: {e}")),
                         };
                         messages.push(tool_msg);
                         on_event(LoopEvent::ToolCallFinished {
@@ -463,13 +442,8 @@ impl AgentLoop {
                 let tokens_after = estimate_tokens_for_messages(&new_messages, 4.0);
                 let summary_chars = new_messages
                     .iter()
-                    .filter(|m| {
-                        matches!(&m.content, Content::Text(t) if t.contains("[CONTEXT SUMMARY"))
-                    })
-                    .map(|m| match &m.content {
-                        Content::Text(t) => t.len(),
-                        _ => 0,
-                    })
+                    .filter(|m| m.content.as_text().contains("[CONTEXT SUMMARY"))
+                    .map(|m| m.content.chars())
                     .sum::<usize>();
 
                 *messages = new_messages;
@@ -521,13 +495,7 @@ impl AgentLoop {
         }
         if messages.len() > initial_len {
             let error_text = format!("Turn interrupted by error: provider error: {error}");
-            messages.push(Message {
-                role: Role::Assistant,
-                content: Content::Text(error_text.clone()),
-                reasoning: None,
-                tool_call_id: None,
-                tool_calls: None,
-            });
+            messages.push(Message::assistant(error_text.clone()));
             AgentRunError::FailedTurn {
                 failed_turn: FailedTurn {
                     messages,
@@ -543,23 +511,7 @@ impl AgentLoop {
 
 /// Estimate total tokens for a list of messages.
 pub fn estimate_tokens_for_messages(messages: &[Message], chars_per_token: f64) -> u64 {
-    let total_chars: usize = messages
-        .iter()
-        .map(|m| {
-            let content_chars = match &m.content {
-                Content::Text(s) => s.len(),
-                Content::Parts(parts) => parts
-                    .iter()
-                    .map(|p| match p {
-                        hermes_core::message::ContentPart::Text { text } => text.len(),
-                        hermes_core::message::ContentPart::ImageUrl { url } => url.len(),
-                    })
-                    .sum(),
-            };
-            let reasoning_chars = m.reasoning.as_ref().map_or(0, |s| s.len());
-            content_chars + reasoning_chars
-        })
-        .sum();
+    let total_chars: usize = messages.iter().map(Message::char_len).sum();
     (total_chars as f64 / chars_per_token) as u64
 }
 

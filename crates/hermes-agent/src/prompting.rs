@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use chrono::Local;
 use chrono_tz::Tz;
-use hermes_core::message::{Content, Message, Role};
+use hermes_core::message::{Message, Role};
 
 use crate::session::SessionContext;
 
@@ -84,13 +84,7 @@ pub fn inject_system_prompt(messages: Vec<Message>, system_prompt: Option<String
         return messages;
     }
     let mut with_system = Vec::with_capacity(messages.len() + 1);
-    with_system.push(Message {
-        role: Role::System,
-        content: Content::Text(system_prompt),
-        reasoning: None,
-        tool_call_id: None,
-        tool_calls: None,
-    });
+    with_system.push(Message::system(system_prompt));
     with_system.extend(messages);
     with_system
 }
@@ -226,19 +220,10 @@ mod tests {
 
     #[test]
     fn inject_system_prompt_is_noop_when_messages_already_have_system_role() {
-        let messages = vec![Message {
-            role: Role::System,
-            content: Content::Text("existing".into()),
-            reasoning: None,
-            tool_call_id: None,
-            tool_calls: None,
-        }];
+        let messages = vec![Message::system("existing")];
 
         let injected = inject_system_prompt(messages.clone(), Some("new prompt".into()));
         assert_eq!(injected.len(), 1);
-        match &injected[0].content {
-            Content::Text(text) => assert_eq!(text, "existing"),
-            other => panic!("unexpected content: {other:?}"),
-        }
+        assert_eq!(injected[0].content.as_text(), "existing");
     }
 }

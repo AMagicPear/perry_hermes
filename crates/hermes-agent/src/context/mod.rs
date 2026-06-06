@@ -5,7 +5,5 @@
 //! middle turns while preserving the head and tail of the conversation.
 
 mod compressor;
-mod pruning;
-mod summary;
 
 pub use compressor::{CompressorConfig, ContextCompressor};

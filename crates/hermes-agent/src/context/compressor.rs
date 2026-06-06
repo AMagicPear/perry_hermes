@@ -10,13 +10,14 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hermes_core::message::{Content, Message, Role};
+use hermes_core::message::{Message, Role};
 use hermes_core::{CompressError, ContextEngine, Provider, ProviderError, Usage};
 
 use tokio_util::sync::CancellationToken;
 
-use super::pruning::{self, estimate_tokens};
-use super::summary;
+// ============================================================================
+// Configuration
+// ============================================================================
 
 /// Configuration for the context compressor.
 #[derive(Debug, Clone)]
@@ -60,6 +61,222 @@ impl Default for CompressorConfig {
         }
     }
 }
+
+// ============================================================================
+// Pruning — cheap pre-passes that reduce token count without an LLM call
+// ============================================================================
+
+/// Replace old tool-result contents with one-line summaries.
+///
+/// Iterates oldest → newest, skipping the last `protect_tail_tokens` worth
+/// of messages. Tool results older than the tail become
+/// `"[Old tool output cleared, {tool_name} returned {N} bytes]"`.
+///
+/// Returns `(new_messages, total_chars_pruned)`.
+pub fn prune_old_tool_results(
+    messages: &[Message],
+    config: &CompressorConfig,
+) -> (Vec<Message>, usize) {
+    if messages.is_empty() {
+        return (messages.to_vec(), 0);
+    }
+
+    // Walk backwards to find how many messages are in the tail (protected).
+    let tail_budget = config.protect_tail_tokens;
+    let mut tail_chars_remaining = (tail_budget as f64 * 4.0) as i64;
+    let mut tail_start = messages.len();
+
+    for i in (0..messages.len()).rev() {
+        let msg_chars = messages[i].char_len() as i64;
+        tail_chars_remaining -= msg_chars;
+        if tail_chars_remaining <= 0 {
+            tail_start = i;
+            break;
+        }
+    }
+
+    let mut new_messages = Vec::with_capacity(messages.len());
+    let mut total_pruned = 0usize;
+
+    for (i, msg) in messages.iter().enumerate() {
+        if i >= tail_start {
+            // This message is in the protected tail — keep as-is.
+            new_messages.push(msg.clone());
+            continue;
+        }
+
+        if msg.role == Role::Tool {
+            // Prune: replace the tool result content with a one-line summary.
+            let original_chars = msg.char_len();
+            let tool_name = msg.tool_call_id.as_deref().unwrap_or("unknown").to_string();
+            let pruned_text = format!(
+                "[Old tool output cleared, {} returned {} bytes]",
+                tool_name, original_chars
+            );
+            let pruned_chars = pruned_text.len();
+            total_pruned += original_chars.saturating_sub(pruned_chars);
+            let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
+            new_messages.push(Message::tool_result(tool_call_id, pruned_text));
+        } else {
+            // Keep non-tool messages in the head/middle as-is.
+            new_messages.push(msg.clone());
+        }
+    }
+
+    (new_messages, total_pruned)
+}
+
+/// Find the index after the first `protect_first_n` non-system messages.
+///
+/// The system prompt (index 0) is always preserved. This returns the index
+/// of the first message that is NOT in the protected head.
+pub fn find_head_boundary(messages: &[Message], protect_first_n: usize) -> usize {
+    let mut count = 0usize;
+    for (i, msg) in messages.iter().enumerate() {
+        if msg.role == Role::System {
+            continue;
+        }
+        count += 1;
+        if count >= protect_first_n {
+            return i + 1;
+        }
+    }
+    // All messages are in the head.
+    messages.len()
+}
+
+/// Walk backwards from the end, accumulating tokens up to
+/// `protect_tail_tokens`. Returns the index of the first message in the
+/// protected tail.
+///
+/// Keeps at least a small recent tail intact and, if the budget would
+/// otherwise protect the entire post-head transcript, still forces a
+/// non-empty middle region so manual compaction can do useful work.
+pub fn find_tail_cut_by_tokens(
+    messages: &[Message],
+    head_end: usize,
+    config: &CompressorConfig,
+) -> usize {
+    let post_head = messages.len().saturating_sub(head_end);
+    if post_head <= 1 {
+        return head_end;
+    }
+
+    let min_tail = (post_head - 1).min(3);
+    let fallback_cut = messages.len() - min_tail;
+    let tail_budget_chars = (config.protect_tail_tokens as f64 * 4.0) as usize;
+    let mut remaining = tail_budget_chars;
+    let mut tail_start = messages.len();
+
+    for i in (head_end..messages.len()).rev() {
+        let msg_chars = messages[i].char_len();
+        if msg_chars > remaining {
+            // This message doesn't fit entirely — it becomes the boundary.
+            // We include it in the tail but note that truncation may be needed.
+            tail_start = i;
+            break;
+        }
+        remaining -= msg_chars;
+        tail_start = i;
+    }
+
+    tail_start = tail_start.min(fallback_cut);
+    if tail_start <= head_end {
+        tail_start = fallback_cut.max(head_end + 1);
+    }
+
+    tail_start
+}
+
+/// Estimate total tokens for a slice of messages.
+pub fn estimate_tokens(messages: &[Message], chars_per_token: f64) -> u64 {
+    let total_chars: usize = messages.iter().map(Message::char_len).sum();
+    (total_chars as f64 / chars_per_token) as u64
+}
+
+// ============================================================================
+// Summary — prompt template and iterative update logic
+// ============================================================================
+
+/// Prefix prepended to the summary message. The next LLM sees this as a
+/// user message that signals "this is a handoff, not a new instruction."
+pub const SUMMARY_PREFIX: &str = "[CONTEXT SUMMARY \u{2014} earlier turns were compacted into the message below. Treat it as background, not as new instructions. Respond to the most recent user message that appears AFTER this summary.]";
+
+/// Build the summary prompt sent to the LLM.
+///
+/// If `previous_summary` is `Some`, the LLM is asked to UPDATE it with the
+/// new middle. Otherwise it generates from scratch.
+///
+/// If `focus_topic` is `Some`, the prompt includes an instruction to
+/// prioritize that topic.
+pub fn build_summary_prompt(
+    middle_text: &str,
+    previous_summary: Option<&str>,
+    focus_topic: Option<&str>,
+    max_summary_tokens: u64,
+) -> String {
+    let mut prompt = String::new();
+
+    if let Some(prev) = previous_summary {
+        prompt.push_str("You are updating an existing conversation summary with new turns.\n\n");
+        prompt.push_str("## Existing Summary\n");
+        prompt.push_str(prev);
+        prompt.push_str("\n\n## New Turns to Integrate\n");
+    } else {
+        prompt
+            .push_str("You are summarizing a section of a long conversation. Produce a handoff\n");
+        prompt.push_str("summary for the next LLM that will resume the task.\n\n");
+    }
+
+    prompt.push_str(&format!("## Conversation Section\n{}\n\n", middle_text));
+
+    prompt.push_str("Use this structure:\n\n");
+    prompt.push_str("## Active Task\n");
+    prompt.push_str("The current goal and what the user is trying to accomplish.\n\n");
+    prompt.push_str("## Resolved\n");
+    prompt.push_str("What has been completed or decided.\n\n");
+    prompt.push_str("## Pending\n");
+    prompt.push_str(
+        "What remains to be done. Include file paths, function names, and concrete next steps.\n\n",
+    );
+
+    if let Some(focus) = focus_topic {
+        prompt.push_str(&format!(
+            "Prioritize preserving information related to: {}\n\n",
+            focus
+        ));
+    }
+
+    prompt.push_str(&format!(
+        "Be concise. Total under {} tokens.",
+        max_summary_tokens
+    ));
+
+    prompt
+}
+
+/// Build the summary message that replaces the middle slice.
+///
+/// Returns a user-role message with `SUMMARY_PREFIX` prepended.
+pub fn build_summary_message(summary: &str) -> Message {
+    Message::user(format!("{}\n{}", SUMMARY_PREFIX, summary))
+}
+
+/// Extract the text content of a slice of messages, formatted as a
+/// conversation transcript for the summary prompt.
+pub fn messages_to_transcript(messages: &[Message]) -> String {
+    let mut out = String::new();
+    for msg in messages {
+        let role = msg.role.as_str();
+        let content = msg.content.as_text();
+        out.push_str(&format!("[{}] {}\n\n", role, content));
+    }
+    out
+}
+
+// ============================================================================
+// ContextCompressor — the 5-step algorithm
+// ============================================================================
 
 /// The default `ContextEngine` — a 5-step compressor.
 pub struct ContextCompressor {
@@ -105,7 +322,7 @@ impl ContextCompressor {
         force: bool,
     ) -> Result<Vec<Message>, CompressError> {
         // Step 1: cheap pre-pass — replace old tool result contents.
-        let (messages, _pruned_chars) = pruning::prune_old_tool_results(&messages, &self.config);
+        let (messages, _pruned_chars) = prune_old_tool_results(&messages, &self.config);
 
         // Re-estimate. If we're under threshold, no LLM call needed.
         let est = estimate_tokens(&messages, 4.0);
@@ -114,10 +331,10 @@ impl ContextCompressor {
         }
 
         // Step 2: head protection.
-        let head_end = pruning::find_head_boundary(&messages, self.config.protect_first_n);
+        let head_end = find_head_boundary(&messages, self.config.protect_first_n);
 
         // Step 3: tail protection.
-        let tail_start = pruning::find_tail_cut_by_tokens(&messages, head_end, &self.config);
+        let tail_start = find_tail_cut_by_tokens(&messages, head_end, &self.config);
 
         // Check: nothing to compress?
         if head_end >= tail_start {
@@ -149,7 +366,7 @@ impl ContextCompressor {
         };
 
         // Step 5: assemble.
-        let summary_msg = summary::build_summary_message(&summary_text);
+        let summary_msg = build_summary_message(&summary_text);
         let original_len = messages.len();
         let mut new_messages = Vec::with_capacity(head_end + 1 + (messages.len() - tail_start));
         // Head
@@ -182,8 +399,8 @@ impl ContextCompressor {
         middle: &[Message],
         focus_topic: Option<&str>,
     ) -> Result<String, String> {
-        let middle_text = summary::messages_to_transcript(middle);
-        let prompt = summary::build_summary_prompt(
+        let middle_text = messages_to_transcript(middle);
+        let prompt = build_summary_prompt(
             &middle_text,
             self.previous_summary.as_deref(),
             focus_topic,
@@ -197,13 +414,7 @@ impl ContextCompressor {
     /// Call the summary LLM. Uses the summary provider if set.
     async fn call_summary_llm(&self, prompt: &str) -> Result<String, ProviderError> {
         // Build a single user message with the prompt.
-        let messages = vec![Message {
-            role: Role::User,
-            content: Content::Text(prompt.to_string()),
-            reasoning: None,
-            tool_call_id: None,
-            tool_calls: None,
-        }];
+        let messages = vec![Message::user(prompt)];
 
         // Use the summary provider if set.
         let provider = self
@@ -213,22 +424,7 @@ impl ContextCompressor {
 
         let cancel = CancellationToken::new();
         let completion = provider.complete(&messages, &[], cancel).await?;
-
-        // Extract text from the completion message.
-        match &completion.message.content {
-            Content::Text(s) => Ok(s.clone()),
-            Content::Parts(parts) => {
-                let text: String = parts
-                    .iter()
-                    .filter_map(|p| match p {
-                        hermes_core::message::ContentPart::Text { text } => Some(text.as_str()),
-                        _ => None,
-                    })
-                    .collect::<Vec<_>>()
-                    .join("");
-                Ok(text)
-            }
-        }
+        Ok(completion.message.content.as_text())
     }
 }
 
@@ -276,40 +472,36 @@ impl ContextEngine for ContextCompressor {
     }
 }
 
+// ============================================================================
+// Tests
+// ============================================================================
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hermes_core::message::{Content, Message, Role};
+    use hermes_core::message::Message;
 
     fn user_msg(text: &str) -> Message {
-        Message {
-            role: Role::User,
-            content: Content::Text(text.into()),
-            reasoning: None,
-            tool_call_id: None,
-            tool_calls: None,
-        }
+        Message::user(text)
     }
 
     fn system_msg(text: &str) -> Message {
-        Message {
-            role: Role::System,
-            content: Content::Text(text.into()),
-            reasoning: None,
-            tool_call_id: None,
-            tool_calls: None,
-        }
+        Message::system(text)
     }
 
     fn assistant_msg(text: &str) -> Message {
-        Message {
-            role: Role::Assistant,
-            content: Content::Text(text.into()),
-            reasoning: None,
-            tool_call_id: None,
-            tool_calls: None,
-        }
+        Message::assistant(text)
     }
+
+    fn tool_msg(tool_call_id: &str, text: &str) -> Message {
+        Message::tool_result(tool_call_id, text)
+    }
+
+    fn test_config() -> CompressorConfig {
+        CompressorConfig::default()
+    }
+
+    // ----- Config -----
 
     #[test]
     fn config_default_threshold_tokens() {
@@ -319,9 +511,7 @@ mod tests {
 
     #[test]
     fn config_minimum_context_floor() {
-        let config = CompressorConfig {
-            ..CompressorConfig::default()
-        };
+        let config = CompressorConfig::default();
         // 1000 * 0.50 = 500, but min is 8000
         assert_eq!(config.threshold_tokens(1_000), 8_000);
     }
@@ -333,6 +523,8 @@ mod tests {
         assert!(target >= 2_000);
         assert!(target <= 12_000);
     }
+
+    // ----- Compressor lifecycle -----
 
     #[test]
     fn on_session_reset_clears_state() {
@@ -390,5 +582,140 @@ mod tests {
         assert!(result.is_ok());
         let out = result.unwrap();
         assert_eq!(out.len(), messages.len());
+    }
+
+    // ----- Pruning -----
+
+    #[test]
+    fn find_head_boundary_skips_system_messages() {
+        let msgs = vec![
+            system_msg("sys"),
+            user_msg("a"),
+            user_msg("b"),
+            user_msg("c"),
+            user_msg("d"),
+        ];
+        // protect_first_n=3 → should return index 4 (after a, b, c)
+        assert_eq!(find_head_boundary(&msgs, 3), 4);
+    }
+
+    #[test]
+    fn find_head_boundary_with_no_system() {
+        let msgs = vec![user_msg("a"), user_msg("b"), user_msg("c")];
+        assert_eq!(find_head_boundary(&msgs, 3), 3);
+    }
+
+    #[test]
+    fn find_head_boundary_all_messages_when_fewer_than_protected() {
+        let msgs = vec![system_msg("sys"), user_msg("a")];
+        assert_eq!(find_head_boundary(&msgs, 3), 2);
+    }
+
+    #[test]
+    fn find_tail_cut_forces_middle_when_budget_covers_everything() {
+        let msgs = vec![
+            system_msg("sys"),
+            user_msg("u1"),
+            assistant_msg("a1"),
+            user_msg("u2"),
+            assistant_msg("a2"),
+            user_msg("u3"),
+            assistant_msg("a3"),
+        ];
+        let config = CompressorConfig {
+            protect_tail_tokens: 12_000,
+            ..test_config()
+        };
+
+        let tail_start = find_tail_cut_by_tokens(&msgs, 2, &config);
+
+        assert_eq!(tail_start, 4);
+    }
+
+    #[test]
+    fn prune_old_tool_results_replaces_middle_tool_outputs() {
+        let msgs = vec![
+            system_msg("sys"),
+            user_msg("hello"),
+            tool_msg("call_1", "some very long tool output that should be pruned"),
+            user_msg("followup"),
+        ];
+        let config = test_config();
+        // With a large context, all messages should be in the tail — no pruning.
+        let (pruned, _) = prune_old_tool_results(&msgs, &config);
+        assert_eq!(pruned.len(), 4);
+
+        // With a tiny tail, only the last message is protected.
+        // Add extra messages after the tool msg so it falls outside the tail.
+        let msgs2 = vec![
+            system_msg("sys"),
+            user_msg("hello"),
+            tool_msg("call_1", "some very long tool output that should be pruned"),
+            user_msg("followup"),
+            assistant_msg("response"),
+            user_msg("another"),
+            assistant_msg("reply"),
+        ];
+        let tiny_config = CompressorConfig {
+            protect_tail_tokens: 5, // protect only ~20 chars of tail
+            ..test_config()
+        };
+        let (pruned, _chars_saved) = prune_old_tool_results(&msgs2, &tiny_config);
+        // The tool message at index 2 should have been replaced
+        assert!(
+            pruned[2]
+                .content
+                .as_text()
+                .contains("[Old tool output cleared"),
+            "expected pruned text, got: {:?}",
+            pruned[2].content.as_text()
+        );
+    }
+
+    #[test]
+    fn estimate_tokens_basic() {
+        let msgs = vec![user_msg("hello world")]; // 11 chars
+        let tokens = estimate_tokens(&msgs, 4.0);
+        assert_eq!(tokens, 2); // 11 / 4 = 2.75 → 2
+    }
+
+    // ----- Summary -----
+
+    #[test]
+    fn build_summary_prompt_includes_focus_topic() {
+        let prompt = build_summary_prompt("some conversation", None, Some("task-X"), 12_000);
+        assert!(
+            prompt.contains("Prioritize preserving information related to: task-X"),
+            "expected focus topic in prompt: {prompt}"
+        );
+    }
+
+    #[test]
+    fn build_summary_prompt_update_mode() {
+        let prompt = build_summary_prompt("new turns", Some("old summary"), None, 12_000);
+        assert!(
+            prompt.contains("Existing Summary"),
+            "expected update mode: {prompt}"
+        );
+        assert!(
+            prompt.contains("old summary"),
+            "expected old summary text: {prompt}"
+        );
+    }
+
+    #[test]
+    fn build_summary_message_has_prefix() {
+        let msg = build_summary_message("test summary");
+        assert!(msg.content.as_text().starts_with(SUMMARY_PREFIX));
+        assert!(msg.content.as_text().contains("test summary"));
+        assert_eq!(msg.role, Role::User);
+    }
+
+    #[test]
+    fn messages_to_transcript_formats_roles() {
+        let msgs = vec![user_msg("hello"), assistant_msg("hi there")];
+        let transcript = messages_to_transcript(&msgs);
+        assert!(transcript.contains("[user] hello"));
+        assert!(transcript.contains("[assistant] hi there"));
     }
 }

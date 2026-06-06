@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use hermes_agent::{AIAgent, AgentRunError, LoopEvent, SessionContext};
 use hermes_core::error::LoopError;
-use hermes_core::message::{Content, Message, Role};
+use hermes_core::message::Message;
 use tokio_util::sync::CancellationToken;
 
 use crate::cli_render::{tool_emoji, truncate_str};
@@ -84,13 +84,7 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
             continue;
         }
 
-        history.push(Message {
-            role: Role::User,
-            content: Content::Text(line),
-            reasoning: None,
-            tool_call_id: None,
-            tool_calls: None,
-        });
+        history.push(Message::user(line));
 
         let cancel = CancellationToken::new();
         ctrl_c.enter_turn(cancel.clone());
@@ -182,10 +176,7 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
                 eprintln!();
             }
             Err(AgentRunError::Loop(LoopError::CancelledWith(partial))) => {
-                let chars = match &partial.content {
-                    Content::Text(s) => s.chars().count(),
-                    Content::Parts(_) => 0,
-                };
+                let chars = partial.content.as_text().chars().count();
                 let calls = partial.tool_calls.as_ref().map(|c| c.len()).unwrap_or(0);
                 eprintln!(
                     "\n  [cancelled mid-stream: {chars} chars streamed, {calls} tool call kept]"

@@ -28,6 +28,64 @@ pub struct Message {
     pub tool_calls: Option<Vec<ToolCall>>,
 }
 
+impl Message {
+    /// Convenience constructor for a plain user-role text message.
+    pub fn user(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::User,
+            content: Content::Text(text.into()),
+            reasoning: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    /// Convenience constructor for a plain assistant-role text message.
+    pub fn assistant(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::Assistant,
+            content: Content::Text(text.into()),
+            reasoning: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    /// Convenience constructor for a system-role text message.
+    pub fn system(text: impl Into<String>) -> Self {
+        Self {
+            role: Role::System,
+            content: Content::Text(text.into()),
+            reasoning: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    /// Convenience constructor for a tool-role result message paired with
+    /// the call id from the assistant's `tool_calls`.
+    pub fn tool_result(tool_call_id: impl Into<String>, text: impl Into<String>) -> Self {
+        Self {
+            role: Role::Tool,
+            content: Content::Text(text.into()),
+            reasoning: None,
+            tool_call_id: Some(tool_call_id.into()),
+            tool_calls: None,
+        }
+    }
+
+    /// Total character count across content, reasoning, and tool-call args.
+    /// Used by the compressor to estimate tokens without a tokenizer.
+    pub fn char_len(&self) -> usize {
+        let content_chars = self.content.chars();
+        let reasoning_chars = self.reasoning.as_ref().map_or(0, |s| s.len());
+        let tool_calls_chars: usize = self.tool_calls.as_ref().map_or(0, |calls| {
+            calls.iter().map(|c| c.arguments.to_string().len()).sum()
+        });
+        content_chars + reasoning_chars + tool_calls_chars
+    }
+}
+
 /// Who produced a message.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -57,6 +115,38 @@ impl Role {
 pub enum Content {
     Text(String),
     Parts(Vec<ContentPart>),
+}
+
+impl Content {
+    /// Total character count across all text/image_url parts.
+    pub fn chars(&self) -> usize {
+        match self {
+            Content::Text(s) => s.len(),
+            Content::Parts(parts) => parts
+                .iter()
+                .map(|p| match p {
+                    ContentPart::Text { text } => text.len(),
+                    ContentPart::ImageUrl { url } => url.len(),
+                })
+                .sum(),
+        }
+    }
+
+    /// Concatenated text across all text parts. Image parts contribute an
+    /// `[image: <url>]` marker so summaries are still meaningful.
+    pub fn as_text(&self) -> String {
+        match self {
+            Content::Text(s) => s.clone(),
+            Content::Parts(parts) => parts
+                .iter()
+                .map(|p| match p {
+                    ContentPart::Text { text } => text.clone(),
+                    ContentPart::ImageUrl { url } => format!("[image: {url}]"),
+                })
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
 }
 
 /// A single part of a multimodal message.
