@@ -102,7 +102,7 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
         finish_reason: FinishReason::Stop,
     }]));
 
-    let compressor = ContextCompressor::new(CompressorConfig::default(), "test".into())
+    let compressor = ContextCompressor::new(CompressorConfig::default(), "test".into(), None)
         .with_summary_provider(summary_provider);
 
     let loop_ = AgentLoop::new(

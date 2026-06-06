@@ -295,8 +295,12 @@ pub struct ContextCompressor {
 }
 
 impl ContextCompressor {
-    pub fn new(config: CompressorConfig, model: String) -> Self {
-        let context_length = 128_000;
+    pub fn new(
+        config: CompressorConfig,
+        model: String,
+        context_length: Option<u64>,
+    ) -> Self {
+        let context_length = context_length.unwrap_or(128_000);
         let threshold_tok = config.threshold_tokens(context_length);
         Self {
             config,
@@ -521,7 +525,7 @@ mod tests {
 
     #[test]
     fn on_session_reset_clears_state() {
-        let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into());
+        let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
         compressor.previous_summary = Some("old summary".into());
         compressor.ineffective_count = 5;
 
@@ -534,7 +538,7 @@ mod tests {
     #[test]
     fn update_model_changes_threshold() {
         let mut compressor =
-            ContextCompressor::new(CompressorConfig::default(), "old-model".into());
+            ContextCompressor::new(CompressorConfig::default(), "old-model".into(), None);
         let old_threshold = compressor.threshold_tokens();
 
         compressor.update_model("new-model", 256_000);
@@ -545,7 +549,7 @@ mod tests {
 
     #[test]
     fn should_compress_returns_false_after_two_ineffective() {
-        let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into());
+        let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
         assert!(compressor.should_compress());
 
         compressor.ineffective_count = 1;
@@ -563,7 +567,7 @@ mod tests {
             protect_first_n: 100, // protect all messages
             ..CompressorConfig::default()
         };
-        let mut compressor = ContextCompressor::new(config, "test".into());
+        let mut compressor = ContextCompressor::new(config, "test".into(), None);
 
         let messages = vec![system_msg("sys"), user_msg("hello"), assistant_msg("hi")];
 
