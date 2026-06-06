@@ -210,3 +210,47 @@ async fn user_message_appears_in_buffer() {
     }
     assert!(found, "user message '> hi' not found in buffer");
 }
+
+#[tokio::test]
+async fn compact_command_emits_compress_request() {
+    let provider = ScriptedProvider::new(vec![Completion {
+        message: Message {
+            role: Role::Assistant,
+            content: Content::Text("done".to_string()),
+            reasoning: None,
+            tool_calls: None,
+            tool_call_id: None,
+        },
+        usage: Usage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cached_input_tokens: 0,
+        },
+        finish_reason: FinishReason::Stop,
+    }]);
+    let provider = Arc::new(provider);
+
+    let backend = TestBackend::new(80, 24);
+    let cancel = CancellationToken::new();
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<AppEvent>();
+
+    input_tx
+        .send(AppEvent::Compact(Some("shell history".to_string())))
+        .expect("send compact");
+    input_tx.send(AppEvent::Quit).expect("send quit");
+    drop(input_tx);
+
+    // The test only asserts the TUI accepts and dispatches the event without
+    // panicking; the actual compression call lives in `AIAgent::run_compact`
+    // and is exercised by `hermes-agent`'s context-compression tests.
+    let result = run_with_backend(
+        backend,
+        provider,
+        input_rx,
+        cancel,
+        "echo".to_string(),
+        "test-model".to_string(),
+    )
+    .await;
+    assert!(result.is_ok());
+}

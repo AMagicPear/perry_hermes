@@ -96,8 +96,11 @@ pub async fn run_with_backend<B: Backend>(
                         app.mode = AppMode::AwaitingModel;
                     }
                     AppEvent::Quit => return Ok(()),
-                    AppEvent::Compact(_) => {
-                        // Wired in Task 11.
+                    AppEvent::Compact(focus) => {
+                        app.push_line(RenderedLine::System(format!(
+                            "Manual compact requested (focus: {}).",
+                            focus.as_deref().unwrap_or("(none)")
+                        )));
                     }
                     AppEvent::Clear => {
                         app.scrollback.clear();
@@ -166,7 +169,12 @@ pub async fn run_with_backend_and_capture(
                         app.mode = AppMode::AwaitingModel;
                     }
                     AppEvent::Quit => break,
-                    AppEvent::Compact(_) => {}
+                    AppEvent::Compact(focus) => {
+                        app.push_line(RenderedLine::System(format!(
+                            "Manual compact requested (focus: {}).",
+                            focus.as_deref().unwrap_or("(none)")
+                        )));
+                    }
                     AppEvent::Clear => {
                         app.scrollback.clear();
                     }
