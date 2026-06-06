@@ -13,23 +13,17 @@ use futures::stream;
 use hermes_agent::{AIAgent, HermesConfig, ProviderConfig, ProviderKind, SessionContext};
 use hermes_core::message::Message;
 use hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
 /// Serialize tests that mutate process-wide state (HOME/HERMES_HOME).
 ///
-/// Acquire the guard in a scoped block before any `.await`:
 ///
-/// ```ignore
-/// {
-///     let _g = with_env_lock();
-///     unsafe { std::env::set_var("HOME", "/tmp/...") };
-/// }  // guard drops here
-/// let agent = AIAgent::new(...);
-/// agent.run_turn(...).await;  // safe — lock is not held
-/// ```
-fn with_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+/// The runtime reads those vars during `run_turn`, so the guard must stay
+/// alive across the entire async turn, not just the `set_var` calls.
+async fn with_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static ENV_LOCK: AsyncMutex<()> = AsyncMutex::const_new(());
+    ENV_LOCK.lock().await
 }
 
 #[derive(Default)]
@@ -92,12 +86,10 @@ fn system_text(messages: &[Message]) -> String {
 
 #[tokio::test]
 async fn runtime_new_preserves_user_prompt_without_skills_dir() {
-    {
-        let _g = with_env_lock();
-        unsafe { std::env::remove_var("HOME") };
-        unsafe { std::env::remove_var("HERMES_HOME") };
-        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
-    }
+    let _guard = with_env_lock().await;
+    unsafe { std::env::remove_var("HOME") };
+    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -123,12 +115,10 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
 
 #[tokio::test]
 async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_absent() {
-    {
-        let _g = with_env_lock();
-        unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/hermes-test") };
-        unsafe { std::env::remove_var("HERMES_HOME") };
-        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
-    }
+    let _guard = with_env_lock().await;
+    unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/hermes-test") };
+    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -161,12 +151,10 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
         "rust-core-style/SKILL.md",
         "---\nname: rust-core-style\ndescription: \"Rust style\"\n---\nbody\n",
     );
-    {
-        let _g = with_env_lock();
-        unsafe { std::env::set_var("HOME", home.path()) };
-        unsafe { std::env::remove_var("HERMES_HOME") };
-        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
-    }
+    let _guard = with_env_lock().await;
+    unsafe { std::env::set_var("HOME", home.path()) };
+    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -204,12 +192,10 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
         "ok-skill/SKILL.md",
         "---\nname: ok-skill\ndescription: \"fine\"\n---\nbody\n",
     );
-    {
-        let _g = with_env_lock();
-        unsafe { std::env::set_var("HOME", home.path()) };
-        unsafe { std::env::remove_var("HERMES_HOME") };
-        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
-    }
+    let _guard = with_env_lock().await;
+    unsafe { std::env::set_var("HOME", home.path()) };
+    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -231,12 +217,10 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
 
 #[tokio::test]
 async fn runtime_uses_default_system_prompt_when_home_is_unset() {
-    {
-        let _g = with_env_lock();
-        unsafe { std::env::remove_var("HOME") };
-        unsafe { std::env::remove_var("HERMES_HOME") };
-        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
-    }
+    let _guard = with_env_lock().await;
+    unsafe { std::env::remove_var("HOME") };
+    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -273,12 +257,10 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
         "software-engineering/dogfood/SKILL.md",
         "---\nname: dogfood\ndescription: \"QA workflow\"\n---\n",
     );
-    {
-        let _g = with_env_lock();
-        unsafe { std::env::set_var("HOME", home.path()) };
-        unsafe { std::env::remove_var("HERMES_HOME") };
-        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
-    }
+    let _guard = with_env_lock().await;
+    unsafe { std::env::set_var("HOME", home.path()) };
+    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -302,12 +284,10 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
 
 #[tokio::test]
 async fn runtime_formats_conversation_started_in_configured_timezone() {
-    {
-        let _g = with_env_lock();
-        unsafe { std::env::remove_var("HOME") };
-        unsafe { std::env::remove_var("HERMES_HOME") };
-        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
-    }
+    let _guard = with_env_lock().await;
+    unsafe { std::env::remove_var("HOME") };
+    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
