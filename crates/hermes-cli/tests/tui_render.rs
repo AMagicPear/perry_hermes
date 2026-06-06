@@ -3,7 +3,6 @@
 //! status bar and input-box placeholders.
 
 use hermes_cli::tui::app::App;
-use hermes_cli::tui::event::AppMode;
 use hermes_cli::tui::render::render;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
@@ -70,8 +69,8 @@ fn populated_app_renders_status_bar_with_provider_and_tokens() {
         .collect();
     assert!(status_row.contains("openai"), "status row missing provider: {status_row:?}");
     assert!(status_row.contains("gpt-4.1-mini"), "status row missing model: {status_row:?}");
-    assert!(status_row.contains("12.3K"), "status row missing input tokens: {status_row:?}");
-    assert!(status_row.contains("4.5K"), "status row missing output tokens: {status_row:?}");
+    assert!(status_row.contains("in 12.3K"), "status row missing input tokens: {status_row:?}");
+    assert!(status_row.contains("out 4.5K"), "status row missing output tokens: {status_row:?}");
     assert!(status_row.contains("iter 2/10"), "status row missing iteration: {status_row:?}");
     assert!(status_row.contains("awaiting"), "status row missing mode: {status_row:?}");
 }
