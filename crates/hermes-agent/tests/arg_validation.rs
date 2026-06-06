@@ -21,7 +21,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
             tool_call_id: None,
             tool_calls: Some(vec![ToolCall {
                 id: "call_bad".into(),
-                name: "bash".into(),
+                name: "terminal".into(),
                 arguments: serde_json::json!({}),
             }]),
         },

@@ -14,6 +14,25 @@ use hermes_core::message::Message;
 use hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
 use tokio_util::sync::CancellationToken;
 
+/// Serialize tests that mutate process-wide state (HOME). Required because
+/// `resolve_skills_dir` is now side-effecting (it calls `create_dir_all`),
+/// so concurrent tests can race on `std::env::set_var("HOME", ...)`.
+///
+/// Acquire the guard in a scoped block before any `.await`:
+///
+/// ```ignore
+/// {
+///     let _g = with_env_lock();
+///     unsafe { std::env::set_var("HOME", "/tmp/...") };
+/// }  // guard drops here
+/// let agent = AIAgent::new(...);
+/// agent.run_turn(...).await;  // safe — lock is not held
+/// ```
+fn with_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[derive(Default)]
 struct CaptureProvider {
     captured: Arc<Mutex<Vec<Message>>>,
@@ -63,7 +82,10 @@ fn config_for_echo() -> HermesConfig {
 
 #[tokio::test]
 async fn runtime_new_preserves_user_prompt_without_skills_dir() {
-    unsafe { std::env::remove_var("HOME") };
+    {
+        let _g = with_env_lock();
+        unsafe { std::env::remove_var("HOME") };
+    }
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -95,7 +117,9 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
 
 #[tokio::test]
 async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_absent() {
+    { let _g = with_env_lock();
     unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/hermes-test") };
+    }
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -124,6 +148,8 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
 
 #[tokio::test]
 async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
+    // tempdir must live for the entire test (set HOME inside the lock, but
+    // don't let tempdir get dropped when the lock-scope ends).
     let home = tempfile::tempdir().unwrap();
     let skills = skills_dir_for(home.path());
     write_skill(
@@ -131,8 +157,10 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
         "rust-core-style/SKILL.md",
         "---\nname: rust-core-style\ndescription: \"Rust style\"\n---\nbody\n",
     );
-
-    unsafe { std::env::set_var("HOME", home.path()) };
+    {
+        let _g = with_env_lock();
+        unsafe { std::env::set_var("HOME", home.path()) };
+    }
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -174,8 +202,10 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
         "ok-skill/SKILL.md",
         "---\nname: ok-skill\ndescription: \"fine\"\n---\nbody\n",
     );
-
-    unsafe { std::env::set_var("HOME", home.path()) };
+    {
+        let _g = with_env_lock();
+        unsafe { std::env::set_var("HOME", home.path()) };
+    }
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -204,7 +234,9 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
 
 #[tokio::test]
 async fn runtime_uses_default_system_prompt_when_home_is_unset() {
+    { let _g = with_env_lock();
     unsafe { std::env::remove_var("HOME") };
+    }
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -246,8 +278,10 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
         "software-engineering/dogfood/SKILL.md",
         "---\nname: dogfood\ndescription: \"QA workflow\"\n---\n",
     );
-
-    unsafe { std::env::set_var("HOME", home.path()) };
+    {
+        let _g = with_env_lock();
+        unsafe { std::env::set_var("HOME", home.path()) };
+    }
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);

@@ -49,7 +49,7 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
             tool_call_id: None,
             tool_calls: Some(vec![tool_call(
                 "call_1",
-                "bash",
+                "terminal",
                 serde_json::json!({ "command": "echo from-bash" }),
             )]),
         },
@@ -118,4 +118,66 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
     let evs = events.lock().unwrap();
     assert!(evs.iter().any(|e| e.contains("ToolCallStarted")));
     assert!(evs.iter().any(|e| e.contains("ToolCallFinished")));
+}
+
+#[tokio::test]
+async fn loop_routes_read_file_tool_call() {
+    use hermes_agent::tools::ReadFileTool;
+    use tempfile::TempDir;
+
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("dispatch.txt");
+    std::fs::write(&path, "routed\n").unwrap();
+
+    let first = Completion {
+        message: Message {
+            role: Role::Assistant,
+            content: Content::Text(String::new()),
+            reasoning: None,
+            tool_call_id: None,
+            tool_calls: Some(vec![tool_call(
+                "call_1",
+                "read_file",
+                serde_json::json!({ "path": path.to_str().unwrap() }),
+            )]),
+        },
+        usage: hermes_core::Usage::default(),
+        finish_reason: FinishReason::ToolUse,
+    };
+    let second = Completion {
+        message: assistant_text("ok"),
+        usage: hermes_core::Usage::default(),
+        finish_reason: FinishReason::Stop,
+    };
+
+    let provider = ScriptedProvider::new(vec![first, second]);
+    let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(ReadFileTool::new())));
+    let loop_ = AgentLoop::new(
+        provider,
+        registry,
+        LoopConfig {
+            max_iterations: 3,
+            ..Default::default()
+        },
+    );
+    let ctx = ToolContext {
+        session_id: "test".into(),
+        working_dir: dir.path().to_path_buf(),
+        permissions: hermes_core::tool::ToolPermissions { subprocess: false },
+    };
+    let result = loop_
+        .run(
+            vec![user_message("read it")],
+            ctx,
+            CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .expect("loop should succeed");
+    let tool_content = match &result.messages[2].content {
+        Content::Text(s) => s.clone(),
+        _ => panic!("tool result should be text"),
+    };
+    assert!(tool_content.contains("routed"));
+    assert!(tool_content.contains("1|"));
 }
