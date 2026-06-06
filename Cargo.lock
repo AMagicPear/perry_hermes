@@ -1033,6 +1033,7 @@ dependencies = [
  "hermes-agent",
  "hermes-core",
  "ratatui",
+ "serde_json",
  "tempfile",
  "tokio",
  "tokio-util",

@@ -24,20 +24,9 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
             }
             AppEvent::Tick
         }
-        LoopEvent::ToolCallPartial(td) => {
-            // ToolCallPartial carries name and arguments_delta incrementally.
-            // We push a ToolCall line when name is first seen.
-            if let Some(name) = td.name {
-                let args_preview = td
-                    .arguments_delta
-                    .as_ref()
-                    .map(|s| s.clone())
-                    .unwrap_or_default();
-                app.push_line(RenderedLine::ToolCall {
-                    name,
-                    args_preview,
-                });
-            }
+        LoopEvent::ToolCallPartial(_td) => {
+            // Streaming metadata; arguments are incomplete. Wait for
+            // ToolCallStarted to push the final line.
             AppEvent::Tick
         }
         LoopEvent::ToolCallStarted { call, iteration: _ } => {
@@ -52,7 +41,7 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
         LoopEvent::ToolCallFinished { call, result } => {
             let (output, ok) = match result {
                 Ok(tool_output) => (tool_output.content, true),
-                Err(_) => ("[error]".to_string(), false),
+                Err(e) => (e.to_string(), false),
             };
             app.push_line(RenderedLine::ToolResult {
                 name: call.name,

@@ -7,6 +7,7 @@ use hermes_cli::tui::loop_bridge::apply_loop_event;
 use hermes_core::context_engine::CompressionTrigger;
 use hermes_core::message::ToolCall;
 use hermes_core::provider::ToolCallDelta;
+use hermes_core::error::ToolError;
 use hermes_core::tool::ToolOutput;
 use std::time::Duration;
 
@@ -41,9 +42,10 @@ fn reasoning_delta_appends_reasoning_text() {
 }
 
 #[test]
-fn tool_call_partial_pushes_tool_call_line() {
+fn tool_call_partial_does_not_push_scrollback_line() {
     let mut app = app_with_mode(AppMode::AwaitingModel);
-    // ToolCallPartial carries id, name, and arguments_delta incrementally
+    // ToolCallPartial is a streaming event with incomplete arguments;
+    // it should not push any scrollback line.
     let ev = LoopEvent::ToolCallPartial(ToolCallDelta {
         index: 0,
         id: Some("call_abc".to_string()),
@@ -51,10 +53,11 @@ fn tool_call_partial_pushes_tool_call_line() {
         arguments_delta: Some("{\"cmd\":\"ls\"}".to_string()),
     });
     let _ = apply_loop_event(&mut app, ev);
-    assert!(matches!(
-        app.scrollback.last(),
-        Some(RenderedLine::ToolCall { name, args_preview }) if name == "terminal"
-    ));
+    assert!(
+        app.scrollback.is_empty(),
+        "ToolCallPartial should not push a scrollback line; got {:?}",
+        app.scrollback
+    );
 }
 
 #[test]
@@ -121,4 +124,28 @@ fn cancelled_transitions_to_idle() {
     let next = apply_loop_event(&mut app, ev);
     assert!(matches!(next, AppEvent::Tick));
     assert_eq!(app.mode, AppMode::Idle);
+}
+
+#[test]
+fn tool_call_finished_error_includes_error_message() {
+    let mut app = app_with_mode(AppMode::AwaitingModel);
+    let ev = LoopEvent::ToolCallFinished {
+        call: ToolCall {
+            id: "call_xyz".to_string(),
+            name: "terminal".to_string(),
+            arguments: serde_json::json!({}),
+        },
+        result: Err(ToolError::Execution("command not found: foo".to_string())),
+    };
+    let _ = apply_loop_event(&mut app, ev);
+    match app.scrollback.last() {
+        Some(RenderedLine::ToolResult { name, output, ok: false }) => {
+            assert_eq!(name, "terminal");
+            assert!(
+                output.contains("command not found"),
+                "error output should include the actual error message; got: {output:?}"
+            );
+        }
+        other => panic!("expected ToolResult with ok=false; got {other:?}"),
+    }
 }
