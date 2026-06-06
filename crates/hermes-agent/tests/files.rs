@@ -238,20 +238,71 @@ async fn write_file_includes_resolved_path() {
 }
 
 #[tokio::test]
-async fn write_file_accepts_cross_profile_arg() {
+async fn write_file_rejects_internal_status_text() {
     let dir = TempDir::new().unwrap();
-    let path = dir.path().join("cp.txt");
     let tool = WriteFileTool::new();
     let out = tool
         .execute(
-            json!({ "path": path.to_str().unwrap(), "content": "x", "cross_profile": true }),
+            json!({
+                "path": dir.path().join("status.txt").to_str().unwrap(),
+                "content": "File unchanged since last read. The content from the earlier read_file result in this conversation is still current — refer to that instead of re-reading."
+            }),
             ctx(dir.path().to_path_buf()),
             CancellationToken::new(),
         )
         .await
-        .expect("cross_profile=true should not error in this build");
+        .expect("write should return JSON error");
+    let v = parse(out);
+    assert!(v["error"].as_str().unwrap().contains("internal read_file status text"));
+}
+
+#[tokio::test]
+async fn write_file_rejects_cross_profile_write_without_override() {
+    let dir = TempDir::new().unwrap();
+    let hermes_home = dir.path().join("profiles/current");
+    std::fs::create_dir_all(&hermes_home).unwrap();
+    unsafe { std::env::set_var("HERMES_HOME", &hermes_home) };
+
+    let target = dir.path().join("profiles/other/skills/demo/SKILL.md");
+    let tool = WriteFileTool::new();
+    let out = tool
+        .execute(
+            json!({ "path": target.to_str().unwrap(), "content": "demo" }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("cross-profile write should return JSON error");
+    let v = parse(out);
+    assert!(v["error"].as_str().unwrap().contains("cross-profile"));
+    unsafe { std::env::remove_var("HERMES_HOME") };
+}
+
+#[tokio::test]
+async fn write_file_allows_cross_profile_write_with_override() {
+    let dir = TempDir::new().unwrap();
+    let hermes_home = dir.path().join("profiles/current");
+    std::fs::create_dir_all(&hermes_home).unwrap();
+    unsafe { std::env::set_var("HERMES_HOME", &hermes_home) };
+
+    let target = dir.path().join("profiles/other/skills/demo/SKILL.md");
+    let tool = WriteFileTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "path": target.to_str().unwrap(),
+                "content": "demo",
+                "cross_profile": true
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("cross-profile override should succeed");
     let v = parse(out);
     assert!(v["resolved_path"].is_string());
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "demo");
+    unsafe { std::env::remove_var("HERMES_HOME") };
 }
 
 #[tokio::test]

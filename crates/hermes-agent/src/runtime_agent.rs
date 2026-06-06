@@ -84,7 +84,12 @@ impl AIAgent {
 }
 
 fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
-    let skills_dir = resolve_skills_dir();
+    let skills_dir = resolve_skills_dir().unwrap_or_else(|| {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(".perry_hermes")
+            .join("skills")
+    });
     let registry = Arc::new(build_registry(&config.agent.disabled_toolsets, &skills_dir));
     let system_prompt = compose_system_prompt(config.agent.system_prompt.as_deref());
     AgentLoop::from_provider(

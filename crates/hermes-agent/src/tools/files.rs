@@ -29,6 +29,8 @@ for images.";
 
 /// Maximum characters of formatted content returned to the model.
 const MAX_READ_CHARS: usize = 100_000;
+const READ_DEDUP_STATUS_MESSAGE: &str =
+    "File unchanged since last read. The content from the earlier read_file result in this conversation is still current — refer to that instead of re-reading.";
 
 pub struct ReadFileTool;
 
@@ -320,6 +322,27 @@ impl Tool for WriteFileTool {
             Err(msg) => return Ok(ToolOutput { content: json!({"error": msg}).to_string() }),
         };
 
+        if let Some(msg) = sensitive_write_path_message(path_str, &resolved) {
+            return Ok(ToolOutput { content: json!({"error": msg}).to_string() });
+        }
+        let cross_profile = args
+            .get("cross_profile")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if !cross_profile {
+            if let Some(msg) = cross_profile_write_message(&resolved) {
+                return Ok(ToolOutput { content: json!({"error": msg}).to_string() });
+            }
+        }
+        if is_internal_file_status_text(content) {
+            return Ok(ToolOutput {
+                content: json!({
+                    "error": "Refusing to write internal read_file status text as file content. Re-read the file or reconstruct the intended file contents before writing."
+                })
+                .to_string(),
+            });
+        }
+
         // Create parent directories as needed.
         let parent = resolved.parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let dirs_created = if !parent.as_os_str().is_empty() && !parent.is_dir() {
@@ -392,6 +415,103 @@ fn resolve_user_path(input: &str, working_dir: &std::path::Path) -> Result<PathB
     } else {
         Ok(working_dir.join(expanded))
     }
+}
+
+fn sensitive_write_path_message(original: &str, resolved: &std::path::Path) -> Option<String> {
+    let normalized = normalize_path_string(original);
+    let resolved_str = resolved.to_string_lossy();
+    let exact_blocked = ["/etc/passwd", "/etc/shadow"];
+    let prefix_blocked = ["/bin", "/sbin", "/usr/bin", "/usr/sbin", "/var/run"];
+
+    if exact_blocked
+        .iter()
+        .any(|entry| normalized == *entry || resolved_str == *entry)
+        || prefix_blocked
+            .iter()
+            .any(|prefix| has_path_prefix(&normalized, prefix) || has_path_prefix(&resolved_str, prefix))
+    {
+        return Some(format!(
+            "Refusing to write to sensitive system path: {original}\nUse the terminal tool with sudo if you need to modify system files."
+        ));
+    }
+
+    let hermes_config = hermes_config_path();
+    if normalized == hermes_config || resolved_str == hermes_config {
+        return Some(format!(
+            "Refusing to write to Hermes config file: {original}\nAgent cannot modify security-sensitive configuration. Edit ~/.perry_hermes/config.yaml directly or use 'hermes config' instead."
+        ));
+    }
+    None
+}
+
+fn cross_profile_write_message(resolved: &std::path::Path) -> Option<String> {
+    let path = resolved.to_string_lossy();
+    let marker = path.find("/profiles/")?;
+    let rest = &path[marker + "/profiles/".len()..];
+    let mut parts = rest.split('/');
+    let profile = parts.next()?;
+    let remainder: Vec<&str> = parts.collect();
+    if remainder.len() < 2 {
+        return None;
+    }
+    let scoped_dir = remainder[0];
+    if !matches!(scoped_dir, "skills" | "plugins" | "cron" | "memories") {
+        return None;
+    }
+
+    let active_profile = std::env::var("HERMES_PROFILE")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(current_profile_from_hermes_home);
+    match active_profile {
+        Some(active) if active == profile => None,
+        _ => Some(format!(
+            "Refusing cross-profile write to Hermes {scoped_dir} for profile '{profile}'. Pass cross_profile=true only after explicit user direction."
+        )),
+    }
+}
+
+fn current_profile_from_hermes_home() -> Option<String> {
+    let home = std::env::var_os("HERMES_HOME")?;
+    let path = PathBuf::from(home);
+    let parent = path.parent()?;
+    if parent.file_name().and_then(|s| s.to_str()) == Some("profiles") {
+        return path.file_name().and_then(|s| s.to_str()).map(|s| s.to_string());
+    }
+    None
+}
+
+fn hermes_config_path() -> String {
+    let base = std::env::var_os("HERMES_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))
+        .unwrap_or_else(|| PathBuf::from("~/.perry_hermes"));
+    base.join("config.yaml").to_string_lossy().into_owned()
+}
+
+fn normalize_path_string(input: &str) -> String {
+    if let Some(stripped) = input.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(stripped).to_string_lossy().into_owned();
+        }
+    }
+    input.to_string()
+}
+
+fn has_path_prefix(path: &str, prefix: &str) -> bool {
+    path == prefix || path.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn is_internal_file_status_text(content: &str) -> bool {
+    let stripped = content.trim();
+    if stripped.is_empty() {
+        return false;
+    }
+    if stripped == READ_DEDUP_STATUS_MESSAGE {
+        return true;
+    }
+    stripped.contains(READ_DEDUP_STATUS_MESSAGE)
+        && stripped.len() <= 2 * READ_DEDUP_STATUS_MESSAGE.len()
 }
 
 fn blocked_path_message(path: &std::path::Path) -> Option<String> {

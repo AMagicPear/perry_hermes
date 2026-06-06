@@ -159,17 +159,30 @@ impl Tool for BashTool {
             .map(std::path::PathBuf::from);
         let cwd = workdir.as_ref().unwrap_or(&ctx.working_dir);
 
-        // `background`, `pty`, `notify_on_complete`, `watch_patterns` are
-        // accepted by the schema for parity with Python but the Rust backend
-        // only implements foreground, non-PTY execution today. We deliberately
-        // do not error on them so prompts that mention them still work; the
-        // tool just runs to completion inline.
-        let _ = (
-            args.get("background"),
-            args.get("pty"),
-            args.get("notify_on_complete"),
-            args.get("watch_patterns"),
-        );
+        if args.get("background").and_then(|v| v.as_bool()) == Some(true) {
+            return Err(ToolError::InvalidArgs(
+                "background=true is not supported in this Rust runtime yet".into(),
+            ));
+        }
+        if args.get("pty").and_then(|v| v.as_bool()) == Some(true) {
+            return Err(ToolError::InvalidArgs(
+                "pty=true is not supported in this Rust runtime yet".into(),
+            ));
+        }
+        if args.get("notify_on_complete").and_then(|v| v.as_bool()) == Some(true) {
+            return Err(ToolError::InvalidArgs(
+                "notify_on_complete is not supported in this Rust runtime yet".into(),
+            ));
+        }
+        if args
+            .get("watch_patterns")
+            .and_then(|v| v.as_array())
+            .is_some_and(|patterns| !patterns.is_empty())
+        {
+            return Err(ToolError::InvalidArgs(
+                "watch_patterns is not supported in this Rust runtime yet".into(),
+            ));
+        }
 
         let mut child = Command::new("bash")
             .arg("-c")

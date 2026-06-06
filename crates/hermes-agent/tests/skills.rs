@@ -75,6 +75,7 @@ async fn skills_list_returns_metadata_for_installed_skills() {
         .find(|s| s["name"] == "alpha")
         .unwrap();
     assert_eq!(alpha["description"].as_str().unwrap(), "The alpha skill");
+    assert!(alpha.get("qualified_name").is_none());
     assert!(v["hint"].as_str().unwrap().contains("skill_view"));
 }
 
@@ -181,11 +182,12 @@ async fn skill_view_loads_linked_reference_file() {
     let v = parse(out);
     assert_eq!(v["success"].as_bool(), Some(true));
     assert!(v["content"].as_str().unwrap().contains("endpoint docs"));
-    assert_eq!(v["file_path"].as_str().unwrap(), "references/api.md");
+    assert_eq!(v["file"].as_str().unwrap(), "references/api.md");
+    assert_eq!(v["file_type"].as_str().unwrap(), ".md");
 }
 
 #[tokio::test]
-async fn skill_view_reports_not_found_with_available() {
+async fn skill_view_reports_not_found_with_available_skills() {
     let dir = TempDir::new().unwrap();
     write_skill(dir.path(), "alpha", "desc", "body");
     let tool = SkillViewTool::new(dir.path().to_path_buf());
@@ -196,7 +198,7 @@ async fn skill_view_reports_not_found_with_available() {
     let v = parse(out);
     assert_eq!(v["success"].as_bool(), Some(false));
     assert!(v["error"].as_str().unwrap().contains("missing"));
-    let available = v["available"].as_array().unwrap();
+    let available = v["available_skills"].as_array().unwrap();
     assert!(available.iter().any(|n| n.as_str() == Some("alpha")));
 }
 
@@ -263,11 +265,22 @@ async fn skill_view_returns_ambiguous_error_for_colliding_names() {
 async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
     let dir = TempDir::new().unwrap();
     write_skill(dir.path(), "alpha", "desc", "body");
-    for bucket in ["references", "templates", "assets", "scripts"] {
-        let p = dir.path().join("alpha").join(bucket);
-        std::fs::create_dir_all(&p).unwrap();
-        std::fs::write(p.join("file.md"), "x").unwrap();
-    }
+    let refs = dir.path().join("alpha/references");
+    std::fs::create_dir_all(&refs).unwrap();
+    std::fs::write(refs.join("file.md"), "x").unwrap();
+
+    let templates = dir.path().join("alpha/templates");
+    std::fs::create_dir_all(&templates).unwrap();
+    std::fs::write(templates.join("file.md"), "x").unwrap();
+
+    let assets = dir.path().join("alpha/assets");
+    std::fs::create_dir_all(&assets).unwrap();
+    std::fs::write(assets.join("file.md"), "x").unwrap();
+
+    let scripts = dir.path().join("alpha/scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("file.py"), "x").unwrap();
+
     let tool = SkillViewTool::new(dir.path().to_path_buf());
     let out = tool
         .execute(json!({"name": "alpha"}), ctx(), CancellationToken::new())
@@ -275,8 +288,8 @@ async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
         .expect("view should succeed");
     let v = parse(out);
     let lf = &v["linked_files"];
-    assert!(lf["references"].as_array().unwrap().iter().any(|x| x == "file.md"));
-    assert!(lf["templates"].as_array().unwrap().iter().any(|x| x == "file.md"));
-    assert!(lf["assets"].as_array().unwrap().iter().any(|x| x == "file.md"));
-    assert!(lf["scripts"].as_array().unwrap().iter().any(|x| x == "file.md"));
+    assert!(lf["references"].as_array().unwrap().iter().any(|x| x == "references/file.md"));
+    assert!(lf["templates"].as_array().unwrap().iter().any(|x| x == "templates/file.md"));
+    assert!(lf["assets"].as_array().unwrap().iter().any(|x| x == "assets/file.md"));
+    assert!(lf["scripts"].as_array().unwrap().iter().any(|x| x == "scripts/file.py"));
 }

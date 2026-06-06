@@ -85,7 +85,7 @@ For loop tests, `ScriptedProvider` (in `crates/hermes-agent/tests/support/`) ret
 
 ## Design Doc
 
-Current code is authoritative. `plans/rust-port-design.md` is a historical design draft — useful for intent and roadmap, but some API sketches are stale after the runtime/streaming simplification and the 2026-06-06 crate consolidation. `plans/hermes-comparison.md` tracks divergence from the Python source and has a current-status note at the top.
+Current code is authoritative. `docs/history/rust-port-design.md` is a historical design draft — useful for intent and roadmap, but some API sketches are stale after the runtime/streaming simplification and the 2026-06-06 crate consolidation. `docs/history/hermes-comparison.md` tracks divergence from the Python source and has a current-status note at the top.
 
 Phase / refactor designs live in `docs/superpowers/specs/` and the execution plans in `docs/superpowers/plans/` (e.g. `2026-06-06-crate-consolidation-design.md` and its plan describe the current 5-crate layout).
 

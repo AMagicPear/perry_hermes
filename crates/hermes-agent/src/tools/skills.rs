@@ -97,7 +97,6 @@ impl Tool for SkillListTool {
             .map(|s| {
                 json!({
                     "name": s.name,
-                    "qualified_name": s.qualified_name,
                     "category": s.category,
                     "description": s.description,
                 })
@@ -211,12 +210,12 @@ impl Tool for SkillViewTool {
         }
 
         if candidates.is_empty() {
-            let available: Vec<String> = skills.iter().map(|s| s.qualified_name.clone()).collect();
+            let available: Vec<String> = skills.iter().map(|s| s.name.clone()).collect();
             return Ok(ToolOutput {
                 content: json!({
                     "success": false,
                     "error": format!("Skill '{}' not found", name),
-                    "available": available,
+                    "available_skills": available,
                 })
                 .to_string(),
             });
@@ -310,9 +309,10 @@ impl Tool for SkillViewTool {
             return Ok(ToolOutput {
                 content: json!({
                     "success": true,
-                    "name": skill.qualified_name,
-                    "file_path": fp,
+                    "name": skill.name,
+                    "file": fp,
                     "content": content,
+                    "file_type": canon_target.extension().and_then(|s| s.to_str()).map(|s| format!(".{s}")),
                     "description": skill.description,
                 })
                 .to_string(),
@@ -336,7 +336,7 @@ impl Tool for SkillViewTool {
         Ok(ToolOutput {
             content: json!({
                 "success": true,
-                "name": skill.qualified_name,
+                "name": skill.name,
                 "content": truncated,
                 "description": skill.description,
                 "linked_files": linked,
@@ -381,18 +381,11 @@ fn discover_linked_files(skill_root: &std::path::Path) -> Value {
     let mut out = serde_json::Map::new();
     for bucket in ["references", "templates", "assets", "scripts"] {
         let dir = skill_root.join(bucket);
-        let names: Vec<String> = match std::fs::read_dir(&dir) {
-            Ok(e) => e
-                .flatten()
-                .filter_map(|entry| entry.file_name().into_string().ok())
-                .filter(|n| !n.starts_with('.'))
-                .collect(),
-            Err(_) => Vec::new(),
-        };
-        out.insert(bucket.to_string(), Value::Array(names.into_iter().map(Value::String).collect()));
+        let names = collect_bucket_files(skill_root, &dir, bucket_specific_extensions(bucket));
+        if !names.is_empty() {
+            out.insert(bucket.to_string(), Value::Array(names.into_iter().map(Value::String).collect()));
+        }
     }
-    // "other" bucket: any non-hidden file directly under the skill root that
-    // isn't SKILL.md.
     let other: Vec<String> = match std::fs::read_dir(skill_root) {
         Ok(e) => e
             .flatten()
@@ -402,8 +395,56 @@ fn discover_linked_files(skill_root: &std::path::Path) -> Value {
             .collect(),
         Err(_) => Vec::new(),
     };
-    out.insert("other".to_string(), Value::Array(other.into_iter().map(Value::String).collect()));
+    if !other.is_empty() {
+        out.insert("other".to_string(), Value::Array(other.into_iter().map(Value::String).collect()));
+    }
     Value::Object(out)
+}
+
+fn bucket_specific_extensions(bucket: &str) -> Option<&'static [&'static str]> {
+    match bucket {
+        "references" => Some(&["md"]),
+        "templates" => Some(&["md", "py", "yaml", "yml", "json", "tex", "sh"]),
+        "scripts" => Some(&["py", "sh", "bash", "js", "ts", "rb"]),
+        "assets" => None,
+        _ => None,
+    }
+}
+
+fn collect_bucket_files(
+    skill_root: &std::path::Path,
+    dir: &std::path::Path,
+    allowed_extensions: Option<&[&str]>,
+) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name_hidden = entry.file_name().to_string_lossy().starts_with('.');
+        if name_hidden {
+            continue;
+        }
+        if path.is_dir() {
+            files.extend(collect_bucket_files(skill_root, &path, allowed_extensions));
+            continue;
+        }
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(exts) = allowed_extensions {
+            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or_default();
+            if !exts.contains(&ext) {
+                continue;
+            }
+        }
+        if let Ok(rel) = path.strip_prefix(skill_root) {
+            files.push(rel.to_string_lossy().into_owned());
+        }
+    }
+    files.sort();
+    files
 }
 
 fn looks_binary(bytes: &[u8]) -> bool {

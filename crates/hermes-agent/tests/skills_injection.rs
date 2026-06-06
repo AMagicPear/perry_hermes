@@ -14,9 +14,7 @@ use hermes_core::message::Message;
 use hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
 use tokio_util::sync::CancellationToken;
 
-/// Serialize tests that mutate process-wide state (HOME). Required because
-/// `resolve_skills_dir` is now side-effecting (it calls `create_dir_all`),
-/// so concurrent tests can race on `std::env::set_var("HOME", ...)`.
+/// Serialize tests that mutate process-wide state (HOME/HERMES_HOME).
 ///
 /// Acquire the guard in a scoped block before any `.await`:
 ///
@@ -85,6 +83,7 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
     {
         let _g = with_env_lock();
         unsafe { std::env::remove_var("HOME") };
+        unsafe { std::env::remove_var("HERMES_HOME") };
     }
 
     let provider = CaptureProvider::default();
@@ -117,8 +116,10 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
 
 #[tokio::test]
 async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_absent() {
-    { let _g = with_env_lock();
-    unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/hermes-test") };
+    {
+        let _g = with_env_lock();
+        unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/hermes-test") };
+        unsafe { std::env::remove_var("HERMES_HOME") };
     }
 
     let provider = CaptureProvider::default();
@@ -160,6 +161,7 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
     {
         let _g = with_env_lock();
         unsafe { std::env::set_var("HOME", home.path()) };
+        unsafe { std::env::remove_var("HERMES_HOME") };
     }
 
     let provider = CaptureProvider::default();
@@ -205,6 +207,7 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
     {
         let _g = with_env_lock();
         unsafe { std::env::set_var("HOME", home.path()) };
+        unsafe { std::env::remove_var("HERMES_HOME") };
     }
 
     let provider = CaptureProvider::default();
@@ -234,8 +237,10 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
 
 #[tokio::test]
 async fn runtime_uses_default_system_prompt_when_home_is_unset() {
-    { let _g = with_env_lock();
-    unsafe { std::env::remove_var("HOME") };
+    {
+        let _g = with_env_lock();
+        unsafe { std::env::remove_var("HOME") };
+        unsafe { std::env::remove_var("HERMES_HOME") };
     }
 
     let provider = CaptureProvider::default();
@@ -281,6 +286,7 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
     {
         let _g = with_env_lock();
         unsafe { std::env::set_var("HOME", home.path()) };
+        unsafe { std::env::remove_var("HERMES_HOME") };
     }
 
     let provider = CaptureProvider::default();
@@ -306,6 +312,6 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
     };
     assert!(text.contains("Available skills"));
     assert!(text.contains("rust-core-style"));
-    assert!(text.contains("software-engineering.dogfood") || text.contains("dogfood"));
+    assert!(text.contains("QA workflow"));
     assert!(text.contains("skill_view"));
 }
