@@ -55,6 +55,7 @@ httpmock = "0.7"
 
 # Time
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
+chrono-tz = "0.10"
 
 # Internal
 hermes-agent = { path = "crates/hermes-agent" }

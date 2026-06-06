@@ -7,41 +7,40 @@ use hermes_core::provider::Provider;
 use hermes_core::tool::{ToolContext, ToolPermissions};
 use tokio_util::sync::CancellationToken;
 
-use crate::config::HermesConfig;
+use crate::config::{HermesConfig, ProviderKind};
 use crate::provider_factory::build_provider;
-use crate::prompting::{compose_system_prompt, resolve_skills_dir};
+use crate::prompting::{
+    build_runtime_system_prompt, compose_base_system_prompt, inject_system_prompt,
+    resolve_skills_dir,
+};
+use crate::session::SessionContext;
 use crate::tool_catalog::build_registry;
-
-#[derive(Debug, Clone)]
-pub struct SessionContext {
-    pub working_dir: PathBuf,
-    pub session_id: String,
-}
-
-impl SessionContext {
-    pub fn current_shell() -> Self {
-        Self {
-            working_dir: std::env::current_dir().unwrap_or_default(),
-            session_id: "shell".into(),
-        }
-    }
-}
 
 pub struct AIAgent {
     loop_: AgentLoop,
+    base_system_prompt: Option<String>,
+    provider_name: Option<String>,
 }
 
 impl AIAgent {
     pub fn from_config(config: HermesConfig) -> anyhow::Result<Self> {
+        let provider_name = Some(provider_name(&config.provider).to_string());
+        let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
         let provider = build_provider(&config.provider)?;
         Ok(Self {
             loop_: build_loop(Arc::from(provider), &config),
+            base_system_prompt,
+            provider_name,
         })
     }
 
     pub fn new(provider: impl Provider + 'static, config: HermesConfig) -> Self {
+        let provider_name = Some(provider_name(&config.provider).to_string());
+        let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
         Self {
             loop_: build_loop(Arc::new(provider), &config),
+            base_system_prompt,
+            provider_name,
         }
     }
 
@@ -79,6 +78,14 @@ impl AIAgent {
             working_dir: session.working_dir.clone(),
             permissions: ToolPermissions { subprocess: true },
         };
+        let messages = inject_system_prompt(
+            messages,
+            self.base_system_prompt
+                .as_deref()
+                .map(|base| {
+                    build_runtime_system_prompt(base, session, self.provider_name.as_deref())
+                }),
+        );
         self.loop_.run(messages, ctx, cancel, on_event).await
     }
 }
@@ -91,16 +98,23 @@ fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
             .join("skills")
     });
     let registry = Arc::new(build_registry(&config.agent.disabled_toolsets, &skills_dir));
-    let system_prompt = compose_system_prompt(config.agent.system_prompt.as_deref());
     AgentLoop::from_provider(
         provider,
         registry,
         LoopConfig {
             max_iterations: config.agent.max_iterations.unwrap_or(10),
-            system_prompt,
+            system_prompt: None,
             ..Default::default()
         },
     )
+}
+
+fn provider_name(config: &crate::config::ProviderConfig) -> &'static str {
+    match config.kind {
+        ProviderKind::Echo => "echo",
+        ProviderKind::Openai => "openai",
+        ProviderKind::Anthropic => "anthropic",
+    }
 }
 
 #[cfg(test)]
@@ -305,7 +319,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        let agent = AIAgent { loop_ };
+        let agent = AIAgent {
+            loop_,
+            base_system_prompt: None,
+            provider_name: None,
+        };
 
         let session = SessionContext {
             working_dir: std::path::PathBuf::from("/tmp/hermes-test-cwd"),

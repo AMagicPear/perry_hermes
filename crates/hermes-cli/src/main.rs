@@ -1,22 +1,24 @@
 //! Hermes CLI — interactive REPL for the Hermes agent.
 //!
 //! Reads `--config` (or falls back to `~/.perry_hermes/config.toml` then
-//! `./hermes.toml`), constructs the runtime, and renders `LoopEvent`s.
+//! `./hermes.toml`) and launches the REPL shell.
 
-use std::io::{self, BufRead, Write};
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::path::PathBuf;
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use clap::Parser;
 
-use hermes_agent::{AIAgent, HermesConfig, LoopEvent, SessionContext};
-use hermes_core::error::LoopError;
-use hermes_core::message::{Content, Message, Role};
-use tokio_util::sync::CancellationToken;
+use hermes_agent::{AIAgent, HermesConfig, SessionContext};
 
+mod cli_render;
+mod config_path;
 mod ctrl_c;
-use ctrl_c::{CtrlCAction, CtrlCHandler};
+mod repl;
+
+#[cfg(test)]
+pub(crate) use cli_render::{tool_emoji, truncate_str};
+pub(crate) use config_path::resolve_config_path;
+use repl::run_repl;
 
 #[derive(Parser)]
 #[command(
@@ -62,199 +64,11 @@ async fn dispatch(args: Args) -> anyhow::Result<()> {
     run_repl(agent, &session).await
 }
 
-fn resolve_config_path(explicit: Option<&Path>) -> anyhow::Result<PathBuf> {
-    if let Some(p) = explicit {
-        if !p.exists() {
-            bail!("--config {} does not exist", p.display());
-        }
-        return Ok(p.to_path_buf());
-    }
-
-    let mut tried = Vec::new();
-    if let Some(home) = std::env::var_os("HOME") {
-        let p = PathBuf::from(home).join(".perry_hermes").join("config.toml");
-        tried.push(p.clone());
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-    let cwd_default = PathBuf::from("hermes.toml");
-    tried.push(cwd_default.clone());
-    if cwd_default.exists() {
-        return Ok(cwd_default);
-    }
-
-    let mut msg = String::from("no hermes config found. Looked for:\n");
-    for p in &tried {
-        msg.push_str(&format!("  - {}\n", p.display()));
-    }
-    msg.push_str("Pass --config <path> or create one of these. See crates/hermes-cli/hermes.example.toml for a starter.");
-    bail!(msg);
-}
-
-async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow::Result<()> {
-    eprintln!(
-        "hermes v{} — type a message, Ctrl-D to quit, Ctrl-C to cancel a turn or (when idle) quit",
-        env!("CARGO_PKG_VERSION")
-    );
-    eprintln!();
-
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    let mut history: Vec<Message> = Vec::new();
-
-    let ctrl_c = Arc::new(CtrlCHandler::new());
-    let ctrl_c_signal = Arc::clone(&ctrl_c);
-    let signal_handle = tokio::spawn(async move {
-        loop {
-            if tokio::signal::ctrl_c().await.is_ok() {
-                match ctrl_c_signal.handle() {
-                    CtrlCAction::Exit => {
-                        eprintln!();
-                        std::process::exit(0);
-                    }
-                    CtrlCAction::Cancel => {}
-                }
-            }
-        }
-    });
-
-    for line in stdin.lock().lines() {
-        let line = line.context("failed to read line")?;
-        let line = line.trim().to_string();
-
-        if line == "/quit" || line == "/exit" {
-            break;
-        }
-        if line.is_empty() {
-            continue;
-        }
-
-        history.push(Message {
-            role: Role::User,
-            content: Content::Text(line),
-            reasoning: None,
-            tool_call_id: None,
-            tool_calls: None,
-        });
-
-        let cancel = CancellationToken::new();
-        ctrl_c.enter_turn(cancel.clone());
-
-        let result = agent
-            .run_messages(history.clone(), session, cancel.clone(), |event| match event {
-                LoopEvent::Thinking => {
-                    eprint!("… ");
-                    let _ = stdout.flush();
-                }
-                LoopEvent::ToolCallStarted { call, .. } => {
-                    let preview = truncate_str(&call.arguments.to_string(), 80);
-                    eprint!("\n  📦 {}({})", call.name, preview);
-                    let _ = stdout.flush();
-                }
-                LoopEvent::ToolCallFinished { call, result } => {
-                    match &result {
-                        Ok(out) => {
-                            let preview = truncate_str(&out.content, 160);
-                            eprint!("\n  ← {} {}", tool_emoji(&call.name), preview);
-                        }
-                        Err(e) => {
-                            eprint!("\n  ← ❌ {e}");
-                        }
-                    }
-                    let _ = stdout.flush();
-                }
-                LoopEvent::AssistantMessage(_) => {
-                    eprintln!();
-                }
-                LoopEvent::LengthLimit => eprintln!("[hit length limit]"),
-                LoopEvent::IterationsExhausted => eprintln!("[max iterations]"),
-                LoopEvent::Cancelled => eprintln!("[cancelled]"),
-                LoopEvent::ContentDelta(s) => {
-                    eprint!("{s}");
-                    let _ = stdout.flush();
-                }
-                LoopEvent::ReasoningDelta(s) => {
-                    eprint!("\x1b[2m{s}\x1b[0m");
-                    let _ = stdout.flush();
-                }
-                LoopEvent::ToolCallPartial(_) => {}
-            })
-            .await;
-
-        ctrl_c.exit_turn();
-
-        match result {
-            Ok(run_result) => {
-                history = run_result.messages;
-
-                eprintln!(
-                    "  [iterations={} tool_calls={} in={} out={}]",
-                    run_result.metrics.iterations,
-                    run_result.metrics.tool_calls,
-                    run_result.metrics.input_tokens,
-                    run_result.metrics.output_tokens,
-                );
-                eprintln!();
-            }
-            Err(LoopError::CancelledWith(partial)) => {
-                let chars = match &partial.content {
-                    Content::Text(s) => s.chars().count(),
-                    Content::Parts(_) => 0,
-                };
-                let calls = partial.tool_calls.as_ref().map(|c| c.len()).unwrap_or(0);
-                eprintln!(
-                    "\n  [cancelled mid-stream: {chars} chars streamed, {calls} tool call kept]"
-                );
-                if chars > 0 || calls > 0 {
-                    history.push(partial);
-                } else {
-                    history.pop();
-                }
-                eprintln!();
-            }
-            Err(LoopError::Cancelled) => {
-                eprintln!("\n[cancelled]");
-                history.pop();
-                eprintln!();
-            }
-            Err(e) => {
-                eprintln!("error: {e}");
-                history.pop();
-                eprintln!();
-            }
-        }
-
-        let _ = stdout.flush();
-    }
-
-    signal_handle.abort();
-    Ok(())
-}
-
-fn truncate_str(s: &str, max_chars: usize) -> String {
-    if s.chars().count() <= max_chars {
-        s.to_string()
-    } else {
-        let truncated: String = s.chars().take(max_chars).collect();
-        format!("{truncated}…")
-    }
-}
-
-fn tool_emoji(name: &str) -> &'static str {
-    match name {
-        "bash" | "terminal" => "⚡",
-        "read_file" | "write_file" => "📄",
-        "search_files" => "🔰",
-        "memory" => "🧠",
-        _ => "🔧",
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Mutex;
+    use std::path::Path;
 
     /// Serializes tests that mutate process-wide state (`HOME`). `cargo
     /// test` runs `#[test]` functions in parallel by default; without
@@ -361,5 +175,18 @@ mod tests {
         assert!(err.contains("no hermes config found"), "{err}");
         assert!(err.contains(".perry_hermes"), "{err}");
         assert!(err.contains("hermes.toml"), "{err}");
+    }
+
+    #[test]
+    fn truncate_str_adds_ellipsis_only_when_needed() {
+        assert_eq!(truncate_str("hello", 10), "hello");
+        assert_eq!(truncate_str("hello world", 5), "hello…");
+    }
+
+    #[test]
+    fn tool_emoji_maps_terminal_and_files() {
+        assert_eq!(tool_emoji("terminal"), "⚡");
+        assert_eq!(tool_emoji("write_file"), "📄");
+        assert_eq!(tool_emoji("unknown_tool"), "🔧");
     }
 }

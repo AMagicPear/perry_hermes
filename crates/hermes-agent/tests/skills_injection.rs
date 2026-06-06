@@ -8,6 +8,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use chrono::Utc;
 use futures::stream;
 use hermes_agent::{AIAgent, HermesConfig, ProviderConfig, ProviderKind, SessionContext};
 use hermes_core::message::Message;
@@ -78,12 +79,24 @@ fn config_for_echo() -> HermesConfig {
     }
 }
 
+fn system_text(messages: &[Message]) -> String {
+    let system = messages
+        .iter()
+        .find(|m| m.role == hermes_core::message::Role::System)
+        .expect("a System message should have been injected");
+    match &system.content {
+        hermes_core::message::Content::Text(s) => s.clone(),
+        _ => panic!("system message should be text"),
+    }
+}
+
 #[tokio::test]
 async fn runtime_new_preserves_user_prompt_without_skills_dir() {
     {
         let _g = with_env_lock();
         unsafe { std::env::remove_var("HOME") };
         unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
     }
 
     let provider = CaptureProvider::default();
@@ -102,16 +115,10 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
         .unwrap();
 
     let msgs = captured.lock().unwrap();
-    let system = msgs
-        .iter()
-        .find(|m| m.role == hermes_core::message::Role::System)
-        .expect("a System message should have been injected");
-    let text = match &system.content {
-        hermes_core::message::Content::Text(s) => s.clone(),
-        _ => panic!("system message should be text"),
-    };
-
-    assert_eq!(text, "ONLY-CUSTOM");
+    let text = system_text(&msgs);
+    assert!(text.contains("ONLY-CUSTOM"));
+    assert!(text.contains("Current working directory: /tmp"));
+    assert!(text.contains("Conversation started:"));
 }
 
 #[tokio::test]
@@ -120,6 +127,7 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
         let _g = with_env_lock();
         unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/hermes-test") };
         unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
     }
 
     let provider = CaptureProvider::default();
@@ -135,15 +143,10 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
         .unwrap();
 
     let msgs = captured.lock().unwrap();
-    let system = msgs
-        .iter()
-        .find(|m| m.role == hermes_core::message::Role::System)
-        .expect("a System message should have been injected");
-    let text = match &system.content {
-        hermes_core::message::Content::Text(s) => s.clone(),
-        _ => panic!("system message should be text"),
-    };
+    let text = system_text(&msgs);
     assert!(text.contains("careful assistant"));
+    assert!(text.contains("Current working directory: /tmp"));
+    assert!(text.contains("Provider: echo"));
     assert!(!text.contains("Available skills"));
 }
 
@@ -162,6 +165,7 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
         let _g = with_env_lock();
         unsafe { std::env::set_var("HOME", home.path()) };
         unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
     }
 
     let provider = CaptureProvider::default();
@@ -180,18 +184,12 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
         .unwrap();
 
     let msgs = captured.lock().unwrap();
-    let system = msgs
-        .iter()
-        .find(|m| m.role == hermes_core::message::Role::System)
-        .unwrap();
-    let text = match &system.content {
-        hermes_core::message::Content::Text(s) => s.clone(),
-        _ => panic!("system message should be text"),
-    };
+    let text = system_text(&msgs);
     let custom_idx = text.find("CUSTOM-PROMPT-MARKER").expect("custom prompt present");
     let skills_idx = text.find("Available skills").expect("skills block present");
     assert!(custom_idx < skills_idx);
     assert!(text.contains("**rust-core-style**: Rust style"));
+    assert!(text.contains("Current working directory: /tmp"));
 }
 
 #[tokio::test]
@@ -208,6 +206,7 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
         let _g = with_env_lock();
         unsafe { std::env::set_var("HOME", home.path()) };
         unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
     }
 
     let provider = CaptureProvider::default();
@@ -223,14 +222,7 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
         .unwrap();
 
     let msgs = captured.lock().unwrap();
-    let system = msgs
-        .iter()
-        .find(|m| m.role == hermes_core::message::Role::System)
-        .unwrap();
-    let text = match &system.content {
-        hermes_core::message::Content::Text(s) => s.clone(),
-        _ => panic!("system message should be text"),
-    };
+    let text = system_text(&msgs);
     assert!(text.contains("**ok-skill**"));
     assert!(!text.contains("bad-fm"));
 }
@@ -241,6 +233,7 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
         let _g = with_env_lock();
         unsafe { std::env::remove_var("HOME") };
         unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
     }
 
     let provider = CaptureProvider::default();
@@ -256,15 +249,10 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
         .unwrap();
 
     let msgs = captured.lock().unwrap();
-    let system = msgs
-        .iter()
-        .find(|m| m.role == hermes_core::message::Role::System)
-        .expect("a System message should have been injected");
-    let text = match &system.content {
-        hermes_core::message::Content::Text(s) => s.clone(),
-        _ => panic!("system message should be text"),
-    };
+    let text = system_text(&msgs);
     assert!(text.contains("careful assistant"));
+    assert!(text.contains("Conversation started:"));
+    assert!(text.contains("Current working directory: /tmp"));
     assert!(!text.contains("Available skills"));
     assert!(!text.contains("skill_view"));
 }
@@ -287,6 +275,7 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
         let _g = with_env_lock();
         unsafe { std::env::set_var("HOME", home.path()) };
         unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
     }
 
     let provider = CaptureProvider::default();
@@ -302,16 +291,40 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
         .unwrap();
 
     let msgs = captured.lock().unwrap();
-    let system = msgs
-        .iter()
-        .find(|m| m.role == hermes_core::message::Role::System)
-        .unwrap();
-    let text = match &system.content {
-        hermes_core::message::Content::Text(s) => s.clone(),
-        _ => panic!("system message should be text"),
-    };
+    let text = system_text(&msgs);
     assert!(text.contains("Available skills"));
     assert!(text.contains("rust-core-style"));
     assert!(text.contains("QA workflow"));
     assert!(text.contains("skill_view"));
+}
+
+#[tokio::test]
+async fn runtime_formats_conversation_started_in_configured_timezone() {
+    {
+        let _g = with_env_lock();
+        unsafe { std::env::remove_var("HOME") };
+        unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+    }
+
+    let provider = CaptureProvider::default();
+    let captured = Arc::clone(&provider.captured);
+    let agent = AIAgent::new(provider, config_for_echo());
+    let session = SessionContext {
+        working_dir: PathBuf::from("/tmp/timezone-check"),
+        session_id: "tz".into(),
+    };
+
+    agent
+        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .await
+        .unwrap();
+
+    let msgs = captured.lock().unwrap();
+    let text = system_text(&msgs);
+    let expected = format!(
+        "Conversation started: {}",
+        Utc::now().format("%A, %B %d, %Y")
+    );
+    assert!(text.contains(&expected), "system prompt was:\n{text}");
 }
