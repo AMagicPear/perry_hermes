@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use hermes_agent::{
-    AgentLoop, AIAgent, CompressorConfig, ContextCompressor, HermesConfig, LoopConfig,
+    AIAgent, AgentLoop, CompressorConfig, ContextCompressor, HermesConfig, LoopConfig,
     ProviderConfig, ProviderKind, SessionContext,
 };
 use hermes_core::message::{Content, Message, Role, ToolCall};
@@ -200,9 +200,7 @@ async fn manual_compact_rewrites_history_with_summary_message() {
 async fn manual_compact_reports_summary_failure() {
     let agent = AIAgent::new(
         ScriptedProvider::from_steps(vec![
-            support::ScriptedStep::Error(ProviderError::Transport(
-                "summary provider down".into(),
-            )),
+            support::ScriptedStep::Error(ProviderError::Transport("summary provider down".into())),
             support::ScriptedStep::Error(ProviderError::Transport(
                 "summary provider still down".into(),
             )),

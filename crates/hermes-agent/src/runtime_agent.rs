@@ -1,16 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::Mutex as TokioMutex;
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::Provider;
 use hermes_core::tool::{ToolContext, ToolPermissions};
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{
-    AgentLoop, AgentRunError, CompressorConfig, ContextCompressor, LoopConfig, LoopEvent,
-    RunResult,
-};
 use crate::config::{HermesConfig, ProviderKind};
 use crate::prompting::{
     build_runtime_system_prompt, compose_base_system_prompt, inject_system_prompt,
@@ -19,6 +15,9 @@ use crate::prompting::{
 use crate::provider_factory::build_provider;
 use crate::session::SessionContext;
 use crate::tool_catalog::build_registry;
+use crate::{
+    AgentLoop, AgentRunError, CompressorConfig, ContextCompressor, LoopConfig, LoopEvent, RunResult,
+};
 
 pub struct AIAgent {
     loop_: AgentLoop,
@@ -133,7 +132,8 @@ fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
         Some(Arc::new(TokioMutex::new(
             ContextCompressor::new(compressor_config, model_name)
                 .with_summary_provider(Arc::clone(&provider)),
-        )) as Arc<TokioMutex<dyn hermes_core::ContextEngine>>)
+        ))
+            as Arc<TokioMutex<dyn hermes_core::ContextEngine>>)
     } else {
         None
     };

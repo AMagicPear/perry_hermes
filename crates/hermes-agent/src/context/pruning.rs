@@ -52,11 +52,7 @@ pub fn prune_old_tool_results(
         if msg.role == Role::Tool {
             // Prune: replace the tool result content with a one-line summary.
             let original_chars = estimate_message_chars(msg);
-            let tool_name = msg
-                .tool_call_id
-                .as_deref()
-                .unwrap_or("unknown")
-                .to_string();
+            let tool_name = msg.tool_call_id.as_deref().unwrap_or("unknown").to_string();
             let pruned_text = format!(
                 "[Old tool output cleared, {} returned {} bytes]",
                 tool_name, original_chars
@@ -154,10 +150,9 @@ pub fn estimate_message_chars(msg: &Message) -> usize {
             .sum(),
     };
     let reasoning_chars = msg.reasoning.as_ref().map_or(0, |s| s.len());
-    let tool_calls_chars: usize = msg
-        .tool_calls
-        .as_ref()
-        .map_or(0, |calls| calls.iter().map(|c| c.arguments.to_string().len()).sum());
+    let tool_calls_chars: usize = msg.tool_calls.as_ref().map_or(0, |calls| {
+        calls.iter().map(|c| c.arguments.to_string().len()).sum()
+    });
 
     content_chars + reasoning_chars + tool_calls_chars
 }

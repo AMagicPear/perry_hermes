@@ -27,14 +27,12 @@ pub fn build_summary_prompt(
         prompt.push_str(prev);
         prompt.push_str("\n\n## New Turns to Integrate\n");
     } else {
-        prompt.push_str("You are summarizing a section of a long conversation. Produce a handoff\n");
+        prompt
+            .push_str("You are summarizing a section of a long conversation. Produce a handoff\n");
         prompt.push_str("summary for the next LLM that will resume the task.\n\n");
     }
 
-    prompt.push_str(&format!(
-        "## Conversation Section\n{}\n\n",
-        middle_text
-    ));
+    prompt.push_str(&format!("## Conversation Section\n{}\n\n", middle_text));
 
     prompt.push_str("Use this structure:\n\n");
     prompt.push_str("## Active Task\n");
@@ -42,7 +40,9 @@ pub fn build_summary_prompt(
     prompt.push_str("## Resolved\n");
     prompt.push_str("What has been completed or decided.\n\n");
     prompt.push_str("## Pending\n");
-    prompt.push_str("What remains to be done. Include file paths, function names, and concrete next steps.\n\n");
+    prompt.push_str(
+        "What remains to be done. Include file paths, function names, and concrete next steps.\n\n",
+    );
 
     if let Some(focus) = focus_topic {
         prompt.push_str(&format!(
@@ -111,8 +111,7 @@ mod tests {
 
     #[test]
     fn build_summary_prompt_update_mode() {
-        let prompt =
-            build_summary_prompt("new turns", Some("old summary"), None, 12_000);
+        let prompt = build_summary_prompt("new turns", Some("old summary"), None, 12_000);
         assert!(
             prompt.contains("Existing Summary"),
             "expected update mode: {prompt}"

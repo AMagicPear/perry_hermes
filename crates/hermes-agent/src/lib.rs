@@ -1,7 +1,7 @@
 //! Runtime engine shared by CLI and future gateways.
 
-pub mod context;
 mod config;
+pub mod context;
 mod loop_engine;
 mod prompting;
 mod provider_factory;

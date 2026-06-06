@@ -51,7 +51,13 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
                 Ok((new_history, event)) => {
                     history = new_history;
                     match event {
-                        LoopEvent::CompressionCompleted { trigger, tokens_before, tokens_after, summary_chars, duration } => {
+                        LoopEvent::CompressionCompleted {
+                            trigger,
+                            tokens_before,
+                            tokens_after,
+                            summary_chars,
+                            duration,
+                        } => {
                             eprintln!(
                                 "  🗜️  {trigger:?}: {tokens_before} → {tokens_after} tokens (summary {summary_chars} chars, {:.1}s)",
                                 duration.as_secs_f64()
@@ -131,17 +137,30 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
                         let _ = stdout.flush();
                     }
                     LoopEvent::ToolCallPartial(_) => {}
-                    LoopEvent::CompressionCompleted { trigger, tokens_before, tokens_after, summary_chars, duration } => {
-                        eprintln!("
-  🗜️  {trigger:?}: {tokens_before} → {tokens_after} tokens (summary {summary_chars} chars, {:.1}s)", duration.as_secs_f64());
+                    LoopEvent::CompressionCompleted {
+                        trigger,
+                        tokens_before,
+                        tokens_after,
+                        summary_chars,
+                        duration,
+                    } => {
+                        eprintln!(
+                            "
+  🗜️  {trigger:?}: {tokens_before} → {tokens_after} tokens (summary {summary_chars} chars, {:.1}s)",
+                            duration.as_secs_f64()
+                        );
                     }
                     LoopEvent::CompressionSkipped { reason } => {
-                        eprintln!("
-  🗜️  skipped: {reason:?}");
+                        eprintln!(
+                            "
+  🗜️  skipped: {reason:?}"
+                        );
                     }
                     LoopEvent::CompressionFailed { error, .. } => {
-                        eprintln!("
-  🗜️  failed: {error}");
+                        eprintln!(
+                            "
+  🗜️  failed: {error}"
+                        );
                     }
                 },
             )

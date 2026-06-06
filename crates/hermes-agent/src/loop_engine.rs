@@ -8,7 +8,9 @@ use futures::StreamExt;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::context_engine::{CompressError, CompressionSkipReason, CompressionTrigger, ContextEngine};
+use hermes_core::context_engine::{
+    CompressError, CompressionSkipReason, CompressionTrigger, ContextEngine,
+};
 use hermes_core::error::{LoopError, ProviderError};
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{FinishReason, Provider, ToolCallDelta};
@@ -413,7 +415,6 @@ impl AgentLoop {
                         });
                         metrics.tool_calls += 1;
                     }
-
                 }
             }
         }

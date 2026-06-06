@@ -2,7 +2,7 @@
 
 > A Rust reimplementation of Nous Research's [hermes-agent](https://github.com/NousResearch/hermes-agent): an AI agent runtime with tool use, streaming, skills, and an interactive CLI.
 
-Current status: **Phases 0-6 and 8-9 are complete**. That includes the core agent loop, OpenAI-compatible and Anthropic-compatible providers, the built-in terminal tool, streaming output, Ctrl-C interruption, TOML-based runtime configuration, and runtime skill loading. Phase 7 context compression is still deferred.
+Current status: **Phases 0-9 are complete**. That includes the core agent loop, OpenAI-compatible and Anthropic-compatible providers, the built-in terminal tool, streaming output, Ctrl-C interruption, TOML-based runtime configuration, runtime skill loading, and Phase 7 context compression.
 
 ## Features
 
@@ -13,6 +13,7 @@ Current status: **Phases 0-6 and 8-9 are complete**. That includes the core agen
 - **TOML runtime configuration**: the CLI resolves config files in this order: `--config`, `~/.perry_hermes/config.toml`, then `./hermes.toml`.
 - **Cooperative cancellation**: a shared `CancellationToken` flows through model calls and tool execution, enabling graceful Ctrl-C interruption.
 - **Interactive REPL CLI**: multi-turn chat, streaming output, live tool rendering, slash commands, and per-agent toolset filtering.
+- **Built-in context compression**: compression is enabled by default, can be triggered manually with `/compact [focus]`, and reports completed, skipped, and failed compactions in the REPL.
 - **Runtime skill loading**: `SKILL.md` files under `~/.perry_hermes/skills/` are discovered and injected into the system prompt.
 - **Robust terminal tooling**: concurrent stdout/stderr draining avoids pipe deadlocks, and output truncation is aligned with Python Hermes behavior.
 - **Clear crate boundaries**: `hermes-core` stays transport-agnostic, while runtime orchestration lives in `hermes-agent` and the product shell lives in `hermes-cli`.
@@ -69,6 +70,13 @@ Provider credentials are read from the single environment variable named by `api
 For OpenAI-compatible services such as DeepSeek, MiniMax, Ollama, or vLLM, change `base_url` and `model`.
 
 For Anthropic-compatible services, you can also set `api_key_header` when the endpoint expects something other than the default header.
+
+Context compression is enabled by default. To disable it explicitly:
+
+```toml
+[agent]
+context_compression_enabled = false
+```
 
 ### Build
 
@@ -142,12 +150,16 @@ mode = "off" # off | manual | adaptive
 [agent]
 max_iterations = 10
 disabled_toolsets = []
+# context_compression_enabled = false
+# context_compression_threshold_percent = 0.50
 ```
 
 ### REPL controls
 
 - Type any message to send it to the agent.
 - `/quit` or `/exit` exits the REPL.
+- `/compact` runs a manual context compaction pass.
+- `/compact <focus>` runs a manual compaction pass while prioritizing that topic in the generated summary.
 - `Ctrl-C` once cancels the current turn.
 - `Ctrl-C` twice exits the REPL.
 - `Ctrl-D` exits the REPL.
@@ -198,6 +210,7 @@ Current integration tests focus on core behavior and module boundaries rather th
 - `skills_injection.rs`
 - `tool_dispatch.rs`
 - `usage_metrics.rs`
+- `context_compression.rs`
 
 `crates/hermes-providers/tests/`
 
@@ -227,7 +240,7 @@ Current integration tests focus on core behavior and module boundaries rather th
 | Phase 4 | Interactive CLI and REPL | Done |
 | Phase 5 | Streaming output | Done |
 | Phase 6 | Interrupt handling with Ctrl-C | Done |
-| Phase 7 | Context compression | Pending |
+| Phase 7 | Context compression | Done |
 | Phase 8 | Anthropic provider | Done |
 | Phase 9 | Skill loading and prompt injection | Done |
 | Phase 10 | TUI with `ratatui` | Pending |

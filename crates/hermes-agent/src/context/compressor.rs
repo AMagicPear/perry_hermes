@@ -44,7 +44,8 @@ impl CompressorConfig {
     pub fn summary_target_tokens(&self, context_length: u64) -> u64 {
         const MIN_SUMMARY_TOKENS: u64 = 2_000;
         const MAX_SUMMARY_TOKENS: u64 = 12_000;
-        let target = (self.threshold_tokens(context_length) as f64 * self.summary_target_ratio) as u64;
+        let target =
+            (self.threshold_tokens(context_length) as f64 * self.summary_target_ratio) as u64;
         target.max(MIN_SUMMARY_TOKENS).min(MAX_SUMMARY_TOKENS)
     }
 }
@@ -117,8 +118,7 @@ impl ContextCompressor {
         force: bool,
     ) -> Result<Vec<Message>, CompressError> {
         // Step 1: cheap pre-pass — replace old tool result contents.
-        let (messages, _pruned_chars) =
-            pruning::prune_old_tool_results(&messages, &self.config);
+        let (messages, _pruned_chars) = pruning::prune_old_tool_results(&messages, &self.config);
 
         // Re-estimate. If we're under threshold, no LLM call needed.
         let est = estimate_tokens(&messages, 4.0);
@@ -130,8 +130,7 @@ impl ContextCompressor {
         let head_end = pruning::find_head_boundary(&messages, self.config.protect_first_n);
 
         // Step 3: tail protection.
-        let tail_start =
-            pruning::find_tail_cut_by_tokens(&messages, head_end, &self.config);
+        let tail_start = pruning::find_tail_cut_by_tokens(&messages, head_end, &self.config);
 
         // Check: nothing to compress?
         if head_end >= tail_start {
@@ -155,9 +154,7 @@ impl ContextCompressor {
             Err(first_err) => {
                 // Retry: drop the oldest non-system message and try again.
                 let mut retry_messages = messages.clone();
-                if let Some(drop_idx) =
-                    retry_messages.iter().position(|m| m.role != Role::System)
-                {
+                if let Some(drop_idx) = retry_messages.iter().position(|m| m.role != Role::System) {
                     retry_messages.remove(drop_idx);
                 }
                 let retry_tail_start = tail_start.min(retry_messages.len());
@@ -352,8 +349,7 @@ mod tests {
 
     #[test]
     fn on_session_reset_clears_state() {
-        let mut compressor =
-            ContextCompressor::new(CompressorConfig::default(), "test".into());
+        let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into());
         compressor.previous_summary = Some("old summary".into());
         compressor.ineffective_count = 5;
         compressor.last_savings_ratio = 0.05;
@@ -380,8 +376,7 @@ mod tests {
 
     #[test]
     fn should_compress_returns_false_after_two_ineffective() {
-        let mut compressor =
-            ContextCompressor::new(CompressorConfig::default(), "test".into());
+        let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into());
         assert!(compressor.should_compress());
 
         compressor.ineffective_count = 1;
@@ -401,15 +396,13 @@ mod tests {
         };
         let mut compressor = ContextCompressor::new(config, "test".into());
 
-        let messages = vec![
-            system_msg("sys"),
-            user_msg("hello"),
-            assistant_msg("hi"),
-        ];
+        let messages = vec![system_msg("sys"), user_msg("hello"), assistant_msg("hi")];
 
         // Messages are far below the threshold (min 8000 tokens), so
         // the compressor returns Ok(messages) in the early-exit path.
-        let result = compressor.compress(messages.clone(), None, None, false).await;
+        let result = compressor
+            .compress(messages.clone(), None, None, false)
+            .await;
         assert!(result.is_ok());
         let out = result.unwrap();
         assert_eq!(out.len(), messages.len());
