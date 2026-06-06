@@ -54,6 +54,9 @@ async fn main() {
             LoopEvent::ContentDelta(s) => eprint!("{s}"),
             LoopEvent::ReasoningDelta(s) => eprint!("{s}"),
             LoopEvent::ToolCallPartial(_) => {}
+            LoopEvent::CompressionCompleted { .. } => {}
+            LoopEvent::CompressionSkipped { .. } => {}
+            LoopEvent::CompressionFailed { .. } => {}
         }),
     )
     .await;

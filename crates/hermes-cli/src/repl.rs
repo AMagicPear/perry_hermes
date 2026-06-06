@@ -44,6 +44,36 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
         if line == "/quit" || line == "/exit" {
             break;
         }
+        if let Some(rest) = line.strip_prefix("/compact") {
+            let focus = rest.trim();
+            let focus = if focus.is_empty() { None } else { Some(focus) };
+            match agent.run_compact(history.clone(), focus, session).await {
+                Ok((new_history, event)) => {
+                    history = new_history;
+                    match event {
+                        LoopEvent::CompressionCompleted { trigger, tokens_before, tokens_after, summary_chars, duration } => {
+                            eprintln!(
+                                "  🗜️  {trigger:?}: {tokens_before} → {tokens_after} tokens (summary {summary_chars} chars, {:.1}s)",
+                                duration.as_secs_f64()
+                            );
+                        }
+                        LoopEvent::CompressionSkipped { reason } => {
+                            eprintln!("  🗜️  skipped: {reason:?}");
+                        }
+                        LoopEvent::CompressionFailed { error, .. } => {
+                            eprintln!("  🗜️  failed: {error}");
+                        }
+                        _ => eprintln!("  [context compacted]"),
+                    }
+                    eprintln!();
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    eprintln!();
+                }
+            }
+            continue;
+        }
         if line.is_empty() {
             continue;
         }
@@ -101,6 +131,18 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
                         let _ = stdout.flush();
                     }
                     LoopEvent::ToolCallPartial(_) => {}
+                    LoopEvent::CompressionCompleted { trigger, tokens_before, tokens_after, summary_chars, duration } => {
+                        eprintln!("
+  🗜️  {trigger:?}: {tokens_before} → {tokens_after} tokens (summary {summary_chars} chars, {:.1}s)", duration.as_secs_f64());
+                    }
+                    LoopEvent::CompressionSkipped { reason } => {
+                        eprintln!("
+  🗜️  skipped: {reason:?}");
+                    }
+                    LoopEvent::CompressionFailed { error, .. } => {
+                        eprintln!("
+  🗜️  failed: {error}");
+                    }
                 },
             )
             .await;

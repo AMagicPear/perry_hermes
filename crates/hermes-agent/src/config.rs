@@ -3,7 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde::Deserialize;
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct HermesConfig {
     pub provider: ProviderConfig,
     #[serde(default)]
@@ -19,7 +19,7 @@ impl HermesConfig {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 pub struct ProviderConfig {
     #[serde(default)]
     pub kind: ProviderKind,
@@ -35,7 +35,7 @@ pub struct ProviderConfig {
     pub thinking: Option<ThinkingConfig>,
 }
 
-#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderKind {
     #[default]
@@ -44,7 +44,7 @@ pub enum ProviderKind {
     Anthropic,
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct ThinkingConfig {
     pub mode: ThinkingMode,
     #[serde(default)]
@@ -55,7 +55,7 @@ pub struct ThinkingConfig {
     pub effort: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ThinkingMode {
     Off,
@@ -63,7 +63,7 @@ pub enum ThinkingMode {
     Adaptive,
 }
 
-#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, PartialEq)]
 pub struct AgentConfig {
     #[serde(default)]
     pub max_iterations: Option<u32>,
@@ -71,6 +71,29 @@ pub struct AgentConfig {
     pub disabled_toolsets: Vec<String>,
     #[serde(default)]
     pub system_prompt: Option<String>,
+    /// Enable context compression. Default true; set false to disable.
+    #[serde(default = "default_context_compression_enabled")]
+    pub context_compression_enabled: bool,
+    /// Threshold percentage of model context at which compression triggers.
+    /// Default 0.50 (50%).
+    #[serde(default)]
+    pub context_compression_threshold_percent: Option<f64>,
+}
+
+fn default_context_compression_enabled() -> bool {
+    true
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self {
+            max_iterations: None,
+            disabled_toolsets: Vec::new(),
+            system_prompt: None,
+            context_compression_enabled: default_context_compression_enabled(),
+            context_compression_threshold_percent: None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -124,10 +147,41 @@ disabled_toolsets = ["terminal"]
 [provider]
 kind = "echo"
 "#;
-
         let config: HermesConfig = toml::from_str(input).unwrap();
 
         assert_eq!(config.provider.kind, ProviderKind::Echo);
         assert_eq!(config.agent, AgentConfig::default());
+        assert!(config.agent.context_compression_enabled);
+    }
+
+    #[test]
+    fn parses_context_compression_config() {
+        let input = r#"
+[provider]
+kind = "echo"
+
+[agent]
+context_compression_enabled = true
+context_compression_threshold_percent = 0.60
+"#;
+        let config: HermesConfig = toml::from_str(input).unwrap();
+        assert!(config.agent.context_compression_enabled);
+        assert_eq!(
+            config.agent.context_compression_threshold_percent,
+            Some(0.60)
+        );
+    }
+
+    #[test]
+    fn parses_explicitly_disabled_context_compression_config() {
+        let input = r#"
+[provider]
+kind = "echo"
+
+[agent]
+context_compression_enabled = false
+"#;
+        let config: HermesConfig = toml::from_str(input).unwrap();
+        assert!(!config.agent.context_compression_enabled);
     }
 }

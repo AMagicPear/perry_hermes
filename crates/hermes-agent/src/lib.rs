@@ -1,5 +1,6 @@
 //! Runtime engine shared by CLI and future gateways.
 
+pub mod context;
 mod config;
 mod loop_engine;
 mod prompting;
@@ -10,6 +11,7 @@ mod tool_catalog;
 pub mod tools;
 
 pub use config::{AgentConfig, HermesConfig, ProviderConfig, ProviderKind};
+pub use context::{CompressorConfig, ContextCompressor};
 pub use loop_engine::{
     AgentLoop, AgentRunError, FailedTurn, LoopConfig, LoopEvent, LoopMetrics, RunResult,
 };

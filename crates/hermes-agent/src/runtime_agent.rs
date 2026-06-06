@@ -1,12 +1,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{AgentLoop, AgentRunError, LoopConfig, LoopEvent, RunResult};
+use tokio::sync::Mutex as TokioMutex;
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::Provider;
 use hermes_core::tool::{ToolContext, ToolPermissions};
 use tokio_util::sync::CancellationToken;
 
+use crate::{
+    AgentLoop, AgentRunError, CompressorConfig, ContextCompressor, LoopConfig, LoopEvent,
+    RunResult,
+};
 use crate::config::{HermesConfig, ProviderKind};
 use crate::prompting::{
     build_runtime_system_prompt, compose_base_system_prompt, inject_system_prompt,
@@ -86,6 +90,26 @@ impl AIAgent {
         );
         self.loop_.run(messages, ctx, cancel, on_event).await
     }
+
+    pub async fn run_compact(
+        &self,
+        messages: Vec<Message>,
+        focus_topic: Option<&str>,
+        session: &SessionContext,
+    ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
+        let messages = inject_system_prompt(
+            messages,
+            self.base_system_prompt.as_deref().map(|base| {
+                build_runtime_system_prompt(base, session, self.provider_name.as_deref())
+            }),
+        );
+        self.loop_.compact_messages(messages, focus_topic).await
+    }
+
+    #[cfg(test)]
+    fn has_context_engine(&self) -> bool {
+        self.loop_.has_context_engine()
+    }
 }
 
 fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
@@ -96,12 +120,30 @@ fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
             .join("skills")
     });
     let registry = Arc::new(build_registry(&config.agent.disabled_toolsets, &skills_dir));
+    let context_engine = if config.agent.context_compression_enabled {
+        let mut compressor_config = CompressorConfig::default();
+        if let Some(threshold_percent) = config.agent.context_compression_threshold_percent {
+            compressor_config.threshold_percent = threshold_percent;
+        }
+        let model_name = config
+            .provider
+            .model
+            .clone()
+            .unwrap_or_else(|| provider_name(&config.provider).to_string());
+        Some(Arc::new(TokioMutex::new(
+            ContextCompressor::new(compressor_config, model_name)
+                .with_summary_provider(Arc::clone(&provider)),
+        )) as Arc<TokioMutex<dyn hermes_core::ContextEngine>>)
+    } else {
+        None
+    };
     AgentLoop::from_provider(
         provider,
         registry,
         LoopConfig {
             max_iterations: config.agent.max_iterations.unwrap_or(10),
             system_prompt: None,
+            context_engine,
             ..Default::default()
         },
     )
@@ -144,11 +186,27 @@ mod tests {
         }
     }
 
+    fn echo_config_with_compression() -> HermesConfig {
+        let mut config = echo_config();
+        config.agent.context_compression_enabled = true;
+        config
+    }
+
     #[test]
     fn from_config_succeeds_for_echo_provider() {
         let agent =
             AIAgent::from_config(echo_config()).expect("echo should build with no env vars");
         drop(agent);
+    }
+
+    #[test]
+    fn from_config_wires_context_engine_when_enabled() {
+        let agent = AIAgent::from_config(echo_config_with_compression())
+            .expect("echo should build with compression enabled");
+        assert!(
+            agent.has_context_engine(),
+            "compression-enabled config should wire a context engine"
+        );
     }
 
     #[test]

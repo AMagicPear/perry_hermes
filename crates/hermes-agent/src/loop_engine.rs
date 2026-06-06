@@ -5,8 +5,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
+use hermes_core::context_engine::{CompressError, CompressionSkipReason, CompressionTrigger, ContextEngine};
 use hermes_core::error::{LoopError, ProviderError};
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{FinishReason, Provider, ToolCallDelta};
@@ -19,11 +21,27 @@ pub struct AgentLoop {
     config: LoopConfig,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LoopConfig {
     pub max_iterations: u32,
     pub max_duration: Duration,
     pub system_prompt: Option<String>,
+    /// Optional context compression engine. None = no compression.
+    pub context_engine: Option<Arc<TokioMutex<dyn ContextEngine>>>,
+    /// Focus topic for manual `/compact [focus]`.
+    pub focus_topic: Option<String>,
+}
+
+impl std::fmt::Debug for LoopConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoopConfig")
+            .field("max_iterations", &self.max_iterations)
+            .field("max_duration", &self.max_duration)
+            .field("system_prompt", &self.system_prompt)
+            .field("context_engine", &"<dyn ContextEngine>")
+            .field("focus_topic", &self.focus_topic)
+            .finish()
+    }
 }
 
 impl Default for LoopConfig {
@@ -32,6 +50,8 @@ impl Default for LoopConfig {
             max_iterations: 90,
             max_duration: Duration::from_secs(60 * 10),
             system_prompt: None,
+            context_engine: None,
+            focus_topic: None,
         }
     }
 }
@@ -43,6 +63,7 @@ pub struct LoopMetrics {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub duration: Duration,
+    pub compressions: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +109,20 @@ pub enum LoopEvent {
     LengthLimit,
     IterationsExhausted,
     Cancelled,
+    CompressionCompleted {
+        trigger: CompressionTrigger,
+        tokens_before: u64,
+        tokens_after: u64,
+        summary_chars: usize,
+        duration: Duration,
+    },
+    CompressionSkipped {
+        reason: CompressionSkipReason,
+    },
+    CompressionFailed {
+        trigger: CompressionTrigger,
+        error: String,
+    },
 }
 
 impl AgentLoop {
@@ -109,6 +144,41 @@ impl AgentLoop {
             registry,
             config,
         }
+    }
+
+    pub fn has_context_engine(&self) -> bool {
+        self.config.context_engine.is_some()
+    }
+
+    pub async fn compact_messages(
+        &self,
+        mut messages: Vec<Message>,
+        focus_topic: Option<&str>,
+    ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
+        let Some(engine) = &self.config.context_engine else {
+            return Ok((
+                messages,
+                LoopEvent::CompressionSkipped {
+                    reason: CompressionSkipReason::Disabled,
+                },
+            ));
+        };
+        let mut metrics = LoopMetrics::default();
+        let event = self
+            .try_compress(
+                engine,
+                CompressionTrigger::Manual,
+                &mut messages,
+                focus_topic,
+                &mut metrics,
+                true,
+            )
+            .await
+            .unwrap_or(LoopEvent::CompressionFailed {
+                trigger: CompressionTrigger::Manual,
+                error: "compression failed".into(),
+            });
+        Ok((messages, event))
     }
 
     pub async fn run(
@@ -135,6 +205,30 @@ impl AgentLoop {
                         tool_calls: None,
                     },
                 );
+            }
+        }
+
+        // Pre-turn compression check.
+        if let Some(engine) = &self.config.context_engine {
+            let estimated = estimate_tokens_for_messages(&messages, 4.0);
+            let should = {
+                let guard = engine.lock().await;
+                guard.should_compress() && estimated >= guard.threshold_tokens()
+            };
+            if should {
+                if let Some(event) = self
+                    .try_compress(
+                        engine,
+                        CompressionTrigger::PreTurn,
+                        &mut messages,
+                        None,
+                        &mut metrics,
+                        false,
+                    )
+                    .await
+                {
+                    on_event(event);
+                }
             }
         }
 
@@ -255,6 +349,35 @@ impl AgentLoop {
                         )));
                     }
 
+                    if let Some(engine) = &self.config.context_engine {
+                        {
+                            let mut guard = engine.lock().await;
+                            guard.update_from_response(&completion.usage);
+                        }
+                        if completion.usage.input_tokens > 0 {
+                            let should = {
+                                let guard = engine.lock().await;
+                                guard.should_compress()
+                                    && completion.usage.input_tokens >= guard.threshold_tokens()
+                            };
+                            if should {
+                                if let Some(event) = self
+                                    .try_compress(
+                                        engine,
+                                        CompressionTrigger::PostTurn,
+                                        &mut messages,
+                                        None,
+                                        &mut metrics,
+                                        false,
+                                    )
+                                    .await
+                                {
+                                    on_event(event);
+                                }
+                            }
+                        }
+                    }
+
                     for call in calls {
                         if cancel.is_cancelled() {
                             on_event(LoopEvent::Cancelled);
@@ -290,8 +413,82 @@ impl AgentLoop {
                         });
                         metrics.tool_calls += 1;
                     }
+
                 }
             }
+        }
+    }
+
+    /// Attempt compression. Returns `Some(event)` if compression ran
+    /// (success or skip), `None` if the engine is already locked.
+    async fn try_compress(
+        &self,
+        engine: &Arc<TokioMutex<dyn ContextEngine>>,
+        trigger: CompressionTrigger,
+        messages: &mut Vec<Message>,
+        focus_topic: Option<&str>,
+        metrics: &mut LoopMetrics,
+        force: bool,
+    ) -> Option<LoopEvent> {
+        let guard = match engine.try_lock() {
+            Ok(g) => g,
+            Err(_) => {
+                return Some(LoopEvent::CompressionSkipped {
+                    reason: CompressionSkipReason::NothingToCompress,
+                });
+            }
+        };
+
+        let tokens_before = estimate_tokens_for_messages(messages, 4.0);
+        let started = Instant::now();
+
+        // Drop the guard before calling compress since it needs &mut self.
+        // We need to restructure: get the data we need, then call.
+        // Actually, we hold the guard for the entire operation.
+        drop(guard);
+
+        // Re-lock with await for the actual compression.
+        let mut guard = engine.lock().await;
+        let focus = self.config.focus_topic.as_deref().or(focus_topic);
+        let result = guard
+            .compress(messages.clone(), Some(tokens_before), focus, force)
+            .await;
+        drop(guard);
+
+        let duration = started.elapsed();
+
+        match result {
+            Ok(new_messages) => {
+                let tokens_after = estimate_tokens_for_messages(&new_messages, 4.0);
+                let summary_chars = new_messages
+                    .iter()
+                    .filter(|m| {
+                        matches!(&m.content, Content::Text(t) if t.contains("[CONTEXT SUMMARY"))
+                    })
+                    .map(|m| match &m.content {
+                        Content::Text(t) => t.len(),
+                        _ => 0,
+                    })
+                    .sum::<usize>();
+
+                *messages = new_messages;
+                metrics.compressions += 1;
+
+                Some(LoopEvent::CompressionCompleted {
+                    trigger,
+                    tokens_before,
+                    tokens_after,
+                    summary_chars,
+                    duration,
+                })
+            }
+            Err(CompressError::NothingToCompress) => Some(LoopEvent::CompressionSkipped {
+                reason: CompressionSkipReason::NothingToCompress,
+            }),
+            Err(e) => Some(LoopEvent::CompressionFailed {
+                trigger,
+                error: e.to_string(),
+            }),
         }
     }
 
@@ -341,6 +538,28 @@ impl AgentLoop {
             AgentRunError::Loop(LoopError::Provider(error))
         }
     }
+}
+
+/// Estimate total tokens for a list of messages.
+pub fn estimate_tokens_for_messages(messages: &[Message], chars_per_token: f64) -> u64 {
+    let total_chars: usize = messages
+        .iter()
+        .map(|m| {
+            let content_chars = match &m.content {
+                Content::Text(s) => s.len(),
+                Content::Parts(parts) => parts
+                    .iter()
+                    .map(|p| match p {
+                        hermes_core::message::ContentPart::Text { text } => text.len(),
+                        hermes_core::message::ContentPart::ImageUrl { url } => url.len(),
+                    })
+                    .sum(),
+            };
+            let reasoning_chars = m.reasoning.as_ref().map_or(0, |s| s.len());
+            content_chars + reasoning_chars
+        })
+        .sum();
+    (total_chars as f64 / chars_per_token) as u64
 }
 
 fn validate_args(
