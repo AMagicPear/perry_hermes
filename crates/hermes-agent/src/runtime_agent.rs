@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::{AgentLoop, LoopConfig, LoopEvent, RunResult};
+use crate::{AgentLoop, AgentRunError, LoopConfig, LoopEvent, RunResult};
 use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::Provider;
 use hermes_core::tool::{ToolContext, ToolPermissions};
@@ -50,7 +50,7 @@ impl AIAgent {
         session: &SessionContext,
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
-    ) -> Result<RunResult, hermes_core::LoopError> {
+    ) -> Result<RunResult, AgentRunError> {
         self.run_messages(
             vec![Message {
                 role: Role::User,
@@ -72,7 +72,7 @@ impl AIAgent {
         session: &SessionContext,
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
-    ) -> Result<RunResult, hermes_core::LoopError> {
+    ) -> Result<RunResult, AgentRunError> {
         let ctx = ToolContext {
             session_id: session.session_id.clone(),
             working_dir: session.working_dir.clone(),

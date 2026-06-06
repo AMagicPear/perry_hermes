@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use hermes_agent::tools::BashTool;
-use hermes_agent::{AgentLoop, LoopConfig};
+use hermes_agent::{AgentLoop, AgentRunError, LoopConfig};
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason};
 use hermes_core::registry::InMemoryRegistry;
@@ -9,7 +9,7 @@ use hermes_core::tool::ToolContext;
 use tokio_util::sync::CancellationToken;
 
 mod support;
-use support::ScriptedProvider;
+use support::{ScriptedProvider, ScriptedStep};
 
 fn user_message(text: &str) -> Message {
     Message {
@@ -180,4 +180,145 @@ async fn loop_routes_read_file_tool_call() {
     };
     assert!(tool_content.contains("routed"));
     assert!(tool_content.contains("1|"));
+}
+
+#[tokio::test]
+async fn loop_returns_partial_history_when_followup_provider_call_fails() {
+    let first = Completion {
+        message: Message {
+            role: Role::Assistant,
+            content: Content::Text(String::new()),
+            reasoning: None,
+            tool_call_id: None,
+            tool_calls: Some(vec![tool_call(
+                "call_1",
+                "terminal",
+                serde_json::json!({ "command": "echo retained-output" }),
+            )]),
+        },
+        usage: hermes_core::Usage::default(),
+        finish_reason: FinishReason::ToolUse,
+    };
+
+    let provider = ScriptedProvider::from_steps(vec![
+        ScriptedStep::Deltas(support::completion_to_deltas(first)),
+        ScriptedStep::Error(hermes_core::ProviderError::InvalidResponse(
+            "context window exceeds limit".into(),
+        )),
+    ]);
+    let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
+    let loop_ = AgentLoop::new(
+        provider,
+        registry,
+        LoopConfig {
+            max_iterations: 5,
+            ..Default::default()
+        },
+    );
+
+    let ctx = ToolContext {
+        session_id: "test".into(),
+        working_dir: std::env::current_dir().unwrap_or_default(),
+        permissions: hermes_core::tool::ToolPermissions { subprocess: true },
+    };
+
+    let err = loop_
+        .run(
+            vec![user_message("please run something")],
+            ctx,
+            CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .expect_err("loop should surface provider failure with partial history");
+
+    match err {
+        AgentRunError::FailedTurn { failed_turn, source } => {
+            let messages = failed_turn.messages;
+            assert!(matches!(source, hermes_core::ProviderError::InvalidResponse(_)));
+            assert_eq!(messages.len(), 4);
+            assert_eq!(messages[0].role, Role::User);
+            assert_eq!(messages[1].role, Role::Assistant);
+            assert_eq!(messages[2].role, Role::Tool);
+            let tool_content = match &messages[2].content {
+                Content::Text(s) => s,
+                _ => panic!("tool result should be text"),
+            };
+            assert!(tool_content.contains("retained-output"));
+            assert_eq!(messages[3].role, Role::Assistant);
+            let error_text = match &messages[3].content {
+                Content::Text(s) => s,
+                _ => panic!("synthetic error should be text"),
+            };
+            assert!(
+                error_text.contains("Turn interrupted by error: provider error: invalid response: context window exceeds limit")
+            );
+        }
+        other => panic!("expected FailedTurn, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
+    use hermes_core::provider::CompletionDelta;
+
+    let provider = ScriptedProvider::from_steps(vec![ScriptedStep::DeltasThenError(
+        vec![CompletionDelta {
+            content_delta: Some("partial answer".into()),
+            reasoning_delta: None,
+            tool_call_delta: None,
+            usage: None,
+            finish_reason: None,
+        }],
+        hermes_core::ProviderError::Transport("stream dropped".into()),
+    )]);
+    let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
+    let loop_ = AgentLoop::new(
+        provider,
+        registry,
+        LoopConfig {
+            max_iterations: 5,
+            ..Default::default()
+        },
+    );
+
+    let ctx = ToolContext {
+        session_id: "test".into(),
+        working_dir: std::env::current_dir().unwrap_or_default(),
+        permissions: hermes_core::tool::ToolPermissions { subprocess: true },
+    };
+
+    let err = loop_
+        .run(
+            vec![user_message("say something")],
+            ctx,
+            CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .expect_err("loop should keep partial streamed text on provider failure");
+
+    match err {
+        AgentRunError::FailedTurn { failed_turn, source } => {
+            let messages = failed_turn.messages;
+            assert!(matches!(source, hermes_core::ProviderError::Transport(_)));
+            assert_eq!(messages.len(), 3);
+            assert_eq!(messages[0].role, Role::User);
+            assert_eq!(messages[1].role, Role::Assistant);
+            let assistant_text = match &messages[1].content {
+                Content::Text(s) => s,
+                _ => panic!("assistant partial should be text"),
+            };
+            assert_eq!(assistant_text, "partial answer");
+            assert_eq!(messages[2].role, Role::Assistant);
+            let error_text = match &messages[2].content {
+                Content::Text(s) => s,
+                _ => panic!("synthetic error should be text"),
+            };
+            assert!(
+                error_text.contains("Turn interrupted by error: provider error: transport error: stream dropped")
+            );
+        }
+        other => panic!("expected FailedTurn, got {other:?}"),
+    }
 }

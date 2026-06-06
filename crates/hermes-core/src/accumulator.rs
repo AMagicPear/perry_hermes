@@ -80,16 +80,25 @@ impl StreamAccumulator {
         }
     }
 
-    /// Build the final `Completion`. If `finish_reason` was never set
-    /// (stream ended with `None`), defaults to `FinishReason::Stop`.
-    pub fn finalize(mut self) -> Completion {
-        for tc in self.tool_calls.values_mut() {
+    /// Parse any `Value::String` arguments back into a structured `Value` if
+    /// they happen to be valid JSON. Used by both `finalize` and
+    /// `into_partial_message` — the accumulator stores tool call arguments
+    /// as `Value::String` while chunks stream in, and we have to materialise
+    /// them before handing the message to a provider that expects an object.
+    fn parse_string_arguments(tool_calls: &mut BTreeMap<usize, ToolCall>) {
+        for tc in tool_calls.values_mut() {
             if let serde_json::Value::String(s) = &tc.arguments {
                 if let Ok(parsed) = serde_json::from_str(s) {
                     tc.arguments = parsed;
                 }
             }
         }
+    }
+
+    /// Build the final `Completion`. If `finish_reason` was never set
+    /// (stream ended with `None`), defaults to `FinishReason::Stop`.
+    pub fn finalize(mut self) -> Completion {
+        Self::parse_string_arguments(&mut self.tool_calls);
         let finish_reason = self.finish_reason.unwrap_or(FinishReason::Stop);
         let tool_calls = if self.tool_calls.is_empty() {
             None
@@ -119,8 +128,10 @@ impl StreamAccumulator {
     }
 
     /// Build a `Message` for the cancellation path. Filters out tool calls
-    /// whose accumulated arguments are not valid JSON. Caller checks
-    /// `is_empty()` before deciding to push into history.
+    /// whose accumulated arguments are not valid JSON, and parses surviving
+    /// tool call arguments back into a structured `Value` so the next
+    /// provider request sends `tool_use.input` as an object, not a string.
+    /// Caller checks `is_empty()` before deciding to push into history.
     pub fn into_partial_message(mut self, role: Role) -> Message {
         self.tool_calls.retain(|_, tc| {
             if let serde_json::Value::String(s) = &tc.arguments {
@@ -129,6 +140,7 @@ impl StreamAccumulator {
                 true
             }
         });
+        Self::parse_string_arguments(&mut self.tool_calls);
         let tool_calls = if self.tool_calls.is_empty() {
             None
         } else {
@@ -329,6 +341,50 @@ mod tests {
         let mut acc = StreamAccumulator::new();
         acc.add(&delta(Some("hi"), None));
         assert!(!acc.is_empty());
+    }
+
+    #[test]
+    fn into_partial_message_parses_string_arguments_to_object() {
+        // Regression: previously `into_partial_message` kept valid JSON arguments
+        // as `serde_json::Value::String(...)`. When the partial message was
+        // pushed into history and sent to the next provider call, the Anthropic
+        // adapter serialized `tool_use.input` as a JSON string instead of an
+        // object, and the API rejected it with
+        // "tool_use.input: Input should be a valid dictionary (2013)".
+        let mut acc = StreamAccumulator::new();
+        acc.add(&CompletionDelta {
+            content_delta: None,
+            reasoning_delta: None,
+            tool_call_delta: Some(ToolCallDelta {
+                index: 0,
+                id: Some("call_a".into()),
+                name: Some("bash".into()),
+                arguments_delta: Some("{\"command\":".into()),
+            }),
+            usage: None,
+            finish_reason: None,
+        });
+        acc.add(&CompletionDelta {
+            content_delta: None,
+            reasoning_delta: None,
+            tool_call_delta: Some(ToolCallDelta {
+                index: 0,
+                id: None,
+                name: None,
+                arguments_delta: Some("\"ls\"}".into()),
+            }),
+            usage: None,
+            finish_reason: None,
+        });
+        let partial = acc.into_partial_message(Role::Assistant);
+        let calls = partial.tool_calls.expect("one tool call kept");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].arguments,
+            serde_json::json!({"command": "ls"}),
+            "partial tool call arguments must be parsed back to a Value/Object, \
+             not kept as Value::String (Anthropic rejects string input)"
+        );
     }
 
     #[test]

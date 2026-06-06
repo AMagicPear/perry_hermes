@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use hermes_agent::{AIAgent, HermesConfig, LoopEvent, SessionContext};
+use hermes_agent::{AIAgent, AgentRunError, HermesConfig, LoopEvent, SessionContext};
 use hermes_core::message::Content;
 use hermes_core::LoopError;
 use hermes_providers::OpenAiProvider;
@@ -63,8 +63,12 @@ async fn main() {
             eprintln!("error: request timed out after 180s");
             std::process::exit(1);
         }
-        Ok(Err(LoopError::MaxIterations(n))) => {
+        Ok(Err(AgentRunError::Loop(LoopError::MaxIterations(n)))) => {
             eprintln!("error: max iterations ({n}) reached");
+            std::process::exit(1);
+        }
+        Ok(Err(AgentRunError::FailedTurn { source, .. })) => {
+            eprintln!("error: provider error: {source}");
             std::process::exit(1);
         }
         Ok(Err(e)) => {

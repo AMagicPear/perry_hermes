@@ -2,7 +2,7 @@ use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
 use anyhow::Context;
-use hermes_agent::{AIAgent, LoopEvent, SessionContext};
+use hermes_agent::{AIAgent, AgentRunError, LoopEvent, SessionContext};
 use hermes_core::error::LoopError;
 use hermes_core::message::{Content, Message, Role};
 use tokio_util::sync::CancellationToken;
@@ -120,7 +120,7 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
                 );
                 eprintln!();
             }
-            Err(LoopError::CancelledWith(partial)) => {
+            Err(AgentRunError::Loop(LoopError::CancelledWith(partial))) => {
                 let chars = match &partial.content {
                     Content::Text(s) => s.chars().count(),
                     Content::Parts(_) => 0,
@@ -136,12 +136,17 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
                 }
                 eprintln!();
             }
-            Err(LoopError::Cancelled) => {
+            Err(AgentRunError::Loop(LoopError::Cancelled)) => {
                 eprintln!("\n[cancelled]");
                 history.pop();
                 eprintln!();
             }
-            Err(e) => {
+            Err(AgentRunError::FailedTurn { failed_turn, source }) => {
+                eprintln!("error: provider error: {source}");
+                history = failed_turn.messages;
+                eprintln!();
+            }
+            Err(AgentRunError::Loop(e)) => {
                 eprintln!("error: {e}");
                 history.pop();
                 eprintln!();

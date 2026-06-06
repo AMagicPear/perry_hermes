@@ -12,19 +12,33 @@ use hermes_core::ProviderError;
 use tokio_util::sync::CancellationToken;
 
 pub struct ScriptedProvider {
-    script: Mutex<Vec<Vec<CompletionDelta>>>,
+    script: Mutex<Vec<ScriptedStep>>,
     #[allow(dead_code)]
     call_count: AtomicUsize,
+}
+
+pub enum ScriptedStep {
+    Deltas(Vec<CompletionDelta>),
+    #[allow(dead_code)]
+    Error(ProviderError),
+    #[allow(dead_code)]
+    DeltasThenError(Vec<CompletionDelta>, ProviderError),
 }
 
 impl ScriptedProvider {
     #[allow(dead_code)]
     pub fn new(script: Vec<Completion>) -> Self {
-        let script = script.into_iter().map(completion_to_deltas).collect();
-        Self::from_deltas(script)
+        let script: Vec<Vec<CompletionDelta>> =
+            script.into_iter().map(completion_to_deltas).collect();
+        Self::from_steps(script.into_iter().map(ScriptedStep::Deltas).collect())
     }
 
+    #[allow(dead_code)]
     pub fn from_deltas(script: Vec<Vec<CompletionDelta>>) -> Self {
+        Self::from_steps(script.into_iter().map(ScriptedStep::Deltas).collect())
+    }
+
+    pub fn from_steps(script: Vec<ScriptedStep>) -> Self {
         Self {
             script: Mutex::new(script),
             call_count: AtomicUsize::new(0),
@@ -33,7 +47,7 @@ impl ScriptedProvider {
 }
 
 #[allow(dead_code)]
-fn completion_to_deltas(c: Completion) -> Vec<CompletionDelta> {
+pub(crate) fn completion_to_deltas(c: Completion) -> Vec<CompletionDelta> {
     let mut deltas = Vec::new();
     let has_text = matches!(&c.message.content, Content::Text(t) if !t.is_empty());
     let has_reasoning = c.message.reasoning.as_ref().is_some_and(|s| !s.is_empty());
@@ -90,8 +104,17 @@ impl Provider for ScriptedProvider {
                 "ScriptedProvider: script exhausted - the loop called stream() more times than scripted"
             );
         }
-        let deltas = script.remove(0);
+        let step = script.remove(0);
         self.call_count.fetch_add(1, Ordering::SeqCst);
-        Ok(Box::pin(stream::iter(deltas.into_iter().map(Ok))))
+        match step {
+            ScriptedStep::Deltas(deltas) => Ok(Box::pin(stream::iter(deltas.into_iter().map(Ok)))),
+            ScriptedStep::Error(err) => Err(err),
+            ScriptedStep::DeltasThenError(deltas, err) => Ok(Box::pin(stream::iter(
+                deltas
+                    .into_iter()
+                    .map(Ok)
+                    .chain(std::iter::once(Err(err))),
+            ))),
+        }
     }
 }

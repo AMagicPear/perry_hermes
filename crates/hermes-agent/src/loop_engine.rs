@@ -53,6 +53,24 @@ pub struct RunResult {
 }
 
 #[derive(Debug, Clone)]
+pub struct FailedTurn {
+    pub messages: Vec<Message>,
+    pub error: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AgentRunError {
+    #[error(transparent)]
+    Loop(#[from] LoopError),
+    #[error("provider error with partial response: {source}")]
+    FailedTurn {
+        failed_turn: FailedTurn,
+        #[source]
+        source: ProviderError,
+    },
+}
+
+#[derive(Debug, Clone)]
 pub enum LoopEvent {
     Thinking,
     ContentDelta(String),
@@ -99,7 +117,8 @@ impl AgentLoop {
         ctx: ToolContext,
         cancel: CancellationToken,
         mut on_event: impl FnMut(LoopEvent) + Send,
-    ) -> Result<RunResult, LoopError> {
+    ) -> Result<RunResult, AgentRunError> {
+        let initial_len = initial_messages.len();
         let mut messages = initial_messages;
         let mut metrics = LoopMetrics::default();
         let started = Instant::now();
@@ -122,23 +141,27 @@ impl AgentLoop {
         loop {
             if cancel.is_cancelled() {
                 on_event(LoopEvent::Cancelled);
-                return Err(LoopError::Cancelled);
+                return Err(AgentRunError::Loop(LoopError::Cancelled));
             }
             if metrics.iterations >= self.config.max_iterations {
                 on_event(LoopEvent::IterationsExhausted);
-                return Err(LoopError::MaxIterations(metrics.iterations));
+                return Err(AgentRunError::Loop(LoopError::MaxIterations(
+                    metrics.iterations,
+                )));
             }
             if started.elapsed() > self.config.max_duration {
-                return Err(LoopError::Timeout(started.elapsed()));
+                return Err(AgentRunError::Loop(LoopError::Timeout(started.elapsed())));
             }
 
             let tools = self.registry.schemas();
 
             on_event(LoopEvent::Thinking);
-            let mut stream = self
-                .provider
-                .stream(&messages, &tools, cancel.clone())
-                .await?;
+            let mut stream = match self.provider.stream(&messages, &tools, cancel.clone()).await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    return Err(Self::provider_failure(messages, None, initial_len, e));
+                }
+            };
             let mut acc = hermes_core::provider::StreamAccumulator::new();
             let completion = loop {
                 tokio::select! {
@@ -146,9 +169,11 @@ impl AgentLoop {
                     _ = cancel.cancelled() => {
                         on_event(LoopEvent::Cancelled);
                         return if acc.is_empty() {
-                            Err(LoopError::Cancelled)
+                            Err(AgentRunError::Loop(LoopError::Cancelled))
                         } else {
-                            Err(LoopError::CancelledWith(acc.into_partial_message(Role::Assistant)))
+                            Err(AgentRunError::Loop(LoopError::CancelledWith(
+                                acc.into_partial_message(Role::Assistant),
+                            )))
                         };
                     }
                     chunk = stream.next() => {
@@ -165,7 +190,18 @@ impl AgentLoop {
                                 }
                                 acc.add(&delta);
                             }
-                            Some(Err(e)) => return Err(LoopError::Provider(e)),
+                            Some(Err(e)) => {
+                                return Err(Self::provider_failure(
+                                    messages.clone(),
+                                    if acc.is_empty() {
+                                        None
+                                    } else {
+                                        Some(acc.into_partial_message(Role::Assistant))
+                                    },
+                                    initial_len,
+                                    e,
+                                ));
+                            }
                             None => break acc.finalize(),
                         }
                     }
@@ -197,24 +233,28 @@ impl AgentLoop {
                         metrics,
                     });
                 }
-                FinishReason::ContentFilter => return Err(LoopError::ContentFilter),
+                FinishReason::ContentFilter => {
+                    return Err(AgentRunError::Loop(LoopError::ContentFilter))
+                }
                 FinishReason::Error => {
-                    return Err(LoopError::Provider(ProviderError::Other(
-                        "provider returned finish_reason=error".into(),
+                    return Err(AgentRunError::Loop(LoopError::Provider(
+                        ProviderError::Other("provider returned finish_reason=error".into()),
                     )));
                 }
                 FinishReason::ToolUse => {
                     let calls = assistant_msg.tool_calls.clone().unwrap_or_default();
                     if calls.is_empty() {
-                        return Err(LoopError::Provider(ProviderError::InvalidResponse(
-                            "finish_reason=tool_use but no tool_calls".into(),
+                        return Err(AgentRunError::Loop(LoopError::Provider(
+                            ProviderError::InvalidResponse(
+                                "finish_reason=tool_use but no tool_calls".into(),
+                            ),
                         )));
                     }
 
                     for call in calls {
                         if cancel.is_cancelled() {
                             on_event(LoopEvent::Cancelled);
-                            return Err(LoopError::Cancelled);
+                            return Err(AgentRunError::Loop(LoopError::Cancelled));
                         }
                         on_event(LoopEvent::ToolCallStarted {
                             call: call.clone(),
@@ -266,6 +306,36 @@ impl AgentLoop {
             .map_err(|e| hermes_core::error::ToolError::InvalidArgs(e.to_string()))?;
 
         tool.execute(args, ctx.clone(), cancel).await
+    }
+
+    fn provider_failure(
+        mut messages: Vec<Message>,
+        partial_assistant: Option<Message>,
+        initial_len: usize,
+        error: ProviderError,
+    ) -> AgentRunError {
+        if let Some(msg) = partial_assistant {
+            messages.push(msg);
+        }
+        if messages.len() > initial_len {
+            let error_text = format!("Turn interrupted by error: provider error: {error}");
+            messages.push(Message {
+                role: Role::Assistant,
+                content: Content::Text(error_text.clone()),
+                reasoning: None,
+                tool_call_id: None,
+                tool_calls: None,
+            });
+            AgentRunError::FailedTurn {
+                failed_turn: FailedTurn {
+                    messages,
+                    error: error_text,
+                },
+                source: error,
+            }
+        } else {
+            AgentRunError::Loop(LoopError::Provider(error))
+        }
     }
 }
 
