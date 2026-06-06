@@ -1,7 +1,12 @@
-//! Skill loading and system-prompt injection for the Hermes agent.
+//! Skill data loading and system-prompt injection for the Hermes agent.
 //!
-//! See `docs/superpowers/specs/2026-06-05-phase-9-skills-loading-design.md`
-//! for the full design.
+//! This crate is a leaf: it parses `SKILL.md` files, validates them, and renders
+//! the prompt-injection metadata block. The LLM-callable runtime tools that
+//! explore loaded skills (`SkillListTool`, `SkillViewTool`, ...) live in
+//! `hermes-agent::tools::skills`.
+//!
+//! See `docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md`
+//! for the rename context.
 
 pub mod frontmatter;
 pub mod layout;
@@ -17,8 +22,8 @@ use std::path::PathBuf;
 ///
 /// The block intentionally references a `skill_view` tool that does not
 /// exist yet; the LLM may fall back to reading SKILL.md via bash when
-/// the `terminal` toolset is enabled. The actual `SkillActivationTool`
-/// is a Phase 12 deliverable.
+/// the `terminal` toolset is enabled. The actual `SkillViewTool`
+/// is delivered in Phase 9's built-in tools expansion.
 pub fn render_system_prompt_block(skills: &[Skill]) -> String {
     if skills.is_empty() {
         return String::new();

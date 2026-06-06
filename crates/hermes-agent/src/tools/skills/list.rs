@@ -62,7 +62,7 @@ impl Tool for SkillListTool {
             let _ = std::fs::create_dir_all(&self.skills_dir);
         }
 
-        let skills = match hermes_skills::load_all(&self.skills_dir) {
+        let skills = match hermes_skill_loader::load_all(&self.skills_dir) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(ToolOutput {
@@ -75,7 +75,7 @@ impl Tool for SkillListTool {
             }
         };
 
-        let mut filtered: Vec<&hermes_skills::Skill> = skills
+        let mut filtered: Vec<&hermes_skill_loader::Skill> = skills
             .iter()
             .filter(|s| match &category_filter {
                 Some(c) => s.category.as_deref().map(|x| x.to_ascii_lowercase()) == Some(c.clone()),

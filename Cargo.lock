@@ -915,7 +915,7 @@ dependencies = [
  "futures",
  "hermes-core",
  "hermes-providers",
- "hermes-skills",
+ "hermes-skill-loader",
  "jsonschema",
  "serde",
  "serde_json",
@@ -970,7 +970,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "hermes-skills"
+name = "hermes-skill-loader"
 version = "0.2.0"
 dependencies = [
  "anyhow",
