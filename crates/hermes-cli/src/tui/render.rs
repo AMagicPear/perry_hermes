@@ -48,7 +48,37 @@ pub fn render(f: &mut Frame, app: &App) {
         .block(Block::default().borders(Borders::ALL).title("Input"));
     f.render_widget(input, chunks[1]);
 
-    // Status bar.
-    let status = Paragraph::new(Line::from("● idle")).style(Style::default());
+    // Status bar: provider · model · iter X/Y · in Z · out W · mode
+    let provider = app.provider_name.as_deref().unwrap_or("?");
+    let model = app.model_name.as_deref().unwrap_or("?");
+    let in_tok = app
+        .last_input_tokens
+        .map(format_tokens)
+        .unwrap_or_else(|| "—".to_string());
+    let out_tok = app
+        .last_output_tokens
+        .map(format_tokens)
+        .unwrap_or_else(|| "—".to_string());
+    let mode = match app.mode {
+        crate::tui::event::AppMode::Idle => "idle",
+        crate::tui::event::AppMode::AwaitingModel => "awaiting",
+        crate::tui::event::AppMode::Cancelling => "cancelling",
+    };
+    let line = format!(
+        "{provider} · {model} · iter {iter}/{max_iter} · in {in_tok} · out {out_tok} · {mode}",
+        iter = app.iteration,
+        max_iter = app.max_iterations,
+    );
+    let status = Paragraph::new(Line::from(line)).style(Style::default());
     f.render_widget(status, chunks[2]);
+}
+
+fn format_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }
