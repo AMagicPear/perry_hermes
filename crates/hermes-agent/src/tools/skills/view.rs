@@ -6,8 +6,6 @@ use hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
-use crate::tools::support::content::looks_binary;
-
 use super::linked_files::discover_linked_files;
 
 const SKILL_VIEW_DESCRIPTION: &str = "Skills allow for loading information about specific tasks and workflows, as well as scripts and templates. Load a skill's full content or access its linked files (references, templates, scripts). First call returns SKILL.md content plus a 'linked_files' dict showing available references/templates/scripts. To access those, call again with file_path parameter.";
@@ -242,15 +240,6 @@ fn read_linked_file(
             };
         }
     };
-    if looks_binary(&raw) {
-        return ToolOutput {
-            content: json!({
-                "success": false,
-                "error": "Linked file is binary; not supported in this build.",
-            })
-            .to_string(),
-        };
-    }
     let content = String::from_utf8_lossy(&raw).into_owned();
     ToolOutput {
         content: json!({

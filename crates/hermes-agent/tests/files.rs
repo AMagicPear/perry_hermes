@@ -111,26 +111,6 @@ async fn read_file_rejects_known_binary_extension() {
 }
 
 #[tokio::test]
-async fn read_file_rejects_binary_content_even_without_binary_extension() {
-    let dir = TempDir::new().unwrap();
-    let path = dir.path().join("mystery.data");
-    std::fs::write(&path, b"\x00\x01\x02\x03binary-ish").unwrap();
-
-    let tool = ReadFileTool::new();
-    let out = tool
-        .execute(
-            json!({ "path": path.to_str().unwrap() }),
-            ctx(dir.path().to_path_buf()),
-            CancellationToken::new(),
-        )
-        .await
-        .expect("binary returns JSON error");
-    let v = parse(out);
-    let err = v["error"].as_str().unwrap_or_default();
-    assert!(err.to_lowercase().contains("binary"), "got error: {err}");
-}
-
-#[tokio::test]
 async fn read_file_reports_not_found_with_similar_files() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("alpha.py");

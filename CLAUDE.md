@@ -84,13 +84,20 @@ Strict RED→GREEN→REFACTOR. No production code without a failing test first.
 
 For loop tests, `ScriptedProvider` (in `crates/hermes-agent/tests/support/`) returns a fixed sequence of `Completion`s — use it for multi-iteration scenarios. For OpenAI provider HTTP tests, `httpmock` mocks the server. For request body inspection, use a raw `tokio::net::TcpListener` (httpmock 0.7 doesn't expose captured bodies). When tests mutate process-wide state (e.g. `HOME` for CLI config resolution), serialize them with a static `Mutex<()>` (see `hermes-cli/src/main.rs` and `hermes-cli/tests/cli_smoke.rs` for the pattern).
 
-## Design Doc
+## Design Docs
 
-Current code is authoritative. `docs/history/rust-port-design.md` is a historical design draft — useful for intent and roadmap, but some API sketches are stale after the runtime/streaming simplification and the 2026-06-06 crate consolidation. `docs/history/hermes-comparison.md` tracks divergence from the Python source and has a current-status note at the top.
+Current code is authoritative. Design docs live in `docs/superpowers/specs/` and `docs/superpowers/plans/`:
 
-Phase / refactor designs live in `docs/superpowers/specs/` and the execution plans in `docs/superpowers/plans/` (e.g. `2026-06-06-crate-consolidation-design.md` and its plan describe the current 5-crate layout).
+| File | Purpose |
+|---|---|
+| `2026-06-06-crate-consolidation-design.md` | 5-crate layout after merging `hermes-loop`/`hermes-runtime`/`hermes-tools` |
+| `2026-06-06-architecture-cohesion-refactor-design.md` | Architecture cleanup and cohesion refactor |
+| `2026-06-06-builtin-tools-expansion-design.md` | Built-in tools expansion design |
+| `2026-06-06-phase-12-skill-view-tool-design.md` | SkillView tool design (Phase 12) |
 
-## Known Issues (from comparison report)
+`docs/history/hermes-comparison.md` tracks divergence from the Python Hermes source.
+
+## Known Issues
 
 **Resolved (in the codebase today):**
 

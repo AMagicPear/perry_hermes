@@ -5,7 +5,6 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::tools::bash::truncate_output;
-use crate::tools::support::content::looks_binary;
 use crate::tools::support::path::resolve_user_path;
 
 use super::policy::{blocked_path_message, is_binary_extension, suggest_similar_files};
@@ -157,15 +156,6 @@ impl Tool for ReadFileTool {
                 });
             }
         };
-
-        if looks_binary(&raw) {
-            return Ok(ToolOutput {
-                content: json!({
-                    "error": "Binary file — cannot display as text. Use appropriate tools to handle this file type."
-                })
-                .to_string(),
-            });
-        }
 
         let text = String::from_utf8_lossy(&raw);
         let text = if offset == 1 {
