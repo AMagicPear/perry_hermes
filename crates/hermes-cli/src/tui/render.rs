@@ -32,11 +32,17 @@ pub fn render(f: &mut Frame, app: &App) {
     let chat_lines = build_chat_lines(&app.scrollback, chat_area.width);
     let total_lines = chat_lines.len() as u16;
     let visible_h = chat_area.height;
-    // Auto-scroll: keep the last `visible_h` lines visible.
-    let scroll_y = total_lines.saturating_sub(visible_h);
+    // `chat_scroll` is the offset from the bottom (0 = at bottom, larger = scrolled up).
+    // It's clamped so the top of the scrollback is the max.
+    let max_scroll = total_lines.saturating_sub(visible_h);
+    let effective_scroll = app.chat_scroll.min(max_scroll);
+    // The Paragraph's scroll y is "how many lines from the top to start showing".
+    // We want to show lines [total - visible - chat_scroll .. total - chat_scroll].
+    let scroll_y = total_lines
+        .saturating_sub(visible_h)
+        .saturating_sub(effective_scroll);
     let chat = Paragraph::new(chat_lines)
         .block(Block::default().borders(Borders::NONE))
-        .wrap(Wrap { trim: false })
         .scroll((scroll_y, 0));
     f.render_widget(chat, chat_area);
 
@@ -76,30 +82,91 @@ pub fn render(f: &mut Frame, app: &App) {
     f.set_cursor_position(Position::new(cursor_x, cursor_y));
 }
 
-/// Build the chat-area `Vec<Line>` from the scrollback, wrapping assistant
-/// content in a rounded `╭─ Hermes ─...─╮` block.
+/// Build the chat-area `Vec<Line>` from the scrollback. Each line is
+/// pre-wrapped to `width` columns so the line count matches the rendered
+/// row count exactly. The assistant content lives inside a rounded
+/// `╭─ Hermes ─...─╮` block (also pre-wrapped by `assistant_block`).
 fn build_chat_lines(scrollback: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     for line in scrollback {
         match line {
-            RenderedLine::User(s) => out.push(Line::from(format!("> {s}"))),
+            RenderedLine::User(s) => {
+                let raw = format!("> {s}");
+                out.extend(wrap_to_width(&raw, width));
+            }
             RenderedLine::Assistant(s) => {
                 out.extend(assistant_block(s, width));
             }
             RenderedLine::Reasoning(s) => {
-                out.push(Line::from(format!("… {s}")).dim());
+                let raw = format!("… {s}");
+                out.extend(wrap_to_width(&raw, width));
             }
             RenderedLine::ToolCall { name, args_preview } => {
-                out.push(Line::from(format!("⚙ {name}({args_preview})")));
+                let raw = format!("⚙ {name}({args_preview})");
+                out.extend(wrap_to_width(&raw, width));
             }
             RenderedLine::ToolResult { name, output, ok } => {
                 let glyph = if *ok { "✓" } else { "✗" };
-                out.push(Line::from(format!("{glyph} {name}: {output}")));
+                let raw = format!("{glyph} {name}: {output}");
+                out.extend(wrap_to_width(&raw, width));
             }
             RenderedLine::System(s) => {
-                out.push(Line::from(format!("[system] {s}")));
+                let raw = format!("[system] {s}");
+                out.extend(wrap_to_width(&raw, width));
             }
         }
+    }
+    out
+}
+
+/// Hard-wrap a single string to a target column width. Returns one or more
+/// lines that, when concatenated, contain the same text broken at word
+/// boundaries. Overlong words are hard-split across multiple lines.
+fn wrap_to_width(text: &str, width: u16) -> Vec<Line<'static>> {
+    let w = width as usize;
+    if w == 0 {
+        return vec![Line::from(text.to_string())];
+    }
+    let total_chars = text.chars().count();
+    if total_chars <= w {
+        return vec![Line::from(text.to_string())];
+    }
+    let mut out: Vec<Line<'static>> = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        let word_len = word.chars().count();
+        if word_len > w {
+            // Hard-split the overlong word across multiple lines.
+            if !current.is_empty() {
+                out.push(Line::from(std::mem::take(&mut current)));
+            }
+            let mut chunk = String::new();
+            for ch in word.chars() {
+                if chunk.chars().count() == w {
+                    out.push(Line::from(std::mem::take(&mut chunk)));
+                }
+                chunk.push(ch);
+            }
+            if !chunk.is_empty() {
+                current = chunk;
+            }
+            continue;
+        }
+        if current.is_empty() {
+            current.push_str(word);
+        } else if current.chars().count() + 1 + word_len <= w {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            out.push(Line::from(std::mem::take(&mut current)));
+            current.push_str(word);
+        }
+    }
+    if !current.is_empty() {
+        out.push(Line::from(current));
+    }
+    if out.is_empty() {
+        out.push(Line::from(text.to_string()));
     }
     out
 }

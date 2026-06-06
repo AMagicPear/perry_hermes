@@ -4,6 +4,9 @@ use crate::tui::app::App;
 use crate::tui::event::{AppEvent, AppMode, RenderedLine};
 use crossterm::event::{KeyCode, KeyEvent};
 
+/// Page-down (or arrow-down) scrolls one viewport-height toward the bottom.
+const SCROLL_PAGE: u16 = 10;
+
 /// Apply a key event to the App's input buffer. Returns the AppEvent that
 /// the main loop should process.
 pub fn handle_key(app: &mut App, key: KeyEvent) -> AppEvent {
@@ -26,6 +29,25 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> AppEvent {
             AppMode::Idle => AppEvent::Quit,
             _ => AppEvent::Tick,
         };
+    }
+    // Chat scroll keys (only when not awaiting — while streaming we always
+    // auto-scroll to bottom so the user can watch the reply).
+    if app.mode == AppMode::Idle {
+        match key.code {
+            KeyCode::PageUp => {
+                app.chat_scroll = app.chat_scroll.saturating_add(SCROLL_PAGE);
+                return AppEvent::Tick;
+            }
+            KeyCode::PageDown => {
+                app.chat_scroll = app.chat_scroll.saturating_sub(SCROLL_PAGE);
+                return AppEvent::Tick;
+            }
+            KeyCode::End => {
+                app.chat_scroll = 0;
+                return AppEvent::Tick;
+            }
+            _ => {}
+        }
     }
     match key.code {
         KeyCode::Char(c) => {

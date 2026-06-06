@@ -35,6 +35,10 @@ pub struct App {
     /// `None` when idle or cancelling. Drives the elapsed-time readout in
     /// the status bar.
     pub turn_started_at: Option<Instant>,
+    /// Offset from the bottom of the chat scrollback. `0` means the chat
+    /// shows the most recent line; larger values mean the user has scrolled
+    /// up. Reset to `0` whenever new content is pushed to the scrollback.
+    pub chat_scroll: u16,
     /// Total context window in tokens, if configured. When `None`, the status
     /// bar hides the context segment entirely.
     pub context_window_size: Option<u64>,
@@ -57,11 +61,14 @@ impl App {
             session_history: Vec::new(),
             turn_started_at: None,
             context_window_size: None,
+            chat_scroll: 0,
         }
     }
 
-    /// Push a rendered line into the scrollback.
+    /// Push a rendered line into the scrollback. Also resets the chat
+    /// scroll to the bottom (so newly-arrived content is visible).
     pub fn push_line(&mut self, line: RenderedLine) {
         self.scrollback.push(line);
+        self.chat_scroll = 0;
     }
 }
