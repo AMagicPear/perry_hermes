@@ -147,7 +147,16 @@ jobs:
 
           cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" "$bundle/"
           cp README.md LICENSE "$bundle/"
-          cp examples/config/hermes.toml "$bundle/examples/config/"
+
+          if [[ -f examples/config/hermes.toml ]]; then
+            cp examples/config/hermes.toml "$bundle/examples/config/hermes.toml"
+          elif [[ -f crates/hermes-cli/hermes.example.toml ]]; then
+            cp crates/hermes-cli/hermes.example.toml "$bundle/examples/config/hermes.toml"
+          else
+            echo "No example config found in this source revision; skipping config bundle."
+            rmdir "$bundle/examples/config" || true
+            rmdir "$bundle/examples" || true
+          fi
 
       - name: Upload staged bundle
         uses: actions/upload-artifact@v4

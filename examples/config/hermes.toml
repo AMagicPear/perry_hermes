@@ -1,0 +1,18 @@
+# Sample Hermes configuration.
+#
+# The CLI will look for config files in this order:
+#   --config <path>                (explicit)
+#   ~/.perry_hermes/config.toml    (user-global)
+#   ./hermes.toml                  (project-local)
+#
+# Copy this file to one of those locations and adjust the provider fields.
+
+[provider]
+kind = "openai"
+model = "gpt-4.1-mini"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+
+[agent]
+max_iterations = 10
+disabled_toolsets = []
