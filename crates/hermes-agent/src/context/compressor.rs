@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use hermes_core::message::{Message, Role};
-use hermes_core::{CompressError, ContextEngine, Provider, ProviderError, Usage};
+use hermes_core::{CompressError, ContextEngine, Provider, ProviderError};
 
 use tokio_util::sync::CancellationToken;
 
@@ -68,9 +68,11 @@ impl Default for CompressorConfig {
 
 /// Replace old tool-result contents with one-line summaries.
 ///
-/// Iterates oldest → newest, skipping the last `protect_tail_tokens` worth
-/// of messages. Tool results older than the tail become
-/// `"[Old tool output cleared, {tool_name} returned {N} bytes]"`.
+/// Walks messages oldest → newest in a single pass: the tail is the suffix
+/// of messages whose chars fit in `protect_tail_tokens`; any tool-result
+/// message earlier than the tail becomes
+/// `"[Old tool output cleared, {tool_name} returned {N} bytes]"`. Non-tool
+/// messages outside the tail are kept as-is.
 ///
 /// Returns `(new_messages, total_chars_pruned)`.
 pub fn prune_old_tool_results(
@@ -81,33 +83,33 @@ pub fn prune_old_tool_results(
         return (messages.to_vec(), 0);
     }
 
-    // Walk backwards to find how many messages are in the tail (protected).
-    let tail_budget = config.protect_tail_tokens;
-    let mut tail_chars_remaining = (tail_budget as f64 * 4.0) as i64;
-    let mut tail_start = messages.len();
-
-    for i in (0..messages.len()).rev() {
-        let msg_chars = messages[i].char_len() as i64;
-        tail_chars_remaining -= msg_chars;
-        if tail_chars_remaining <= 0 {
-            tail_start = i;
-            break;
-        }
-    }
-
-    let mut new_messages = Vec::with_capacity(messages.len());
+    // One pass: walk backwards, building the result in reverse. We stay
+    // "in the tail" until we've consumed the full budget; once the budget
+    // is exhausted, every older tool message gets pruned.
+    let tail_budget = (config.protect_tail_tokens as f64 * 4.0) as i64;
+    let mut tail_chars_remaining = tail_budget;
+    let mut result_rev: Vec<Message> = Vec::with_capacity(messages.len());
     let mut total_pruned = 0usize;
+    let mut in_tail = true;
 
-    for (i, msg) in messages.iter().enumerate() {
-        if i >= tail_start {
-            // This message is in the protected tail — keep as-is.
-            new_messages.push(msg.clone());
+    for msg in messages.iter().rev() {
+        let original_chars = msg.char_len();
+        let msg_chars = original_chars as i64;
+
+        if in_tail {
+            // Still inside the protected tail — keep as-is, and see if
+            // including this message exhausted the budget.
+            tail_chars_remaining -= msg_chars;
+            result_rev.push(msg.clone());
+            if tail_chars_remaining <= 0 {
+                in_tail = false;
+            }
             continue;
         }
 
+        // In the middle. Tool messages get a one-line summary; everything
+        // else is preserved.
         if msg.role == Role::Tool {
-            // Prune: replace the tool result content with a one-line summary.
-            let original_chars = msg.char_len();
             let tool_name = msg.tool_call_id.as_deref().unwrap_or("unknown").to_string();
             let pruned_text = format!(
                 "[Old tool output cleared, {} returned {} bytes]",
@@ -116,14 +118,14 @@ pub fn prune_old_tool_results(
             let pruned_chars = pruned_text.len();
             total_pruned += original_chars.saturating_sub(pruned_chars);
             let tool_call_id = msg.tool_call_id.clone().unwrap_or_default();
-            new_messages.push(Message::tool_result(tool_call_id, pruned_text));
+            result_rev.push(Message::tool_result(tool_call_id, pruned_text));
         } else {
-            // Keep non-tool messages in the head/middle as-is.
-            new_messages.push(msg.clone());
+            result_rev.push(msg.clone());
         }
     }
 
-    (new_messages, total_pruned)
+    result_rev.reverse();
+    (result_rev, total_pruned)
 }
 
 /// Find the index after the first `protect_first_n` non-system messages.
@@ -430,15 +432,6 @@ impl ContextCompressor {
 
 #[async_trait]
 impl ContextEngine for ContextCompressor {
-    fn name(&self) -> &'static str {
-        "compressor"
-    }
-
-    fn update_from_response(&mut self, _usage: &Usage) {
-        // Track the last known input token count for the post-turn trigger.
-        // The actual trigger check is in should_compress().
-    }
-
     fn should_compress(&self) -> bool {
         // Only check the ineffective backoff. The actual token threshold
         // comparison is done by the loop using estimated_tokens vs threshold.

@@ -343,10 +343,6 @@ impl AgentLoop {
                     }
 
                     if let Some(engine) = &self.config.context_engine {
-                        {
-                            let mut guard = engine.lock().await;
-                            guard.update_from_response(&completion.usage);
-                        }
                         if completion.usage.input_tokens > 0 {
                             let should = {
                                 let guard = engine.lock().await;

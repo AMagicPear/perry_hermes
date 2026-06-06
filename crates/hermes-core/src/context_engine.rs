@@ -8,7 +8,6 @@
 use async_trait::async_trait;
 
 use crate::message::Message;
-use crate::usage::Usage;
 
 /// Trait for context compression engines.
 ///
@@ -20,13 +19,6 @@ use crate::usage::Usage;
 /// interior mutability in the async loop.
 #[async_trait]
 pub trait ContextEngine: Send + Sync {
-    /// One-line identifier (e.g. "compressor"). Used in telemetry and logs.
-    fn name(&self) -> &'static str;
-
-    /// Update tracked token usage from the latest API response.
-    /// Called once after every successful completion (preflight and postflight).
-    fn update_from_response(&mut self, usage: &Usage);
-
     /// Cheap pre-call check. Default impl returns `false` (no preflight).
     /// The default `ContextCompressor` overrides this with a rough token estimate.
     fn should_compress(&self) -> bool {
