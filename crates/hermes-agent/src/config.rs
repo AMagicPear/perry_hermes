@@ -78,6 +78,13 @@ pub struct AgentConfig {
     /// Default 0.50 (50%).
     #[serde(default)]
     pub context_compression_threshold_percent: Option<f64>,
+    /// Total context window in tokens for the configured model. Used as the
+    /// denominator for `context_compression_threshold_percent`, and rendered
+    /// as the "24.2K / 200K [gauge]" segment in the TUI status bar. When
+    /// `None`, the compressor falls back to 128_000 and the TUI hides the
+    /// context segment.
+    #[serde(default)]
+    pub context_window_size: Option<u64>,
 }
 
 fn default_context_compression_enabled() -> bool {
@@ -92,6 +99,7 @@ impl Default for AgentConfig {
             system_prompt: None,
             context_compression_enabled: default_context_compression_enabled(),
             context_compression_threshold_percent: None,
+            context_window_size: None,
         }
     }
 }
@@ -183,5 +191,32 @@ context_compression_enabled = false
 "#;
         let config: HermesConfig = toml::from_str(input).unwrap();
         assert!(!config.agent.context_compression_enabled);
+    }
+
+    #[test]
+    fn context_window_size_round_trips() {
+        let input = r#"
+[provider]
+kind = "openai"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4.1"
+
+[agent]
+context_window_size = 200_000
+"#;
+        let config: HermesConfig = toml::from_str(input).unwrap();
+        assert_eq!(config.agent.context_window_size, Some(200_000));
+    }
+
+    #[test]
+    fn context_window_size_absent_defaults_to_none() {
+        let input = r#"
+[provider]
+kind = "openai"
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4.1"
+"#;
+        let config: HermesConfig = toml::from_str(input).unwrap();
+        assert_eq!(config.agent.context_window_size, None);
     }
 }
