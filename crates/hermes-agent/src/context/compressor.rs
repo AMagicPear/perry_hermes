@@ -46,7 +46,7 @@ impl CompressorConfig {
         const MAX_SUMMARY_TOKENS: u64 = 12_000;
         let target =
             (self.threshold_tokens(context_length) as f64 * self.summary_target_ratio) as u64;
-        target.max(MIN_SUMMARY_TOKENS).min(MAX_SUMMARY_TOKENS)
+        target.clamp(MIN_SUMMARY_TOKENS, MAX_SUMMARY_TOKENS)
     }
 }
 
@@ -68,8 +68,6 @@ pub struct ContextCompressor {
     threshold_tok: u64,
     /// Last LLM-generated summary; reused as the seed for the next compression.
     previous_summary: Option<String>,
-    /// Tokens saved by the most recent compression (0.0 = nothing saved).
-    last_savings_ratio: f64,
     /// Count of consecutive compressions that saved < ineffective_threshold.
     ineffective_count: u32,
     /// Aux provider for summary calls. None → fall back to the main provider.
@@ -86,7 +84,6 @@ impl ContextCompressor {
             model,
             threshold_tok,
             previous_summary: None,
-            last_savings_ratio: 0.0,
             ineffective_count: 0,
             summary_provider: None,
             context_length,
@@ -97,16 +94,6 @@ impl ContextCompressor {
     pub fn with_summary_provider(mut self, provider: Arc<dyn Provider>) -> Self {
         self.summary_provider = Some(provider);
         self
-    }
-
-    /// Get the current configuration.
-    pub fn config(&self) -> &CompressorConfig {
-        &self.config
-    }
-
-    /// Get the model name.
-    pub fn model(&self) -> &str {
-        &self.model
     }
 
     /// Execute the 5-step compression algorithm.
@@ -137,44 +124,27 @@ impl ContextCompressor {
             return Err(CompressError::NothingToCompress);
         }
 
-        // Step 4: LLM summary of the middle slice.
+        // Step 4: LLM summary of the middle slice. On failure, drop the oldest
+        // non-system message and retry once (Codex pattern).
         let middle = &messages[head_end..tail_start];
-        let middle_text = summary::messages_to_transcript(middle);
-        let prompt = summary::build_summary_prompt(
-            &middle_text,
-            self.previous_summary.as_deref(),
-            focus_topic,
-            self.config.summary_target_tokens(self.context_length),
-        );
-
-        // Call the LLM to generate a summary. On failure, drop the oldest
-        // message and retry (Codex pattern).
-        let summary_text = match self.call_summary_llm(&prompt).await {
+        let summary_text = match self.summarize_middle(middle, focus_topic).await {
             Ok(s) => s,
             Err(first_err) => {
-                // Retry: drop the oldest non-system message and try again.
                 let mut retry_messages = messages.clone();
                 if let Some(drop_idx) = retry_messages.iter().position(|m| m.role != Role::System) {
                     retry_messages.remove(drop_idx);
                 }
                 let retry_tail_start = tail_start.min(retry_messages.len());
                 if head_end >= retry_tail_start {
-                    return Err(CompressError::SummaryFailed(first_err.to_string()));
+                    return Err(CompressError::SummaryFailed(first_err));
                 }
                 let retry_middle = &retry_messages[head_end..retry_tail_start];
                 if retry_middle.is_empty() {
-                    return Err(CompressError::SummaryFailed(first_err.to_string()));
+                    return Err(CompressError::SummaryFailed(first_err));
                 }
-                let retry_text = summary::messages_to_transcript(retry_middle);
-                let retry_prompt = summary::build_summary_prompt(
-                    &retry_text,
-                    self.previous_summary.as_deref(),
-                    focus_topic,
-                    self.config.summary_target_tokens(self.context_length),
-                );
-                self.call_summary_llm(&retry_prompt)
+                self.summarize_middle(retry_middle, focus_topic)
                     .await
-                    .map_err(|e| CompressError::SummaryFailed(e.to_string()))?
+                    .map_err(CompressError::SummaryFailed)?
             }
         };
 
@@ -195,7 +165,6 @@ impl ContextCompressor {
         } else {
             0.0
         };
-        self.last_savings_ratio = savings;
         if savings < 0.10 {
             self.ineffective_count += 1;
         } else {
@@ -204,6 +173,25 @@ impl ContextCompressor {
         self.previous_summary = Some(summary_text);
 
         Ok(new_messages)
+    }
+
+    /// Build a summary prompt for a slice of messages and call the LLM.
+    /// Returns the summary text on success, or the error string on failure.
+    async fn summarize_middle(
+        &self,
+        middle: &[Message],
+        focus_topic: Option<&str>,
+    ) -> Result<String, String> {
+        let middle_text = summary::messages_to_transcript(middle);
+        let prompt = summary::build_summary_prompt(
+            &middle_text,
+            self.previous_summary.as_deref(),
+            focus_topic,
+            self.config.summary_target_tokens(self.context_length),
+        );
+        self.call_summary_llm(&prompt)
+            .await
+            .map_err(|e| e.to_string())
     }
 
     /// Call the summary LLM. Uses the summary provider if set.
@@ -274,7 +262,6 @@ impl ContextEngine for ContextCompressor {
 
     fn on_session_reset(&mut self) {
         self.previous_summary = None;
-        self.last_savings_ratio = 0.0;
         self.ineffective_count = 0;
     }
 
@@ -352,13 +339,11 @@ mod tests {
         let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into());
         compressor.previous_summary = Some("old summary".into());
         compressor.ineffective_count = 5;
-        compressor.last_savings_ratio = 0.05;
 
         compressor.on_session_reset();
 
         assert!(compressor.previous_summary.is_none());
         assert_eq!(compressor.ineffective_count, 0);
-        assert_eq!(compressor.last_savings_ratio, 0.0);
     }
 
     #[test]
@@ -369,7 +354,6 @@ mod tests {
 
         compressor.update_model("new-model", 256_000);
 
-        assert_eq!(compressor.model(), "new-model");
         assert_ne!(compressor.threshold_tokens(), old_threshold);
         assert_eq!(compressor.threshold_tokens(), 128_000); // 256K * 0.5
     }

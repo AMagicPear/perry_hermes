@@ -35,7 +35,6 @@ anyhow = "1"
 
 # Observability
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # JSON Schema validation (used by hermes-loop at dispatch time)
 jsonschema = "0.18"

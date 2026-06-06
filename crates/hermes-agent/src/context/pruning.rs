@@ -164,7 +164,7 @@ pub fn estimate_tokens_from_chars(chars: usize, chars_per_token: f64) -> u64 {
 
 /// Estimate total tokens for a slice of messages.
 pub fn estimate_tokens(messages: &[Message], chars_per_token: f64) -> u64 {
-    let total_chars: usize = messages.iter().map(|m| estimate_message_chars(m)).sum();
+    let total_chars: usize = messages.iter().map(estimate_message_chars).sum();
     estimate_tokens_from_chars(total_chars, chars_per_token)
 }
 

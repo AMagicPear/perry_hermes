@@ -7,7 +7,6 @@
 
 use async_trait::async_trait;
 
-use crate::error::ProviderError;
 use crate::message::Message;
 use crate::usage::Usage;
 
@@ -71,9 +70,6 @@ pub enum CompressError {
     /// No messages eligible for compression (everything is protected).
     #[error("nothing to compress")]
     NothingToCompress,
-    /// Provider error during summary generation.
-    #[error("provider error: {0}")]
-    Provider(#[from] ProviderError),
 }
 
 /// Where compression was triggered.
