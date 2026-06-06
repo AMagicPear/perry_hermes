@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use futures::StreamExt;
 use hermes_agent::{AIAgent, AgentRunError, SessionContext};
 use hermes_core::message::Message;
-use hermes_core::provider::Provider;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::Terminal;
 use tokio::sync::mpsc;
@@ -52,6 +51,7 @@ pub async fn run(
     provider_name: String,
     model_name: String,
     max_iterations: u32,
+    context_window_size: Option<u64>,
 ) -> Result<(), RunError> {
     use crossterm::event::{Event, EventStream};
     use crossterm::execute;
@@ -59,6 +59,7 @@ pub async fn run(
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     };
     use std::io::stdout;
+    use std::time::Instant;
 
     enable_raw_mode().map_err(|e| RunError::Tui(e.to_string()))?;
     execute!(stdout(), EnterAlternateScreen).map_err(|e| RunError::Tui(e.to_string()))?;
@@ -70,6 +71,7 @@ pub async fn run(
     app.provider_name = Some(provider_name);
     app.model_name = Some(model_name);
     app.max_iterations = max_iterations;
+    app.context_window_size = context_window_size;
 
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(16));
@@ -103,6 +105,7 @@ pub async fn run(
                                     app.push_line(RenderedLine::User(text.clone()));
                                     app.session_history.push(Message::user(&text));
                                     app.mode = AppMode::AwaitingModel;
+                                    app.turn_started_at = Some(Instant::now());
                                     let on_event = make_on_event(input_tx.clone());
                                     let res = agent
                                         .run_messages(
@@ -112,6 +115,7 @@ pub async fn run(
                                             on_event,
                                         )
                                         .await;
+                                    app.turn_started_at = None;
                                     match res {
                                         Ok(run_result) => {
                                             app.session_history = run_result.messages;
@@ -171,28 +175,30 @@ pub async fn run(
 }
 
 /// Test-friendly entry point. The caller supplies:
-/// - the `Backend` (a `TestBackend` in tests)
-/// - the `Provider`
+/// - an `Arc<Mutex<TestBackend>>` (the test can retain a clone to inspect
+///   the buffer after the loop returns)
 /// - a stream of `AppEvent`s (the test enqueues Submit + Quit)
 /// - a `CancellationToken`
 /// - the provider/model name for the status bar
 ///
 /// Returns when the input channel is closed and the main loop observes no
 /// more events.
-pub async fn run_with_backend<B: Backend>(
-    backend: B,
-    _provider: Arc<dyn Provider>,
+pub async fn run_with_backend(
+    backend: Arc<Mutex<ratatui::backend::TestBackend>>,
     mut input_rx: mpsc::UnboundedReceiver<AppEvent>,
     cancel: CancellationToken,
     provider_name: String,
     model_name: String,
     max_iterations: u32,
+    context_window_size: Option<u64>,
 ) -> Result<(), RunError> {
+    let backend = SharedTestBackend { inner: backend };
     let mut terminal = Terminal::new(backend).map_err(|e| RunError::Tui(e.to_string()))?;
     let mut app = App::new_for_test();
     app.provider_name = Some(provider_name);
     app.model_name = Some(model_name);
     app.max_iterations = max_iterations;
+    app.context_window_size = context_window_size;
 
     loop {
         terminal
@@ -209,7 +215,25 @@ pub async fn run_with_backend<B: Backend>(
                 let Some(ev) = maybe else { return Ok(()); };
                 match ev {
                     AppEvent::Key(k) => {
-                        let _next = handle_key(&mut app, k);
+                        let next = handle_key(&mut app, k);
+                        match next {
+                            AppEvent::Submit(text) => {
+                                app.push_line(RenderedLine::User(text));
+                                app.mode = AppMode::AwaitingModel;
+                                app.turn_started_at = Some(std::time::Instant::now());
+                            }
+                            AppEvent::Quit => return Ok(()),
+                            AppEvent::Compact(focus) => {
+                                app.push_line(RenderedLine::System(format!(
+                                    "Manual compact requested (focus: {}).",
+                                    focus.as_deref().unwrap_or("(none)")
+                                )));
+                            }
+                            AppEvent::Clear => {
+                                app.scrollback.clear();
+                            }
+                            _ => {}
+                        }
                     }
                     AppEvent::Loop(loop_ev) => {
                         let _ = apply_loop_event(&mut app, loop_ev);
@@ -218,6 +242,7 @@ pub async fn run_with_backend<B: Backend>(
                     AppEvent::Submit(text) => {
                         app.push_line(RenderedLine::User(text));
                         app.mode = AppMode::AwaitingModel;
+                        app.turn_started_at = Some(std::time::Instant::now());
                     }
                     AppEvent::Quit => return Ok(()),
                     AppEvent::Compact(focus) => {
@@ -241,75 +266,6 @@ pub async fn run_with_backend<B: Backend>(
     }
 }
 
-/// `run_with_backend_and_capture` — a variant that accepts an `Arc<Mutex<TestBackend>>`
-/// so the caller retains access to the backend after the loop. The caller clones
-/// the `Arc` before passing it; after the function returns the clone is still
-/// valid for inspecting the final rendered buffer.
-pub async fn run_with_backend_and_capture(
-    backend: Arc<Mutex<ratatui::backend::TestBackend>>,
-    provider: Arc<dyn Provider>,
-    mut input_rx: mpsc::UnboundedReceiver<AppEvent>,
-    cancel: CancellationToken,
-    provider_name: String,
-    model_name: String,
-    max_iterations: u32,
-) -> Result<(), RunError> {
-    let backend = SharedTestBackend { inner: backend };
-    let mut terminal = Terminal::new(backend).map_err(|e| RunError::Tui(e.to_string()))?;
-    let mut app = App::new_for_test();
-    app.provider_name = Some(provider_name);
-    app.model_name = Some(model_name);
-    app.max_iterations = max_iterations;
-    let _ = provider;
-
-    loop {
-        terminal
-            .draw(|f| render(f, &app))
-            .map_err(|e| RunError::Tui(e.to_string()))?;
-
-        tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {
-                app.push_line(RenderedLine::System("⚠ cancelled".to_string()));
-                break;
-            }
-            maybe = input_rx.recv() => {
-                let Some(ev) = maybe else { break; };
-                match ev {
-                    AppEvent::Key(k) => {
-                        let _next = handle_key(&mut app, k);
-                    }
-                    AppEvent::Loop(loop_ev) => {
-                        let _ = apply_loop_event(&mut app, loop_ev);
-                    }
-                    AppEvent::Tick => {}
-                    AppEvent::Submit(text) => {
-                        app.push_line(RenderedLine::User(text));
-                        app.mode = AppMode::AwaitingModel;
-                    }
-                    AppEvent::Quit => break,
-                    AppEvent::Compact(focus) => {
-                        app.push_line(RenderedLine::System(format!(
-                            "Manual compact requested (focus: {}).",
-                            focus.as_deref().unwrap_or("(none)")
-                        )));
-                    }
-                    AppEvent::Clear => {
-                        app.scrollback.clear();
-                    }
-                    AppEvent::Append(line) => app.push_line(line),
-                    AppEvent::SetInput(s) => app.input = s,
-                    AppEvent::CancelInFlight => {
-                        app.mode = AppMode::Cancelling;
-                        cancel.cancel();
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
 
 /// A `Backend` wrapper around `Arc<Mutex<TestBackend>>` so that:
 /// - the TUI's `Terminal` can borrow the backend during the loop

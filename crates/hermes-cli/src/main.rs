@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|| "?".to_string());
 
     let max_iterations = config.agent.max_iterations.unwrap_or(10);
+    let context_window_size = config.agent.context_window_size;
 
     let agent = Arc::new(
         AIAgent::from_config(config)
@@ -50,7 +51,15 @@ async fn main() -> anyhow::Result<()> {
 
     let cancel = tokio_util::sync::CancellationToken::new();
 
-    hermes_cli::tui::run(agent, cancel, provider_name, model_name, max_iterations).await?;
+    hermes_cli::tui::run(
+        agent,
+        cancel,
+        provider_name,
+        model_name,
+        max_iterations,
+        context_window_size,
+    )
+    .await?;
     Ok(())
 }
 

@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use hermes_cli::tui::event::AppEvent;
-use hermes_cli::tui::run::{run_with_backend, run_with_backend_and_capture};
+use hermes_cli::tui::run::run_with_backend;
 
 /// An inline `ScriptedProvider` for use in hermes-cli integration tests.
 /// Unlike the support version in hermes-agent/tests (which is not public),
@@ -120,9 +120,9 @@ async fn user_message_then_assistant_reply_appears_in_scrollback() {
         },
         finish_reason: FinishReason::Stop,
     }]);
-    let provider = Arc::new(provider);
+    let _provider = Arc::new(provider);
 
-    let backend = TestBackend::new(80, 24);
+    let backend = Arc::new(Mutex::new(TestBackend::new(80, 24)));
     let cancel = CancellationToken::new();
     let (input_tx, input_rx) = mpsc::unbounded_channel::<AppEvent>();
 
@@ -135,12 +135,12 @@ async fn user_message_then_assistant_reply_appears_in_scrollback() {
 
     let result = run_with_backend(
         backend,
-        provider,
         input_rx,
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
         10,
+        None,
     )
     .await;
 
@@ -166,7 +166,7 @@ async fn user_message_appears_in_buffer() {
         },
         finish_reason: FinishReason::Stop,
     }]);
-    let provider = Arc::new(provider);
+    let _provider = Arc::new(provider);
 
     // Wrap TestBackend in Arc<Mutex<_>> so we can retain access after the
     // TUI loop drops its owned reference.
@@ -180,14 +180,14 @@ async fn user_message_appears_in_buffer() {
     input_tx.send(AppEvent::Quit).expect("send quit");
     drop(input_tx);
 
-    run_with_backend_and_capture(
+    run_with_backend(
         backend.clone(),
-        provider,
         input_rx,
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
         10,
+        None,
     )
     .await
     .expect("tui run returned error");
@@ -230,9 +230,9 @@ async fn compact_command_emits_compress_request() {
         },
         finish_reason: FinishReason::Stop,
     }]);
-    let provider = Arc::new(provider);
+    let _provider = Arc::new(provider);
 
-    let backend = TestBackend::new(80, 24);
+    let backend = Arc::new(Mutex::new(TestBackend::new(80, 24)));
     let cancel = CancellationToken::new();
     let (input_tx, input_rx) = mpsc::unbounded_channel::<AppEvent>();
 
@@ -247,12 +247,12 @@ async fn compact_command_emits_compress_request() {
     // and is exercised by `hermes-agent`'s context-compression tests.
     let result = run_with_backend(
         backend,
-        provider,
         input_rx,
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
         10,
+        None,
     )
     .await;
     assert!(result.is_ok());
