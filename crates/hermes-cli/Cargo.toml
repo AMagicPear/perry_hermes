@@ -5,6 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "Hermes CLI — a minimal Hermes-style agent in Rust"
+repository = "https://github.com/AMagicPear/perry_hermes"
 
 [[bin]]
 name = "hermes"
