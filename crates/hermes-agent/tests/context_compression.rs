@@ -8,6 +8,7 @@ use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason};
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::ToolContext;
+use hermes_core::ContextEngine;
 use hermes_core::ProviderError;
 use hermes_core::Usage;
 use tokio::sync::Mutex as TokioMutex;
@@ -295,4 +296,42 @@ async fn manual_compact_compresses_medium_history_instead_of_skipping() {
             .any(|m| matches!(&m.content, Content::Text(t) if t.contains("condensed"))),
         "manual compaction should keep the generated summary"
     );
+}
+
+#[test]
+fn threshold_tokens_scales_with_context_window_size() {
+    // With a 200K window and 50% threshold, compression triggers at 100K.
+    let config = hermes_agent::CompressorConfig {
+        threshold_percent: 0.50,
+        ..Default::default()
+    };
+    assert_eq!(config.threshold_tokens(200_000), 100_000);
+    // 128K window at 60% → 76800, well above the 8K floor.
+    let config = hermes_agent::CompressorConfig {
+        threshold_percent: 0.60,
+        ..Default::default()
+    };
+    assert_eq!(config.threshold_tokens(128_000), 76_800);
+    // Tiny windows still respect the 8K floor.
+    assert_eq!(config.threshold_tokens(4_000), 8_000);
+}
+
+#[tokio::test]
+async fn context_compressor_new_uses_provided_context_length() {
+    use hermes_agent::{CompressorConfig, ContextCompressor};
+
+    let config = CompressorConfig {
+        threshold_percent: 0.50,
+        ..Default::default()
+    };
+    let compressor = ContextCompressor::new(config, "test".into(), Some(200_000));
+    assert_eq!(compressor.threshold_tokens(), 100_000);
+
+    // None falls back to 128K.
+    let compressor = ContextCompressor::new(
+        CompressorConfig::default(),
+        "test".into(),
+        None,
+    );
+    assert_eq!(compressor.threshold_tokens(), 64_000); // 128K * 0.50
 }
