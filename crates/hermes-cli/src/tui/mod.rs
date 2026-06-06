@@ -6,6 +6,7 @@ pub mod input;
 pub mod loop_bridge;
 pub mod render;
 pub mod run;
+pub mod shimmer;
 
 use hermes_agent::LoopEvent;
 use tokio::sync::mpsc;
