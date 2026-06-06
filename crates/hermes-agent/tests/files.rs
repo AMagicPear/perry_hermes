@@ -4,7 +4,13 @@ use hermes_agent::tools::ReadFileTool;
 use hermes_core::tool::{Tool, ToolContext, ToolPermissions};
 use serde_json::json;
 use tempfile::TempDir;
+use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
+
+async fn with_env_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+    ENV_LOCK.lock().await
+}
 
 fn ctx(working_dir: PathBuf) -> ToolContext {
     ToolContext {
@@ -26,7 +32,11 @@ async fn read_file_returns_line_numbered_content() {
 
     let tool = ReadFileTool::new();
     let out = tool
-        .execute(json!({ "path": path.to_str().unwrap() }), ctx(dir.path().to_path_buf()), CancellationToken::new())
+        .execute(
+            json!({ "path": path.to_str().unwrap() }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
         .await
         .expect("read should succeed");
 
@@ -68,7 +78,11 @@ async fn read_file_supports_offset_and_limit() {
 async fn read_file_rejects_blocked_device_path() {
     let tool = ReadFileTool::new();
     let out = tool
-        .execute(json!({ "path": "/dev/zero" }), ctx(PathBuf::from("/")), CancellationToken::new())
+        .execute(
+            json!({ "path": "/dev/zero" }),
+            ctx(PathBuf::from("/")),
+            CancellationToken::new(),
+        )
         .await
         .expect("device path returns JSON error, not Err");
     let v = parse(out);
@@ -84,7 +98,11 @@ async fn read_file_rejects_known_binary_extension() {
 
     let tool = ReadFileTool::new();
     let out = tool
-        .execute(json!({ "path": path.to_str().unwrap() }), ctx(dir.path().to_path_buf()), CancellationToken::new())
+        .execute(
+            json!({ "path": path.to_str().unwrap() }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
         .await
         .expect("binary returns JSON error");
     let v = parse(out);
@@ -120,7 +138,11 @@ async fn read_file_reports_not_found_with_similar_files() {
 
     let tool = ReadFileTool::new();
     let out = tool
-        .execute(json!({ "path": dir.path().join("alpha.rs").to_str().unwrap() }), ctx(dir.path().to_path_buf()), CancellationToken::new())
+        .execute(
+            json!({ "path": dir.path().join("alpha.rs").to_str().unwrap() }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
         .await
         .expect("not-found returns JSON error");
     let v = parse(out);
@@ -128,7 +150,9 @@ async fn read_file_reports_not_found_with_similar_files() {
     assert!(err.contains("not found"), "got error: {err}");
     let similar = v["similar_files"].as_array().expect("similar_files array");
     assert!(!similar.is_empty(), "expected at least one suggestion");
-    assert!(similar.iter().any(|s| s.as_str().unwrap_or_default().ends_with("alpha.py")));
+    assert!(similar
+        .iter()
+        .any(|s| s.as_str().unwrap_or_default().ends_with("alpha.py")));
 }
 
 #[tokio::test]
@@ -138,7 +162,11 @@ async fn read_file_resolves_relative_path_against_working_dir() {
 
     let tool = ReadFileTool::new();
     let out = tool
-        .execute(json!({ "path": "nested.txt" }), ctx(dir.path().to_path_buf()), CancellationToken::new())
+        .execute(
+            json!({ "path": "nested.txt" }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
         .await
         .expect("read should succeed");
     let v = parse(out);
@@ -160,14 +188,22 @@ async fn read_file_caps_content_at_100k_chars() {
 
     let tool = ReadFileTool::new();
     let out = tool
-        .execute(json!({ "path": path.to_str().unwrap(), "limit": 2000 }), ctx(dir.path().to_path_buf()), CancellationToken::new())
+        .execute(
+            json!({ "path": path.to_str().unwrap(), "limit": 2000 }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
         .await
         .expect("read should succeed");
     let v = parse(out);
     let content = v["content"].as_str().unwrap();
     // Cap is 100K chars including the truncation notice; allow some slack for
     // the line-number prefix.
-    assert!(content.chars().count() <= 110_000, "content len {}", content.chars().count());
+    assert!(
+        content.chars().count() <= 110_000,
+        "content len {}",
+        content.chars().count()
+    );
     assert!(content.contains("TRUNCATED") || content.len() < body.len());
 }
 
@@ -273,11 +309,15 @@ async fn write_file_rejects_internal_status_text() {
         .await
         .expect("write should return JSON error");
     let v = parse(out);
-    assert!(v["error"].as_str().unwrap().contains("internal read_file status text"));
+    assert!(v["error"]
+        .as_str()
+        .unwrap()
+        .contains("internal read_file status text"));
 }
 
 #[tokio::test]
 async fn write_file_rejects_cross_profile_write_without_override() {
+    let _guard = with_env_lock().await;
     let dir = TempDir::new().unwrap();
     let hermes_home = dir.path().join("profiles/current");
     std::fs::create_dir_all(&hermes_home).unwrap();
@@ -300,6 +340,7 @@ async fn write_file_rejects_cross_profile_write_without_override() {
 
 #[tokio::test]
 async fn write_file_rejects_hermes_config_path() {
+    let _guard = with_env_lock().await;
     let dir = TempDir::new().unwrap();
     let hermes_home = dir.path().join("active-profile");
     std::fs::create_dir_all(&hermes_home).unwrap();
@@ -322,6 +363,7 @@ async fn write_file_rejects_hermes_config_path() {
 
 #[tokio::test]
 async fn write_file_allows_cross_profile_write_with_override() {
+    let _guard = with_env_lock().await;
     let dir = TempDir::new().unwrap();
     let hermes_home = dir.path().join("profiles/current");
     std::fs::create_dir_all(&hermes_home).unwrap();
@@ -365,11 +407,11 @@ async fn write_file_does_not_leave_temp_file_on_success() {
     let leaks: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .flatten()
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .contains(".hermes-tmp-")
-        })
+        .filter(|e| e.file_name().to_string_lossy().contains(".hermes-tmp-"))
         .collect();
-    assert!(leaks.is_empty(), "found temp leaks: {:?}", leaks.iter().map(|e| e.path()).collect::<Vec<_>>());
+    assert!(
+        leaks.is_empty(),
+        "found temp leaks: {:?}",
+        leaks.iter().map(|e| e.path()).collect::<Vec<_>>()
+    );
 }
