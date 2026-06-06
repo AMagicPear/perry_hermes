@@ -16,6 +16,10 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> AppEvent {
             AppMode::Cancelling => AppEvent::Quit,
         };
     }
+    // In Cancelling mode, ignore all other keys until the in-flight turn ends.
+    if app.mode == AppMode::Cancelling {
+        return AppEvent::Tick;
+    }
     // Ctrl-D: only quits from Idle.
     if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return match app.mode {

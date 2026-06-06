@@ -98,3 +98,30 @@ fn unknown_slash_command_is_rejected_with_system_message() {
     }
     assert_eq!(app.input, "");
 }
+
+#[test]
+fn cancelling_mode_ignores_typing() {
+    use hermes_cli::tui::event::AppMode;
+
+    let mut app = App::new_for_test();
+    app.mode = AppMode::Cancelling;
+    // Type a character — should be ignored.
+    let ev = handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+    );
+    assert!(matches!(ev, AppEvent::Tick), "expected Tick for ignored char in Cancelling; got {ev:?}");
+    assert!(app.input.is_empty(), "input must not grow in Cancelling");
+
+    // Press Enter — should be ignored (no Submit).
+    let ev = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert!(matches!(ev, AppEvent::Tick), "expected Tick for ignored Enter in Cancelling; got {ev:?}");
+    assert!(app.input.is_empty(), "input must stay empty");
+
+    // Backspace — should be ignored.
+    let ev = handle_key(
+        &mut app,
+        KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
+    );
+    assert!(matches!(ev, AppEvent::Tick), "expected Tick for ignored Backspace in Cancelling; got {ev:?}");
+}
