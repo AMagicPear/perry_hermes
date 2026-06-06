@@ -24,3 +24,4 @@ crossterm = "0.28"
 [dev-dependencies]
 tempfile = "3"
 ratatui = "0.29"
+serde_json = "1"
