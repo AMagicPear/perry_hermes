@@ -42,15 +42,19 @@ pub fn render(f: &mut Frame, app: &App) {
 
     // --- Welcome banner (one-shot) -----------------------------------------
     if !app.welcome_shown {
-        let mut banner_lines: Vec<Line> = WELCOME_BANNER
+        let banner_lines: Vec<Line> = WELCOME_BANNER
             .iter()
             .map(|row| Line::from(shimmer_spans(row)))
             .collect();
-        banner_lines.push(Line::from(TIP_LINE).dim());
         let banner = Paragraph::new(banner_lines)
             .block(Block::default().borders(Borders::NONE))
             .alignment(ratatui::layout::Alignment::Center);
         f.render_widget(banner, chunks[0]);
+        // Tip line lives in its own chunk (chunks[1]).
+        let tip = Paragraph::new(Line::from(TIP_LINE).dim())
+            .block(Block::default().borders(Borders::NONE))
+            .alignment(ratatui::layout::Alignment::Center);
+        f.render_widget(tip, chunks[1]);
     }
 
     // --- Chat scrollback ----------------------------------------------------
