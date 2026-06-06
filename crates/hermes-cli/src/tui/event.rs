@@ -1,9 +1,9 @@
 //! Internal event types flowing through the TUI's main loop.
 
-use hermes_agent::LoopEvent;
+use hermes_agent::{AgentRunError, LoopEvent, RunResult};
 
 /// A single event consumed by the `App` from any of its event sources.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum AppEvent {
     /// A raw key press from the terminal.
     Key(crossterm::event::KeyEvent),
@@ -27,6 +27,10 @@ pub enum AppEvent {
     /// translates this into `cancel.cancel()` and switches the App to
     /// `Cancelling`. The second Ctrl-C in `Cancelling` mode becomes `Quit`.
     CancelInFlight,
+    /// A spawned agent turn completed. Sent by the background task spawned
+    /// in response to a `Submit`. The main loop updates `session_history`
+    /// and resets the App to `Idle`.
+    TurnCompleted(Result<RunResult, AgentRunError>),
 }
 
 /// A single line in the chat scrollback.

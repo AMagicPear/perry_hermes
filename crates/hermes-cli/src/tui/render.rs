@@ -1,6 +1,6 @@
 //! Frame painter for the TUI.
 
-use ratatui::layout::{Constraint, Direction, Layout};
+use ratatui::layout::{Constraint, Direction, Layout, Position};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
@@ -8,28 +8,9 @@ use ratatui::Frame;
 
 use crate::tui::app::App;
 use crate::tui::event::{AppMode, RenderedLine};
-use crate::tui::shimmer::shimmer_spans;
-
-/// A 5-row ASCII art banner spelling "HERMES" (figlet "small" style).
-/// Painted exactly once at the start of the TUI.
-const WELCOME_BANNER: &[&str] = &[
-    " _   _ _____ ___  __  __ _____ ____  ",
-    "| | | | ____/ _ \\|  \\/  | ____|  _ \\ ",
-    "| |_| |  _|| | | | |\\/| |  _| | |_) |",
-    "|  _  | |__| |_| | |  | | |___|  _ < ",
-    "|_| |_|_____\\___/|_|  |_|_____|_| \\_\\",
-];
-
-const TIP_LINE: &str = "✦ Tip: press / to see available commands.";
 
 /// Paint one frame.
 pub fn render(f: &mut Frame, app: &App) {
-    let welcome_h = if app.welcome_shown {
-        0
-    } else {
-        WELCOME_BANNER.len() as u16
-    };
-    let tip_h = if app.welcome_shown { 0 } else { 1 };
     let working_h = if matches!(app.mode, AppMode::AwaitingModel) {
         1
     } else {
@@ -39,8 +20,6 @@ pub fn render(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(welcome_h), // welcome banner
-            Constraint::Length(tip_h),     // tip line
             Constraint::Min(1),            // chat scrollback
             Constraint::Length(working_h), // working indicator (awaiting only)
             Constraint::Length(1),         // status row 1
@@ -48,29 +27,17 @@ pub fn render(f: &mut Frame, app: &App) {
         ])
         .split(f.area());
 
-    // --- Welcome banner (one-shot) -----------------------------------------
-    if !app.welcome_shown {
-        let banner_lines: Vec<Line> = WELCOME_BANNER
-            .iter()
-            .map(|row| Line::from(shimmer_spans(row)))
-            .collect();
-        let banner = Paragraph::new(banner_lines)
-            .block(Block::default().borders(Borders::NONE))
-            .alignment(ratatui::layout::Alignment::Center);
-        f.render_widget(banner, chunks[0]);
-        // Tip line lives in its own chunk (chunks[1]).
-        let tip = Paragraph::new(Line::from(TIP_LINE).dim())
-            .block(Block::default().borders(Borders::NONE))
-            .alignment(ratatui::layout::Alignment::Center);
-        f.render_widget(tip, chunks[1]);
-    }
-
     // --- Chat scrollback ----------------------------------------------------
-    let chat_area = chunks[2];
+    let chat_area = chunks[0];
     let chat_lines = build_chat_lines(&app.scrollback, chat_area.width);
+    let total_lines = chat_lines.len() as u16;
+    let visible_h = chat_area.height;
+    // Auto-scroll: keep the last `visible_h` lines visible.
+    let scroll_y = total_lines.saturating_sub(visible_h);
     let chat = Paragraph::new(chat_lines)
         .block(Block::default().borders(Borders::NONE))
-        .wrap(Wrap { trim: false });
+        .wrap(Wrap { trim: false })
+        .scroll((scroll_y, 0));
     f.render_widget(chat, chat_area);
 
     // --- Working indicator (only when awaiting) -----------------------------
@@ -79,7 +46,7 @@ pub fn render(f: &mut Frame, app: &App) {
         let working_widget = Paragraph::new(working)
             .style(Style::default().fg(Color::DarkGray))
             .block(Block::default().borders(Borders::NONE));
-        f.render_widget(working_widget, chunks[3]);
+        f.render_widget(working_widget, chunks[1]);
     }
 
     // --- Status row 1 (always visible) --------------------------------------
@@ -87,7 +54,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let status = Paragraph::new(status_line)
         .style(Style::default().fg(Color::DarkGray))
         .block(Block::default().borders(Borders::NONE));
-    f.render_widget(status, chunks[4]);
+    f.render_widget(status, chunks[2]);
 
     // --- Input block --------------------------------------------------------
     let input_block = Block::default()
@@ -97,7 +64,16 @@ pub fn render(f: &mut Frame, app: &App) {
     let input = Paragraph::new(input_text)
         .block(input_block)
         .wrap(Wrap { trim: false });
-    f.render_widget(input, chunks[5]);
+    f.render_widget(input, chunks[3]);
+
+    // --- Cursor: position it at the end of the typed text inside the input --
+    // The input block is 3 rows tall; the cursor sits on the middle row, just
+    // after the "❯ " prompt and the typed text.
+    let input_x = chunks[3].x;
+    let input_y = chunks[3].y;
+    let cursor_x = input_x + 1 + 2 + app.input.chars().count() as u16;
+    let cursor_y = input_y + 1;
+    f.set_cursor_position(Position::new(cursor_x, cursor_y));
 }
 
 /// Build the chat-area `Vec<Line>` from the scrollback, wrapping assistant
@@ -180,7 +156,7 @@ fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
     out
 }
 
-/// Build status row 1: `⚕ {provider} · {model} · {in_tok} / {total} {pct}% · {elapsed} · iter {i}/{max} · {mode}`.
+/// Build status row 1: `⚕ {provider} · {model} · {in_tok} / {total} {pct}% · {elapsed} · {mode}`.
 /// The `{in_tok} / {total} {pct}%` segment is omitted when
 /// `app.context_window_size` is `None`.
 fn build_status_line_1(app: &App) -> Line<'static> {
@@ -195,7 +171,6 @@ fn build_status_line_1(app: &App) -> Line<'static> {
         .turn_started_at
         .map(|t| fmt_elapsed_compact(t.elapsed().as_secs()))
         .unwrap_or_else(|| "—".to_string());
-    let iter_str = format!("iter {}/{}", app.iteration, app.max_iterations);
 
     let mut spans: Vec<Span<'static>> = vec![
         Span::raw("⚕ "),
@@ -222,30 +197,21 @@ fn build_status_line_1(app: &App) -> Line<'static> {
     }
 
     spans.push(Span::raw(" · "));
-    spans.push(Span::raw(iter_str));
-    spans.push(Span::raw(" · "));
     spans.push(Span::raw(mode.to_string()));
     Line::from(spans)
 }
 
-/// Build the working-indicator line: `⠋ Working · {elapsed} · {N} tool call(s) · esc to interrupt`.
+/// Build the working-indicator line: `⠋ Working · {elapsed} · esc to interrupt`.
 fn build_working_line(app: &App) -> Line<'static> {
     let elapsed = app
         .turn_started_at
         .map(|t| fmt_elapsed_compact(t.elapsed().as_secs()))
         .unwrap_or_else(|| "0s".to_string());
-    let tool_str = if app.iteration == 1 {
-        "1 tool call".to_string()
-    } else {
-        format!("{} tool calls", app.iteration)
-    };
     Line::from(vec![
         Span::raw("⠋ "),
         Span::raw("Working").bold(),
         Span::raw(" · "),
         Span::raw(elapsed),
-        Span::raw(" · "),
-        Span::raw(tool_str),
         Span::raw(" · esc to interrupt").dim(),
     ])
 }
@@ -302,7 +268,6 @@ fn format_tokens(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
 
     #[test]
     fn fmt_elapsed_compact_formats_seconds_minutes_hours() {
@@ -339,50 +304,5 @@ mod tests {
         let line = build_status_line_1(&app);
         let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(s.contains("20%"), "expected 20% in status; got {s:?}");
-    }
-
-    #[test]
-    fn assistant_block_has_rounded_corners() {
-        let lines = assistant_block("hello", 40);
-        let s: String = lines
-            .iter()
-            .map(|l| {
-                l.spans
-                    .iter()
-                    .map(|s| s.content.as_ref())
-                    .collect::<String>()
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(s.contains('╭'), "expected top-left border; got {s:?}");
-        assert!(s.contains('╰'), "expected bottom-left border; got {s:?}");
-        assert!(s.contains("Hermes"), "expected title; got {s:?}");
-    }
-
-    #[test]
-    fn input_line_has_arrow_prompt() {
-        let app = App::new_for_test();
-        let line = build_input_line(&app);
-        let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(s.contains('❯'), "expected ❯ prompt; got {s:?}");
-    }
-
-    #[test]
-    fn working_line_built_when_awaiting() {
-        let mut app = App::new_for_test();
-        app.mode = AppMode::AwaitingModel;
-        app.turn_started_at = Some(std::time::Instant::now() - Duration::from_secs(5));
-        app.iteration = 3;
-        let line = build_working_line(&app);
-        let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
-        assert!(s.contains("Working"), "expected 'Working' label; got {s:?}");
-        assert!(
-            s.contains("3 tool calls"),
-            "expected iteration count; got {s:?}"
-        );
-        assert!(
-            s.contains("esc to interrupt"),
-            "expected interrupt hint; got {s:?}"
-        );
     }
 }

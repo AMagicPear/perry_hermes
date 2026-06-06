@@ -31,8 +31,6 @@ pub struct App {
     pub compression_hint: Option<String>,
     /// Conversation history accumulated across turns.
     pub session_history: Vec<Message>,
-    /// Set to `true` after the first render draws the welcome banner.
-    pub welcome_shown: bool,
     /// `Some(Instant)` while a turn is in flight (`AppMode::AwaitingModel`).
     /// `None` when idle or cancelling. Drives the elapsed-time readout in
     /// the status bar.
@@ -57,7 +55,6 @@ impl App {
             max_iterations: 0,
             compression_hint: None,
             session_history: Vec::new(),
-            welcome_shown: false,
             turn_started_at: None,
             context_window_size: None,
         }

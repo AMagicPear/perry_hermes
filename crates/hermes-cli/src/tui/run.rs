@@ -107,14 +107,21 @@ pub async fn run(
                                     app.mode = AppMode::AwaitingModel;
                                     app.turn_started_at = Some(Instant::now());
                                     let on_event = make_on_event(input_tx.clone());
-                                    let res = agent
-                                        .run_messages(
-                                            app.session_history.clone(),
-                                            &session,
-                                            cancel.clone(),
-                                            on_event,
-                                        )
-                                        .await;
+                                    // Spawn the agent call so the main event loop
+                                    // keeps redrawing while the model thinks.
+                                    let agent = Arc::clone(&agent);
+                                    let session = session.clone();
+                                    let cancel = cancel.clone();
+                                    let messages = app.session_history.clone();
+                                    let result_tx = input_tx.clone();
+                                    tokio::spawn(async move {
+                                        let res = agent
+                                            .run_messages(messages, &session, cancel, on_event)
+                                            .await;
+                                        let _ = result_tx.send(AppEvent::TurnCompleted(res));
+                                    });
+                                }
+                                AppEvent::TurnCompleted(res) => {
                                     app.turn_started_at = None;
                                     match res {
                                         Ok(run_result) => {
@@ -232,6 +239,9 @@ pub async fn run_with_backend(
                             AppEvent::Clear => {
                                 app.scrollback.clear();
                             }
+                            AppEvent::TurnCompleted(_) => {
+                                // handle_key never returns this; ignore if it somehow does.
+                            }
                             _ => {}
                         }
                     }
@@ -259,6 +269,13 @@ pub async fn run_with_backend(
                     AppEvent::CancelInFlight => {
                         app.mode = AppMode::Cancelling;
                         cancel.cancel();
+                    }
+                    AppEvent::TurnCompleted(res) => {
+                        app.turn_started_at = None;
+                        if let Err(e) = res {
+                            app.push_line(RenderedLine::System(format!("error: {e}")));
+                        }
+                        app.mode = AppMode::Idle;
                     }
                 }
             }
