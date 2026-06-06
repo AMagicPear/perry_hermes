@@ -124,7 +124,7 @@ fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
                 model_name,
                 config.agent.context_window_size,
             )
-                .with_summary_provider(Arc::clone(&provider)),
+            .with_summary_provider(Arc::clone(&provider)),
         ))
             as Arc<TokioMutex<dyn hermes_core::ContextEngine>>)
     } else {

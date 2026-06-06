@@ -25,10 +25,7 @@ pub fn shimmer_spans(text: &str) -> Vec<Span<'static>> {
 }
 
 /// Test-friendly variant: caller supplies the elapsed time so snapshots are stable.
-pub fn shimmer_spans_with_sweep(
-    text: &str,
-    elapsed: std::time::Duration,
-) -> Vec<Span<'static>> {
+pub fn shimmer_spans_with_sweep(text: &str, elapsed: std::time::Duration) -> Vec<Span<'static>> {
     let chars: Vec<char> = text.chars().collect();
     if chars.is_empty() {
         return Vec::new();
@@ -36,8 +33,7 @@ pub fn shimmer_spans_with_sweep(
     let padding = 10usize;
     let period = chars.len() + padding * 2;
     let sweep_seconds = 2.0f32;
-    let pos_f =
-        (elapsed.as_secs_f32() % sweep_seconds) / sweep_seconds * (period as f32);
+    let pos_f = (elapsed.as_secs_f32() % sweep_seconds) / sweep_seconds * (period as f32);
     let pos = pos_f as usize;
     let band_half_width = 5.0_f32;
 
@@ -93,10 +89,7 @@ mod tests {
     fn sweep_position_zero_dim_styles() {
         // At time=0 the sweep is at the leftmost position. Far-edge chars
         // (right side of "abcdefghij") should be DIM (intensity 0).
-        let spans = shimmer_spans_with_sweep(
-            "abcdefghijklmnop",
-            std::time::Duration::ZERO,
-        );
+        let spans = shimmer_spans_with_sweep("abcdefghijklmnop", std::time::Duration::ZERO);
         let last = &spans[spans.len() - 1];
         assert!(
             last.style.add_modifier.contains(Modifier::DIM),
@@ -110,8 +103,8 @@ mod tests {
         // At a sweep position that lands in the middle of the string, at
         // least one char should be BOLD (the center of the band).
         let text = "abcdefghijklmnopqrstuvwxyz"; // 26 chars
-        // sweep_seconds=2, padding=10, period=46. Set elapsed so pos lands at 13.
-        // pos_f = (elapsed_secs % 2) / 2 * 46. We want pos=13 → elapsed_secs ~= 0.565.
+                                                 // sweep_seconds=2, padding=10, period=46. Set elapsed so pos lands at 13.
+                                                 // pos_f = (elapsed_secs % 2) / 2 * 46. We want pos=13 → elapsed_secs ~= 0.565.
         let elapsed = std::time::Duration::from_secs_f32(0.565);
         let spans = shimmer_spans_with_sweep(text, elapsed);
         let any_bold = spans

@@ -328,10 +328,6 @@ async fn context_compressor_new_uses_provided_context_length() {
     assert_eq!(compressor.threshold_tokens(), 100_000);
 
     // None falls back to 128K.
-    let compressor = ContextCompressor::new(
-        CompressorConfig::default(),
-        "test".into(),
-        None,
-    );
+    let compressor = ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
     assert_eq!(compressor.threshold_tokens(), 64_000); // 128K * 0.50
 }

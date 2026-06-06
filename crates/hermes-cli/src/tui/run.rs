@@ -266,7 +266,6 @@ pub async fn run_with_backend(
     }
 }
 
-
 /// A `Backend` wrapper around `Arc<Mutex<TestBackend>>` so that:
 /// - the TUI's `Terminal` can borrow the backend during the loop
 /// - the caller retains an `Arc` clone to inspect the buffer afterward

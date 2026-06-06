@@ -110,12 +110,18 @@ fn cancelling_mode_ignores_typing() {
         &mut app,
         KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
     );
-    assert!(matches!(ev, AppEvent::Tick), "expected Tick for ignored char in Cancelling; got {ev:?}");
+    assert!(
+        matches!(ev, AppEvent::Tick),
+        "expected Tick for ignored char in Cancelling; got {ev:?}"
+    );
     assert!(app.input.is_empty(), "input must not grow in Cancelling");
 
     // Press Enter — should be ignored (no Submit).
     let ev = handle_key(&mut app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
-    assert!(matches!(ev, AppEvent::Tick), "expected Tick for ignored Enter in Cancelling; got {ev:?}");
+    assert!(
+        matches!(ev, AppEvent::Tick),
+        "expected Tick for ignored Enter in Cancelling; got {ev:?}"
+    );
     assert!(app.input.is_empty(), "input must stay empty");
 
     // Backspace — should be ignored.
@@ -123,5 +129,8 @@ fn cancelling_mode_ignores_typing() {
         &mut app,
         KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE),
     );
-    assert!(matches!(ev, AppEvent::Tick), "expected Tick for ignored Backspace in Cancelling; got {ev:?}");
+    assert!(
+        matches!(ev, AppEvent::Tick),
+        "expected Tick for ignored Backspace in Cancelling; got {ev:?}"
+    );
 }

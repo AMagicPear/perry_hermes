@@ -118,8 +118,14 @@ fn welcome_banner_visible_on_first_render() {
             found_tip = true;
         }
     }
-    assert!(found_banner, "expected HERMES banner art in first 6 rows; text:\n{text}");
-    assert!(found_tip, "expected tip line in first 6 rows; text:\n{text}");
+    assert!(
+        found_banner,
+        "expected HERMES banner art in first 6 rows; text:\n{text}"
+    );
+    assert!(
+        found_tip,
+        "expected tip line in first 6 rows; text:\n{text}"
+    );
 }
 
 #[test]
@@ -155,9 +161,18 @@ fn assistant_message_in_rounded_box() {
     terminal.draw(|f| render(f, &app)).expect("draw");
     let buffer = terminal.backend().buffer().clone();
     let text = full_text(&buffer);
-    assert!(text.contains('╭'), "expected top-left ╭ border; got:\n{text}");
-    assert!(text.contains('╰'), "expected bottom-left ╰ border; got:\n{text}");
-    assert!(text.contains("Hermes"), "expected Hermes title; got:\n{text}");
+    assert!(
+        text.contains('╭'),
+        "expected top-left ╭ border; got:\n{text}"
+    );
+    assert!(
+        text.contains('╰'),
+        "expected bottom-left ╰ border; got:\n{text}"
+    );
+    assert!(
+        text.contains("Hermes"),
+        "expected Hermes title; got:\n{text}"
+    );
     assert!(
         text.contains("hello there"),
         "expected assistant text; got:\n{text}"
@@ -180,7 +195,10 @@ fn status_row_shows_context_percent_when_configured() {
     let status_y = buffer.area.height.saturating_sub(4);
     let row = row_at(&buffer, status_y);
     assert!(row.contains("20%"), "expected 20% in status; got {row:?}");
-    assert!(row.contains("200.0K"), "expected 200.0K tokens; got {row:?}");
+    assert!(
+        row.contains("200.0K"),
+        "expected 200.0K tokens; got {row:?}"
+    );
     assert!(row.contains("1.0M"), "expected 1.0M total; got {row:?}");
 }
 

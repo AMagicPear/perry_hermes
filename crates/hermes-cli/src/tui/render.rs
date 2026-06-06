@@ -24,15 +24,23 @@ const TIP_LINE: &str = "✦ Tip: press / to see available commands.";
 
 /// Paint one frame.
 pub fn render(f: &mut Frame, app: &App) {
-    let welcome_h = if app.welcome_shown { 0 } else { WELCOME_BANNER.len() as u16 };
+    let welcome_h = if app.welcome_shown {
+        0
+    } else {
+        WELCOME_BANNER.len() as u16
+    };
     let tip_h = if app.welcome_shown { 0 } else { 1 };
-    let working_h = if matches!(app.mode, AppMode::AwaitingModel) { 1 } else { 0 };
+    let working_h = if matches!(app.mode, AppMode::AwaitingModel) {
+        1
+    } else {
+        0
+    };
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(welcome_h), // welcome banner
-            Constraint::Length(tip_h),      // tip line
+            Constraint::Length(tip_h),     // tip line
             Constraint::Min(1),            // chat scrollback
             Constraint::Length(working_h), // working indicator (awaiting only)
             Constraint::Length(1),         // status row 1
@@ -131,8 +139,7 @@ fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
     // fill the rest with `─`.
     let top_prefix = "╭─";
     let top_suffix = "╮";
-    let top_filler_dashes =
-        w.saturating_sub(top_prefix.len() + title.len() + top_suffix.len());
+    let top_filler_dashes = w.saturating_sub(top_prefix.len() + title.len() + top_suffix.len());
     let top = format!("{top_prefix}{title}{}", "─".repeat(top_filler_dashes));
     // Bottom border: `╰─...─╯`
     let bot_prefix = "╰─";
@@ -159,10 +166,7 @@ fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
             current.push(' ');
             current.push_str(&word);
         } else {
-            out.push(Line::from(format!(
-                "│ {:<inner_w$} │",
-                current
-            )));
+            out.push(Line::from(format!("│ {:<inner_w$} │", current)));
             current = word;
         }
     }
@@ -250,7 +254,9 @@ fn build_working_line(app: &App) -> Line<'static> {
 fn build_input_line(app: &App) -> Line<'static> {
     let prompt = Span::styled(
         "❯ ",
-        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
     );
     if app.input.is_empty() {
         Line::from(vec![

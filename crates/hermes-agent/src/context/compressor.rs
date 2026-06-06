@@ -295,11 +295,7 @@ pub struct ContextCompressor {
 }
 
 impl ContextCompressor {
-    pub fn new(
-        config: CompressorConfig,
-        model: String,
-        context_length: Option<u64>,
-    ) -> Self {
+    pub fn new(config: CompressorConfig, model: String, context_length: Option<u64>) -> Self {
         let context_length = context_length.unwrap_or(128_000);
         let threshold_tok = config.threshold_tokens(context_length);
         Self {
@@ -525,7 +521,8 @@ mod tests {
 
     #[test]
     fn on_session_reset_clears_state() {
-        let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
+        let mut compressor =
+            ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
         compressor.previous_summary = Some("old summary".into());
         compressor.ineffective_count = 5;
 
@@ -549,7 +546,8 @@ mod tests {
 
     #[test]
     fn should_compress_returns_false_after_two_ineffective() {
-        let mut compressor = ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
+        let mut compressor =
+            ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
         assert!(compressor.should_compress());
 
         compressor.ineffective_count = 1;
