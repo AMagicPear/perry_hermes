@@ -141,7 +141,10 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
                 history.pop();
                 eprintln!();
             }
-            Err(AgentRunError::FailedTurn { failed_turn, source }) => {
+            Err(AgentRunError::FailedTurn {
+                failed_turn,
+                source,
+            }) => {
                 eprintln!("error: provider error: {source}");
                 history = failed_turn.messages;
                 eprintln!();

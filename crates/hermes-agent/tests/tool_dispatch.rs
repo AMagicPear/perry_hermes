@@ -233,9 +233,15 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
         .expect_err("loop should surface provider failure with partial history");
 
     match err {
-        AgentRunError::FailedTurn { failed_turn, source } => {
+        AgentRunError::FailedTurn {
+            failed_turn,
+            source,
+        } => {
             let messages = failed_turn.messages;
-            assert!(matches!(source, hermes_core::ProviderError::InvalidResponse(_)));
+            assert!(matches!(
+                source,
+                hermes_core::ProviderError::InvalidResponse(_)
+            ));
             assert_eq!(messages.len(), 4);
             assert_eq!(messages[0].role, Role::User);
             assert_eq!(messages[1].role, Role::Assistant);
@@ -299,7 +305,10 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
         .expect_err("loop should keep partial streamed text on provider failure");
 
     match err {
-        AgentRunError::FailedTurn { failed_turn, source } => {
+        AgentRunError::FailedTurn {
+            failed_turn,
+            source,
+        } => {
             let messages = failed_turn.messages;
             assert!(matches!(source, hermes_core::ProviderError::Transport(_)));
             assert_eq!(messages.len(), 3);
@@ -315,9 +324,9 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
                 Content::Text(s) => s,
                 _ => panic!("synthetic error should be text"),
             };
-            assert!(
-                error_text.contains("Turn interrupted by error: provider error: transport error: stream dropped")
-            );
+            assert!(error_text.contains(
+                "Turn interrupted by error: provider error: transport error: stream dropped"
+            ));
         }
         other => panic!("expected FailedTurn, got {other:?}"),
     }

@@ -110,10 +110,7 @@ impl Provider for ScriptedProvider {
             ScriptedStep::Deltas(deltas) => Ok(Box::pin(stream::iter(deltas.into_iter().map(Ok)))),
             ScriptedStep::Error(err) => Err(err),
             ScriptedStep::DeltasThenError(deltas, err) => Ok(Box::pin(stream::iter(
-                deltas
-                    .into_iter()
-                    .map(Ok)
-                    .chain(std::iter::once(Err(err))),
+                deltas.into_iter().map(Ok).chain(std::iter::once(Err(err))),
             ))),
         }
     }

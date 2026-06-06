@@ -156,7 +156,11 @@ impl AgentLoop {
             let tools = self.registry.schemas();
 
             on_event(LoopEvent::Thinking);
-            let mut stream = match self.provider.stream(&messages, &tools, cancel.clone()).await {
+            let mut stream = match self
+                .provider
+                .stream(&messages, &tools, cancel.clone())
+                .await
+            {
                 Ok(stream) => stream,
                 Err(e) => {
                     return Err(Self::provider_failure(messages, None, initial_len, e));
