@@ -106,7 +106,9 @@ impl Tool for SkillViewTool {
                 let needle = direct.file_name().and_then(|s| s.to_str()).unwrap_or("");
                 candidates = skills
                     .iter()
-                    .filter(|s| s.source_path.parent() == Some(direct.as_path()) || s.name == needle)
+                    .filter(|s| {
+                        s.source_path.parent() == Some(direct.as_path()) || s.name == needle
+                    })
                     .collect();
             }
         }
@@ -123,8 +125,10 @@ impl Tool for SkillViewTool {
             });
         }
         if candidates.len() > 1 {
-            let collisions: Vec<String> =
-                candidates.iter().map(|s| s.qualified_name.clone()).collect();
+            let collisions: Vec<String> = candidates
+                .iter()
+                .map(|s| s.qualified_name.clone())
+                .collect();
             return Ok(ToolOutput {
                 content: json!({
                     "success": false,
@@ -151,8 +155,9 @@ impl Tool for SkillViewTool {
             Ok(b) => b,
             Err(e) => {
                 return Ok(ToolOutput {
-                    content: json!({"success": false, "error": format!("read SKILL.md failed: {e}")})
-                        .to_string(),
+                    content:
+                        json!({"success": false, "error": format!("read SKILL.md failed: {e}")})
+                            .to_string(),
                 });
             }
         };
@@ -173,7 +178,11 @@ impl Tool for SkillViewTool {
     }
 }
 
-fn read_linked_file(skill: &hermes_skills::Skill, skill_root: &Path, file_path: &str) -> ToolOutput {
+fn read_linked_file(
+    skill: &hermes_skills::Skill,
+    skill_root: &Path,
+    file_path: &str,
+) -> ToolOutput {
     if file_path.contains("..") {
         return ToolOutput {
             content: json!({
@@ -228,7 +237,8 @@ fn read_linked_file(skill: &hermes_skills::Skill, skill_root: &Path, file_path: 
         Ok(b) => b,
         Err(e) => {
             return ToolOutput {
-                content: json!({"success": false, "error": format!("read failed: {e}")}).to_string(),
+                content: json!({"success": false, "error": format!("read failed: {e}")})
+                    .to_string(),
             };
         }
     };

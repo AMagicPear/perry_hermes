@@ -39,14 +39,24 @@ fn hermes_errors_when_no_config_is_found() {
         .output()
         .expect("failed to spawn hermes");
 
-    assert!(!output.status.success(), "expected non-zero exit, got {:?}", output.status);
+    assert!(
+        !output.status.success(),
+        "expected non-zero exit, got {:?}",
+        output.status
+    );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("no hermes config found"),
         "stderr should explain the lookup failure, got: {stderr}"
     );
-    assert!(stderr.contains(".perry_hermes"), "stderr should name the home path: {stderr}");
-    assert!(stderr.contains("hermes.toml"), "stderr should name the cwd path: {stderr}");
+    assert!(
+        stderr.contains(".perry_hermes"),
+        "stderr should name the home path: {stderr}"
+    );
+    assert!(
+        stderr.contains("hermes.toml"),
+        "stderr should name the cwd path: {stderr}"
+    );
 }
 
 #[test]
@@ -94,7 +104,7 @@ fn hermes_picks_up_cwd_hermes_toml() {
 #[test]
 fn hermes_respects_explicit_config_flag() {
     let home = scratch("flaghome"); // empty HOME
-    let cwd = scratch("flagcwd");   // empty cwd
+    let cwd = scratch("flagcwd"); // empty cwd
     let config_dir = scratch("flagcfg");
     let config_path = config_dir.join("my-config.toml");
     fs::write(
@@ -118,5 +128,9 @@ fn hermes_respects_explicit_config_flag() {
     drop(child.stdin.take());
 
     let output = child.wait_with_output().expect("failed to wait on hermes");
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

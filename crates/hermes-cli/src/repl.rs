@@ -60,44 +60,49 @@ pub(crate) async fn run_repl(agent: AIAgent, session: &SessionContext) -> anyhow
         ctrl_c.enter_turn(cancel.clone());
 
         let result = agent
-            .run_messages(history.clone(), session, cancel.clone(), |event| match event {
-                LoopEvent::Thinking => {
-                    eprint!("… ");
-                    let _ = stdout.flush();
-                }
-                LoopEvent::ToolCallStarted { call, .. } => {
-                    let preview = truncate_str(&call.arguments.to_string(), 80);
-                    eprint!("\n  📦 {}({})", call.name, preview);
-                    let _ = stdout.flush();
-                }
-                LoopEvent::ToolCallFinished { call, result } => {
-                    match &result {
-                        Ok(out) => {
-                            let preview = truncate_str(&out.content, 160);
-                            eprint!("\n  ← {} {}", tool_emoji(&call.name), preview);
-                        }
-                        Err(e) => {
-                            eprint!("\n  ← ❌ {e}");
-                        }
+            .run_messages(
+                history.clone(),
+                session,
+                cancel.clone(),
+                |event| match event {
+                    LoopEvent::Thinking => {
+                        eprint!("… ");
+                        let _ = stdout.flush();
                     }
-                    let _ = stdout.flush();
-                }
-                LoopEvent::AssistantMessage(_) => {
-                    eprintln!();
-                }
-                LoopEvent::LengthLimit => eprintln!("[hit length limit]"),
-                LoopEvent::IterationsExhausted => eprintln!("[max iterations]"),
-                LoopEvent::Cancelled => eprintln!("[cancelled]"),
-                LoopEvent::ContentDelta(s) => {
-                    eprint!("{s}");
-                    let _ = stdout.flush();
-                }
-                LoopEvent::ReasoningDelta(s) => {
-                    eprint!("\x1b[2m{s}\x1b[0m");
-                    let _ = stdout.flush();
-                }
-                LoopEvent::ToolCallPartial(_) => {}
-            })
+                    LoopEvent::ToolCallStarted { call, .. } => {
+                        let preview = truncate_str(&call.arguments.to_string(), 80);
+                        eprint!("\n  📦 {}({})", call.name, preview);
+                        let _ = stdout.flush();
+                    }
+                    LoopEvent::ToolCallFinished { call, result } => {
+                        match &result {
+                            Ok(out) => {
+                                let preview = truncate_str(&out.content, 160);
+                                eprint!("\n  ← {} {}", tool_emoji(&call.name), preview);
+                            }
+                            Err(e) => {
+                                eprint!("\n  ← ❌ {e}");
+                            }
+                        }
+                        let _ = stdout.flush();
+                    }
+                    LoopEvent::AssistantMessage(_) => {
+                        eprintln!();
+                    }
+                    LoopEvent::LengthLimit => eprintln!("[hit length limit]"),
+                    LoopEvent::IterationsExhausted => eprintln!("[max iterations]"),
+                    LoopEvent::Cancelled => eprintln!("[cancelled]"),
+                    LoopEvent::ContentDelta(s) => {
+                        eprint!("{s}");
+                        let _ = stdout.flush();
+                    }
+                    LoopEvent::ReasoningDelta(s) => {
+                        eprint!("\x1b[2m{s}\x1b[0m");
+                        let _ = stdout.flush();
+                    }
+                    LoopEvent::ToolCallPartial(_) => {}
+                },
+            )
             .await;
 
         ctrl_c.exit_turn();

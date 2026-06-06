@@ -121,15 +121,62 @@ pub(super) fn is_binary_extension(ext: &str) -> bool {
     let lower = ext.to_ascii_lowercase();
     matches!(
         lower.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "heic" | "avif" | "ico"
-            | "pdf" | "zip" | "tar" | "gz" | "tgz" | "bz2" | "xz" | "7z" | "rar"
-            | "exe" | "dll" | "so" | "dylib" | "class" | "pyc" | "wasm"
-            | "mp4" | "mp3" | "wav" | "flac" | "ogg" | "m4a"
-            | "ttf" | "otf" | "woff" | "woff2" | "eot"
-            | "psd" | "ai" | "sketch" | "fig" | "blend"
-            | "glb" | "gltf" | "obj" | "fbx" | "stl" | "3ds" | "dae"
-            | "db" | "sqlite" | "sqlite3"
-            | "bin" | "dat" | "iso" | "dmg" | "deb" | "rpm"
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "heic"
+            | "avif"
+            | "ico"
+            | "pdf"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "tgz"
+            | "bz2"
+            | "xz"
+            | "7z"
+            | "rar"
+            | "exe"
+            | "dll"
+            | "so"
+            | "dylib"
+            | "class"
+            | "pyc"
+            | "wasm"
+            | "mp4"
+            | "mp3"
+            | "wav"
+            | "flac"
+            | "ogg"
+            | "m4a"
+            | "ttf"
+            | "otf"
+            | "woff"
+            | "woff2"
+            | "eot"
+            | "psd"
+            | "ai"
+            | "sketch"
+            | "fig"
+            | "blend"
+            | "glb"
+            | "gltf"
+            | "obj"
+            | "fbx"
+            | "stl"
+            | "3ds"
+            | "dae"
+            | "db"
+            | "sqlite"
+            | "sqlite3"
+            | "bin"
+            | "dat"
+            | "iso"
+            | "dmg"
+            | "deb"
+            | "rpm"
             | "svg"
     )
 }
@@ -189,8 +236,10 @@ pub(super) fn suggest_similar_files(path: &Path) -> Vec<String> {
                 .chars()
                 .filter(|c| c.is_ascii_alphanumeric())
                 .collect();
-            let cand: std::collections::HashSet<char> =
-                lname.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+            let cand: std::collections::HashSet<char> = lname
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect();
             let inter = common.intersection(&cand).count();
             let larger = common.len().max(cand.len());
             if larger > 0 && inter * 5 >= larger * 2 {
@@ -257,5 +306,8 @@ fn normalize_path_string(input: &str) -> String {
 }
 
 fn has_path_prefix(path: &str, prefix: &str) -> bool {
-    path == prefix || path.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('/'))
+    path == prefix
+        || path
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('/'))
 }

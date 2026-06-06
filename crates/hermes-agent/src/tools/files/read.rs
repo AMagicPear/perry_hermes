@@ -83,7 +83,11 @@ impl Tool for ReadFileTool {
             .get("path")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidArgs("missing 'path'".into()))?;
-        let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(1).max(1);
+        let offset = args
+            .get("offset")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1)
+            .max(1);
         let limit = args
             .get("limit")
             .and_then(|v| v.as_u64())
@@ -92,11 +96,17 @@ impl Tool for ReadFileTool {
 
         let resolved = match resolve_user_path(path_str, &ctx.working_dir) {
             Ok(p) => p,
-            Err(msg) => return Ok(ToolOutput { content: json!({"error": msg}).to_string() }),
+            Err(msg) => {
+                return Ok(ToolOutput {
+                    content: json!({"error": msg}).to_string(),
+                })
+            }
         };
 
         if let Some(msg) = blocked_path_message(&resolved) {
-            return Ok(ToolOutput { content: json!({"error": msg}).to_string() });
+            return Ok(ToolOutput {
+                content: json!({"error": msg}).to_string(),
+            });
         }
 
         if let Some(ext) = resolved.extension().and_then(|s| s.to_str()) {
@@ -121,7 +131,9 @@ impl Tool for ReadFileTool {
                     "error": format!("File not found: {}", path_str),
                     "similar_files": similar,
                 });
-                return Ok(ToolOutput { content: body.to_string() });
+                return Ok(ToolOutput {
+                    content: body.to_string(),
+                });
             }
             Err(e) => {
                 return Ok(ToolOutput {

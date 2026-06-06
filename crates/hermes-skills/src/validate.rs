@@ -10,7 +10,8 @@ const RESERVED: &[&str] = &["anthropic", "claude"];
 fn is_shaped_like_name(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= MAX_NAME_LEN
-        && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
         && !s.contains('<')
         && !s.contains('>')
         && !RESERVED.contains(&s)
@@ -63,8 +64,14 @@ mod tests {
             !is_valid_name(&"a".repeat(MAX_NAME_LEN + 1)),
             "over-length should be rejected"
         );
-        assert!(!is_valid_name("foo<bar>baz"), "XML brackets should be rejected");
-        assert!(!is_valid_name("anthropic"), "reserved word should be rejected");
+        assert!(
+            !is_valid_name("foo<bar>baz"),
+            "XML brackets should be rejected"
+        );
+        assert!(
+            !is_valid_name("anthropic"),
+            "reserved word should be rejected"
+        );
     }
 
     #[test]

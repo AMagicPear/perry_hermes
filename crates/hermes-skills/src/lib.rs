@@ -30,10 +30,7 @@ pub fn render_system_prompt_block(skills: &[Skill]) -> String {
 
     for s in skills {
         match &s.category {
-            Some(c) => categorized
-                .entry(c.clone())
-                .or_default()
-                .push(s),
+            Some(c) => categorized.entry(c.clone()).or_default().push(s),
             None => uncategorized.push(s),
         }
     }
@@ -157,10 +154,7 @@ fn parse_one(loc: &layout::SkillLocation) -> Option<Skill> {
     let raw = match std::fs::read_to_string(&loc.skill_md) {
         Ok(s) => s,
         Err(e) => {
-            tracing::warn!(
-                "skipping {}: failed to read: {e}",
-                loc.skill_md.display()
-            );
+            tracing::warn!("skipping {}: failed to read: {e}", loc.skill_md.display());
             return None;
         }
     };
@@ -168,10 +162,7 @@ fn parse_one(loc: &layout::SkillLocation) -> Option<Skill> {
     let (fm, body) = match frontmatter::parse(&raw) {
         Some(pair) => pair,
         None => {
-            tracing::warn!(
-                "skipping {}: no valid frontmatter",
-                loc.skill_md.display()
-            );
+            tracing::warn!("skipping {}: no valid frontmatter", loc.skill_md.display());
             return None;
         }
     };
@@ -281,9 +272,7 @@ mod tests {
     const VALID_FM: &str = "---\nname: {NAME}\ndescription: \"{DESC}\"\n---\nbody\n";
 
     fn fm(name: &str, desc: &str) -> String {
-        VALID_FM
-            .replace("{NAME}", name)
-            .replace("{DESC}", desc)
+        VALID_FM.replace("{NAME}", name).replace("{DESC}", desc)
     }
 
     #[test]
@@ -335,7 +324,11 @@ mod tests {
         // missing frontmatter
         write_skill(tmp.path(), "no-fm/SKILL.md", "# Just markdown\n");
         // frontmatter missing required field
-        write_skill(tmp.path(), "no-desc/SKILL.md", "---\nname: no-desc\n---\nbody\n");
+        write_skill(
+            tmp.path(),
+            "no-desc/SKILL.md",
+            "---\nname: no-desc\n---\nbody\n",
+        );
         // one good skill alongside
         write_skill(tmp.path(), "ok/SKILL.md", &fm("ok", "fine"));
 
@@ -347,16 +340,8 @@ mod tests {
     #[test]
     fn allows_same_name_in_different_categories() {
         let tmp = tempfile::tempdir().unwrap();
-        write_skill(
-            tmp.path(),
-            "cat-a/foo/SKILL.md",
-            &fm("foo", "in cat a"),
-        );
-        write_skill(
-            tmp.path(),
-            "cat-b/foo/SKILL.md",
-            &fm("foo", "in cat b"),
-        );
+        write_skill(tmp.path(), "cat-a/foo/SKILL.md", &fm("foo", "in cat a"));
+        write_skill(tmp.path(), "cat-b/foo/SKILL.md", &fm("foo", "in cat b"));
         let skills = load_all(tmp.path()).unwrap();
         assert_eq!(skills.len(), 2);
         let mut qns: Vec<_> = skills.iter().map(|s| s.qualified_name.clone()).collect();
@@ -401,11 +386,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_skill(tmp.path(), "zeta/SKILL.md", &fm("zeta", "z"));
         write_skill(tmp.path(), "alpha/SKILL.md", &fm("alpha", "a"));
-        write_skill(
-            tmp.path(),
-            "cat-b/beta/SKILL.md",
-            &fm("beta", "b in cat-b"),
-        );
+        write_skill(tmp.path(), "cat-b/beta/SKILL.md", &fm("beta", "b in cat-b"));
         write_skill(
             tmp.path(),
             "cat-a/gamma/SKILL.md",
@@ -414,10 +395,7 @@ mod tests {
         let skills = load_all(tmp.path()).unwrap();
         let qns: Vec<_> = skills.iter().map(|s| s.qualified_name.as_str()).collect();
         // Categorized first (cat-a < cat-b), then uncat; within each group, alpha order.
-        assert_eq!(
-            qns,
-            vec!["cat-a.gamma", "cat-b.beta", "alpha", "zeta"]
-        );
+        assert_eq!(qns, vec!["cat-a.gamma", "cat-b.beta", "alpha", "zeta"]);
     }
 
     #[test]
@@ -505,6 +483,9 @@ mod tests {
     fn render_block_includes_forward_reference_to_skill_view_tool() {
         let skills = vec![make_skill("foo", None, "x")];
         let block = render_system_prompt_block(&skills);
-        assert!(block.contains("skill_view"), "should reference skill_view tool for Phase 12");
+        assert!(
+            block.contains("skill_view"),
+            "should reference skill_view tool for Phase 12"
+        );
     }
 }

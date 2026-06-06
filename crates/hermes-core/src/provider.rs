@@ -113,4 +113,3 @@ pub struct CompletionDelta {
 // import path used by `hermes-loop`. The implementation lives in
 // `crate::accumulator`; `provider.rs` keeps the trait + delta types only.
 pub use crate::accumulator::{accumulate_stream, StreamAccumulator};
-

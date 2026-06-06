@@ -12,7 +12,9 @@ pub(crate) fn resolve_config_path(explicit: Option<&Path>) -> anyhow::Result<Pat
 
     let mut tried = Vec::new();
     if let Some(home) = std::env::var_os("HOME") {
-        let p = PathBuf::from(home).join(".perry_hermes").join("config.toml");
+        let p = PathBuf::from(home)
+            .join(".perry_hermes")
+            .join("config.toml");
         tried.push(p.clone());
         if p.exists() {
             return Ok(p);

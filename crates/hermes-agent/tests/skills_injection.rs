@@ -185,7 +185,9 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    let custom_idx = text.find("CUSTOM-PROMPT-MARKER").expect("custom prompt present");
+    let custom_idx = text
+        .find("CUSTOM-PROMPT-MARKER")
+        .expect("custom prompt present");
     let skills_idx = text.find("Available skills").expect("skills block present");
     assert!(custom_idx < skills_idx);
     assert!(text.contains("**rust-core-style**: Rust style"));

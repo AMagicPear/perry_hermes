@@ -78,12 +78,7 @@ impl Tool for SkillListTool {
         let mut filtered: Vec<&hermes_skills::Skill> = skills
             .iter()
             .filter(|s| match &category_filter {
-                Some(c) => {
-                    s.category
-                        .as_deref()
-                        .map(|x| x.to_ascii_lowercase())
-                        == Some(c.clone())
-                }
+                Some(c) => s.category.as_deref().map(|x| x.to_ascii_lowercase()) == Some(c.clone()),
                 None => true,
             })
             .collect();
@@ -93,7 +88,8 @@ impl Tool for SkillListTool {
             ka.cmp(&kb)
         });
 
-        let mut categories: Vec<String> = skills.iter().filter_map(|s| s.category.clone()).collect();
+        let mut categories: Vec<String> =
+            skills.iter().filter_map(|s| s.category.clone()).collect();
         categories.sort();
         categories.dedup();
 

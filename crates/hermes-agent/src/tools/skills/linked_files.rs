@@ -19,7 +19,11 @@ pub(super) fn discover_linked_files(skill_root: &Path) -> Value {
             .flatten()
             .filter_map(|entry| entry.file_name().into_string().ok())
             .filter(|n| !n.starts_with('.') && n != "SKILL.md")
-            .filter(|n| !["references", "templates", "assets", "scripts"].iter().any(|b| b == n))
+            .filter(|n| {
+                !["references", "templates", "assets", "scripts"]
+                    .iter()
+                    .any(|b| b == n)
+            })
             .collect(),
         Err(_) => Vec::new(),
     };
@@ -65,7 +69,10 @@ fn collect_bucket_files(
             continue;
         }
         if let Some(exts) = allowed_extensions {
-            let ext = path.extension().and_then(|s| s.to_str()).unwrap_or_default();
+            let ext = path
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
             if !exts.contains(&ext) {
                 continue;
             }

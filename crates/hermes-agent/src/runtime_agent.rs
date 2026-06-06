@@ -8,11 +8,11 @@ use hermes_core::tool::{ToolContext, ToolPermissions};
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{HermesConfig, ProviderKind};
-use crate::provider_factory::build_provider;
 use crate::prompting::{
     build_runtime_system_prompt, compose_base_system_prompt, inject_system_prompt,
     resolve_skills_dir,
 };
+use crate::provider_factory::build_provider;
 use crate::session::SessionContext;
 use crate::tool_catalog::build_registry;
 
@@ -80,11 +80,9 @@ impl AIAgent {
         };
         let messages = inject_system_prompt(
             messages,
-            self.base_system_prompt
-                .as_deref()
-                .map(|base| {
-                    build_runtime_system_prompt(base, session, self.provider_name.as_deref())
-                }),
+            self.base_system_prompt.as_deref().map(|base| {
+                build_runtime_system_prompt(base, session, self.provider_name.as_deref())
+            }),
         );
         self.loop_.run(messages, ctx, cancel, on_event).await
     }
@@ -148,7 +146,8 @@ mod tests {
 
     #[test]
     fn from_config_succeeds_for_echo_provider() {
-        let agent = AIAgent::from_config(echo_config()).expect("echo should build with no env vars");
+        let agent =
+            AIAgent::from_config(echo_config()).expect("echo should build with no env vars");
         drop(agent);
     }
 
@@ -167,7 +166,10 @@ mod tests {
             .err()
             .expect("expected from_config to fail");
         let msg = format!("{err:#}");
-        assert!(msg.contains("model"), "error should name the missing field: {msg}");
+        assert!(
+            msg.contains("model"),
+            "error should name the missing field: {msg}"
+        );
     }
 
     #[test]
@@ -185,7 +187,10 @@ mod tests {
             .err()
             .expect("expected from_config to fail");
         let msg = format!("{err:#}");
-        assert!(msg.contains("base_url"), "error should name the missing field: {msg}");
+        assert!(
+            msg.contains("base_url"),
+            "error should name the missing field: {msg}"
+        );
     }
 
     #[test]
@@ -285,10 +290,18 @@ mod tests {
 
     #[async_trait]
     impl Tool for CaptureTool {
-        fn name(&self) -> &str { "capture" }
-        fn description(&self) -> &str { "test tool that captures ToolContext" }
-        fn parameters_schema(&self) -> Value { json!({"type": "object", "properties": {}}) }
-        fn toolset(&self) -> &'static str { "core" }
+        fn name(&self) -> &str {
+            "capture"
+        }
+        fn description(&self) -> &str {
+            "test tool that captures ToolContext"
+        }
+        fn parameters_schema(&self) -> Value {
+            json!({"type": "object", "properties": {}})
+        }
+        fn toolset(&self) -> &'static str {
+            "core"
+        }
         async fn execute(
             &self,
             _args: Value,
@@ -296,7 +309,9 @@ mod tests {
             _cancel: CancellationToken,
         ) -> Result<ToolOutput, ToolError> {
             *self.captured.lock().unwrap() = Some(ctx);
-            Ok(ToolOutput { content: "ok".into() })
+            Ok(ToolOutput {
+                content: "ok".into(),
+            })
         }
     }
 
@@ -337,7 +352,10 @@ mod tests {
             .expect("run should succeed");
 
         let ctx = captured.lock().unwrap().clone().expect("tool was called");
-        assert_eq!(ctx.working_dir, std::path::PathBuf::from("/tmp/hermes-test-cwd"));
+        assert_eq!(
+            ctx.working_dir,
+            std::path::PathBuf::from("/tmp/hermes-test-cwd")
+        );
         assert_eq!(ctx.session_id, "session-xyz");
     }
 }

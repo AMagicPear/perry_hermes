@@ -43,7 +43,10 @@ async fn skills_list_returns_empty_for_missing_dir() {
     assert_eq!(v["success"].as_bool(), Some(true));
     assert_eq!(v["count"].as_i64(), Some(0));
     // The spec says create-on-first-access; the dir should now exist.
-    assert!(skills_dir.is_dir(), "skills dir should be created on first list");
+    assert!(
+        skills_dir.is_dir(),
+        "skills dir should be created on first list"
+    );
 }
 
 #[tokio::test]
@@ -98,7 +101,11 @@ async fn skills_list_filters_by_category() {
 
     let tool = SkillListTool::new(dir.path().to_path_buf());
     let out = tool
-        .execute(json!({"category": "mlops"}), ctx(), CancellationToken::new())
+        .execute(
+            json!({"category": "mlops"}),
+            ctx(),
+            CancellationToken::new(),
+        )
         .await
         .expect("list should succeed");
     let v = parse(out);
@@ -142,7 +149,12 @@ async fn skills_list_sorts_by_category_then_name() {
 #[tokio::test]
 async fn skill_view_loads_main_body_with_frontmatter_stripped() {
     let dir = TempDir::new().unwrap();
-    write_skill(dir.path(), "alpha", "The alpha skill", "# Alpha\n\nReal body");
+    write_skill(
+        dir.path(),
+        "alpha",
+        "The alpha skill",
+        "# Alpha\n\nReal body",
+    );
 
     let tool = SkillViewTool::new(dir.path().to_path_buf());
     let out = tool
@@ -152,7 +164,10 @@ async fn skill_view_loads_main_body_with_frontmatter_stripped() {
     let v = parse(out);
     assert_eq!(v["success"].as_bool(), Some(true));
     let content = v["content"].as_str().unwrap();
-    assert!(!content.contains("name: alpha"), "frontmatter leaked: {content}");
+    assert!(
+        !content.contains("name: alpha"),
+        "frontmatter leaked: {content}"
+    );
     assert!(content.contains("# Alpha"));
     assert!(content.contains("Real body"));
     assert_eq!(v["readiness_status"].as_str().unwrap(), "available");
@@ -244,12 +259,20 @@ async fn skill_view_rejects_plugin_qualified_name() {
     write_skill(dir.path(), "alpha", "desc", "body");
     let tool = SkillViewTool::new(dir.path().to_path_buf());
     let out = tool
-        .execute(json!({"name": "plugin:alpha"}), ctx(), CancellationToken::new())
+        .execute(
+            json!({"name": "plugin:alpha"}),
+            ctx(),
+            CancellationToken::new(),
+        )
         .await
         .expect("plugin qualifier returns JSON error");
     let v = parse(out);
     assert_eq!(v["success"].as_bool(), Some(false));
-    assert!(v["error"].as_str().unwrap().to_lowercase().contains("plugin"));
+    assert!(v["error"]
+        .as_str()
+        .unwrap()
+        .to_lowercase()
+        .contains("plugin"));
 }
 
 #[tokio::test]
@@ -276,7 +299,11 @@ async fn skill_view_returns_ambiguous_error_for_colliding_names() {
         .expect("collision returns JSON error");
     let v = parse(out);
     assert_eq!(v["success"].as_bool(), Some(false));
-    assert!(v["error"].as_str().unwrap().to_lowercase().contains("ambiguous"));
+    assert!(v["error"]
+        .as_str()
+        .unwrap()
+        .to_lowercase()
+        .contains("ambiguous"));
 }
 
 #[tokio::test]
@@ -307,9 +334,29 @@ async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
         .expect("view should succeed");
     let v = parse(out);
     let lf = &v["linked_files"];
-    assert!(lf["references"].as_array().unwrap().iter().any(|x| x == "references/file.md"));
-    assert!(lf["references"].as_array().unwrap().iter().any(|x| x == "references/notes.txt"));
-    assert!(lf["templates"].as_array().unwrap().iter().any(|x| x == "templates/file.md"));
-    assert!(lf["assets"].as_array().unwrap().iter().any(|x| x == "assets/file.md"));
-    assert!(lf["scripts"].as_array().unwrap().iter().any(|x| x == "scripts/file.py"));
+    assert!(lf["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x == "references/file.md"));
+    assert!(lf["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x == "references/notes.txt"));
+    assert!(lf["templates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x == "templates/file.md"));
+    assert!(lf["assets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x == "assets/file.md"));
+    assert!(lf["scripts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x == "scripts/file.py"));
 }

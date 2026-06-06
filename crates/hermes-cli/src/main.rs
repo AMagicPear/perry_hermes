@@ -67,8 +67,8 @@ async fn dispatch(args: Args) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
     use std::path::Path;
+    use std::sync::Mutex;
 
     /// Serializes tests that mutate process-wide state (`HOME`). `cargo
     /// test` runs `#[test]` functions in parallel by default; without
@@ -141,19 +141,26 @@ mod tests {
         // tests, and `dispatch` / `resolve_config_path` run on this same
         // thread inside the test process — no other thread reads HOME while
         // we hold the lock.
-        unsafe { std::env::set_var("HOME", &home); }
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
         let result = resolve_config_path(None);
         // SAFETY: see `set_var` call above; the lock is still held and the
         // remove only affects HOME in this test process.
-        unsafe { std::env::remove_var("HOME"); }
+        unsafe {
+            std::env::remove_var("HOME");
+        }
 
         // `resolve_config_path` returns the relative `hermes.toml` for the
         // cwd fallback, so we assert by reading the file it resolved —
         // the only `hermes.toml` under cwd is the one we just wrote.
         let resolved = result.expect("should resolve to ./hermes.toml");
-        let contents = std::fs::read_to_string(&resolved)
-            .expect("resolved path should be readable");
-        assert!(contents.contains("echo"), "resolved the wrong file: {contents}");
+        let contents =
+            std::fs::read_to_string(&resolved).expect("resolved path should be readable");
+        assert!(
+            contents.contains("echo"),
+            "resolved the wrong file: {contents}"
+        );
     }
 
     #[test]
@@ -165,11 +172,15 @@ mod tests {
         // tests, and `dispatch` / `resolve_config_path` run on this same
         // thread inside the test process — no other thread reads HOME while
         // we hold the lock.
-        unsafe { std::env::set_var("HOME", &home); }
+        unsafe {
+            std::env::set_var("HOME", &home);
+        }
         let result = resolve_config_path(None);
         // SAFETY: see `set_var` call above; the lock is still held and the
         // remove only affects HOME in this test process.
-        unsafe { std::env::remove_var("HOME"); }
+        unsafe {
+            std::env::remove_var("HOME");
+        }
 
         let err = result.unwrap_err().to_string();
         assert!(err.contains("no hermes config found"), "{err}");

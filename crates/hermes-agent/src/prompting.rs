@@ -27,7 +27,11 @@ pub fn resolve_skills_dir() -> Option<PathBuf> {
     let base = std::env::var_os("HERMES_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))
-        .or_else(|| std::env::current_dir().ok().map(|cwd| cwd.join(".perry_hermes")))?;
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|cwd| cwd.join(".perry_hermes"))
+        })?;
     Some(base.join("skills"))
 }
 
@@ -131,7 +135,10 @@ fn build_conversation_metadata(session: &SessionContext, provider_name: Option<&
 }
 
 fn hermes_now() -> chrono::DateTime<chrono::FixedOffset> {
-    if let Some(name) = std::env::var("HERMES_TIMEZONE").ok().filter(|s| !s.trim().is_empty()) {
+    if let Some(name) = std::env::var("HERMES_TIMEZONE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+    {
         if let Ok(tz) = name.parse::<Tz>() {
             return chrono::Utc::now().with_timezone(&tz).fixed_offset();
         }

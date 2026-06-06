@@ -4,9 +4,20 @@ use std::path::{Path, PathBuf};
 
 /// Names of directories that should be skipped wholesale during scan.
 pub const EXCLUDED_DIRS: &[&str] = &[
-    ".git", ".github", ".hub", ".archive", ".venv", "venv", "node_modules",
-    "site-packages", "__pycache__", ".tox", ".nox", ".pytest_cache",
-    ".mypy_cache", ".ruff_cache",
+    ".git",
+    ".github",
+    ".hub",
+    ".archive",
+    ".venv",
+    "venv",
+    "node_modules",
+    "site-packages",
+    "__pycache__",
+    ".tox",
+    ".nox",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
 ];
 
 /// One discovered skill location, with the category derived from path depth.
@@ -97,11 +108,7 @@ mod tests {
             .iter()
             .map(|l| {
                 let parent = l.skill_md.parent().unwrap();
-                let dir_name = parent
-                    .file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .into_owned();
+                let dir_name = parent.file_name().unwrap().to_string_lossy().into_owned();
                 let category = l.category.clone();
                 (dir_name, category)
             })
@@ -120,10 +127,7 @@ mod tests {
         let locs = find_skill_files(tmp.path()).unwrap();
         assert_eq!(locs.len(), 1);
         assert_eq!(locs[0].category, None);
-        assert_eq!(
-            locs[0].skill_md.file_name().unwrap(),
-            "SKILL.md"
-        );
+        assert_eq!(locs[0].skill_md.file_name().unwrap(), "SKILL.md");
     }
 
     #[test]
@@ -141,10 +145,7 @@ mod tests {
     #[test]
     fn ignores_two_level_nested() {
         let tmp = tempfile::tempdir().unwrap();
-        build_tree(
-            tmp.path(),
-            &[("a/b/c/SKILL.md", "body")],
-        );
+        build_tree(tmp.path(), &[("a/b/c/SKILL.md", "body")]);
         let locs = find_skill_files(tmp.path()).unwrap();
         assert!(locs.is_empty());
     }

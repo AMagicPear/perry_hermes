@@ -54,7 +54,11 @@ async fn bash_tool_rejects_unimplemented_background_mode() {
     let tool = BashTool::new();
     let cancel = CancellationToken::new();
     let err = tool
-        .execute(json!({ "command": "echo hello", "background": true }), ctx(), cancel)
+        .execute(
+            json!({ "command": "echo hello", "background": true }),
+            ctx(),
+            cancel,
+        )
         .await
         .expect_err("background mode should be rejected explicitly");
 
