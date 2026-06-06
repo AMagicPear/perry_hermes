@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod event;
+pub mod input;
 pub mod render;
 
 pub use app::App;
