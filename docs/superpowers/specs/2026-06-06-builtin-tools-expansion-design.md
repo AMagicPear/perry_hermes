@@ -76,7 +76,7 @@ pub fn build_registry(disabled_toolsets: &[String], skills_dir: &Path) -> InMemo
 ```
 
 - `AIAgent::from_config(HermesConfig)` resolves the skills directory using the same rules `hermes_skills::load_skills` uses (`HERMES_HOME` env → `~/.perry_hermes` → ensure the directory exists, create it if missing), then passes the `PathBuf` in. The `skills_dir` is **read-only at tool-call time** — write/edit skill bodies is a P2 `skill_manage` deliverable, not in scope.
-- The existing test that calls `build_registry(&["terminal"])` keeps working (extra `&Path` arg defaulted in a small refactor — see §9).
+- The existing call site in `tool_catalog.rs`'s own `#[cfg(test)]` (and any other test that builds a registry directly) gains a `&Path` argument — a one-line update in each. The default test path can be `Path::new("/tmp/hermes-test-skills")`; behavior of the existing assertions is unchanged.
 
 ### 4.4 `lib.rs` re-exports
 
@@ -111,13 +111,13 @@ pub use tools::{
 
 **Behavior:**
 
-1. Blocklist check: literal-path check against `/dev/{zero,urandom,random,full,stdin,tty,console,stdout,stderr}` and `/dev/fd/{0,1,2}`, then `std::fs::canonicalize` and re-check, then `/proc/self/fd/{0,1,2}` and `/proc/<pid>/{environ,cmdline,maps}`. Pure path check, no I/O.
+1. Blocklist check (pure path check, no I/O): compare the literal (un-resolved) input path against the blocklist, then `std::fs::canonicalize` the path and compare again. Blocklist covers `/dev/{zero,urandom,random,full,stdin,tty,console,stdout,stderr}`, `/dev/fd/{0,1,2}`, `/proc/self/fd/{0,1,2}`, and `/proc/<pid>/{environ,cmdline,maps}`. Either check matching short-circuits to the error.
 2. Binary-extension check (no I/O): reject if `path.extension()` is in the same list `tools/binary_extensions.py` uses — `.png`, `.jpg`, `.gif`, `.pdf`, `.zip`, `.tar`, `.gz`, `.exe`, `.dll`, `.so`, `.dylib`, `.class`, `.pyc`, `.wasm`, `.mp4`, `.mp3`, `.wav`, `.flac`, `.ogg`, `.webp`, `.heic`, `.avif`, `.ico`, `.ttf`, `.otf`, `.woff`, `.woff2`, `.eot`, `.psd`, `.ai`, `.sketch`, `.fig`, `.blend`, `.glb`, `.gltf`, `.obj`, `.fbx`, `.stl`, `.3ds`, `.dae`, `.svg`, `.db`, `.sqlite`, `.sqlite3`, `.bin`, `.dat`, `.iso`, `.dmg`, `.deb`, `.rpm`. Returns error.
 3. Resolve `~` and relative paths against `ctx.working_dir`.
 4. Read first 1000 bytes; if `>5%` non-printable, treat as binary → error.
 5. Read the requested range (offset 1-indexed, inclusive of `offset+limit-1`) and number each line: format `{LINENO:>W}|{CONTENT}\n` where `W = (offset + limit).to_string().len()`. `offset==1` strips a leading UTF-8 BOM (U+FEFF) before numbering.
 6. Preserve line endings as found on disk. Python normalizes; we don't, because the LLM only sees the content as a string and the byte count is a separate signal. (Documented divergence, P1 candidate to align.)
-7. Character-level cap: if `content.len() > 100_000`, truncate head+tail with omission notice (same shape as `BashTool::truncate_output`).
+7. Character-level cap: if `content.len() > 100_000`, truncate head+tail with an omission notice using the same head/tail shape as `BashTool::truncate_output`. To avoid duplicating the helper, the truncation function in `tools/bash.rs` is moved to a `tools/util.rs` module (or `pub(crate)` re-exported); see §9.
 8. Truncation / `total_lines > offset+limit-1` → set `truncated: true` and add `hint: "Use offset=<N+1> to continue reading (showing A-B of TOTAL lines)"`.
 9. File not found → run a `similar_files` search in the parent dir: score candidates by (exact > same stem/diff ext > prefix > substring > same-ext char-overlap ≥ 40 %), take top 5, include in error response.
 
@@ -334,13 +334,15 @@ Tests use `tempfile::TempDir` for working directories and skills dirs, plus a sh
 
 | File | Change |
 |---|---|
-| `crates/hermes-agent/src/tools/mod.rs` | Add `pub mod files; pub mod skills;` |
+| `crates/hermes-agent/src/tools/mod.rs` | Add `pub mod files; pub mod skills; pub mod util;` |
+| `crates/hermes-agent/src/tools/bash.rs` | Replace local `truncate_output` with `crate::tools::util::truncate_output` (or `pub(crate) use`) — pure move, no behavior change |
+| `crates/hermes-agent/src/tools/util.rs` | New: `truncate_output(&str, max_chars) -> String` (lifted from bash.rs) |
 | `crates/hermes-agent/src/tools/{files,skills}.rs` | New |
-| `crates/hermes-agent/src/tool_catalog.rs` | `build_registry(&[String], &Path)`; new wiring |
+| `crates/hermes-agent/src/tool_catalog.rs` | `build_registry(&[String], &Path)`; new wiring; existing in-file `#[cfg(test)]` gains the `&Path` arg |
 | `crates/hermes-agent/src/runtime_agent.rs` | Resolve `skills_dir` and pass to `build_registry`; resolve using `HERMES_HOME` → `~/.perry_hermes` rules |
 | `crates/hermes-agent/src/lib.rs` | Re-export `ReadFileTool` etc. |
 | `crates/hermes-agent/tests/{files,skills}.rs` | New |
-| `crates/hermes-agent/tests/tool_dispatch.rs` | Add the disabled-toolset regression tests |
+| `crates/hermes-agent/tests/tool_dispatch.rs` | Existing call sites gain the `&Path` arg; add the disabled-toolset regression tests |
 | `crates/hermes-agent/tests/skills_injection.rs` | Add the E2E loop test |
 | `hermes-skills` | No change (the spec uses existing `load_skills` + `Skill`) |
 | `hermes-core` | No change |
