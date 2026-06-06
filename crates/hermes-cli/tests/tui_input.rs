@@ -85,7 +85,10 @@ fn unknown_slash_command_is_rejected_with_system_message() {
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     match ev {
         AppEvent::Append(RenderedLine::System(s)) => {
-            assert!(s.contains("Unknown"), "system message should mention 'Unknown': {s}");
+            assert!(
+                s.contains("Unknown"),
+                "system message should mention 'Unknown': {s}"
+            );
             assert!(
                 s.contains("/quit") && s.contains("/compact") && s.contains("/exit"),
                 "system message should list all known commands: {s}"

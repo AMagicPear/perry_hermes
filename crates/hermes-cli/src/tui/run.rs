@@ -18,8 +18,8 @@ use crate::tui::app::App;
 use crate::tui::event::{AppEvent, AppMode, RenderedLine};
 use crate::tui::input::handle_key;
 use crate::tui::loop_bridge::apply_loop_event;
-use crate::tui::render::render;
 use crate::tui::make_on_event;
+use crate::tui::render::render;
 
 /// Local error type for the TUI run loop.
 #[derive(Debug)]
@@ -60,11 +60,9 @@ pub async fn run(
     use std::io::stdout;
 
     enable_raw_mode().map_err(|e| RunError::Tui(e.to_string()))?;
-    execute!(stdout(), EnterAlternateScreen)
-        .map_err(|e| RunError::Tui(e.to_string()))?;
+    execute!(stdout(), EnterAlternateScreen).map_err(|e| RunError::Tui(e.to_string()))?;
     let backend = CrosstermBackend::new(stdout());
-    let mut terminal = Terminal::new(backend)
-        .map_err(|e| RunError::Tui(e.to_string()))?;
+    let mut terminal = Terminal::new(backend).map_err(|e| RunError::Tui(e.to_string()))?;
 
     let (input_tx, mut input_rx) = mpsc::unbounded_channel::<AppEvent>();
     let mut app = App::new_for_test();

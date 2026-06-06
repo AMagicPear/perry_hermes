@@ -51,7 +51,11 @@ fn parse_slash_or_submit(text: String) -> AppEvent {
 
     match cmd {
         "/quit" | "/exit" => AppEvent::Quit,
-        "/compact" => AppEvent::Compact(if rest.is_empty() { None } else { Some(rest.to_string()) }),
+        "/compact" => AppEvent::Compact(if rest.is_empty() {
+            None
+        } else {
+            Some(rest.to_string())
+        }),
         "/clear" => AppEvent::Clear,
         other => AppEvent::Append(RenderedLine::System(format!(
             "Unknown command: {other}. Try /quit, /exit, /compact [focus], /clear."

@@ -29,9 +29,9 @@ pub fn render(f: &mut Frame, app: &App) {
             crate::tui::event::RenderedLine::ToolCall { name, args_preview } => {
                 Line::from(format!("⚙ {name}({args_preview})"))
             }
-            crate::tui::event::RenderedLine::ToolResult { name, output, ok } => {
-                Line::from(format!("{} {name}: {}", if *ok { "✓" } else { "✗" }, output))
-            }
+            crate::tui::event::RenderedLine::ToolResult { name, output, ok } => Line::from(
+                format!("{} {name}: {}", if *ok { "✓" } else { "✗" }, output),
+            ),
             crate::tui::event::RenderedLine::System(s) => Line::from(format!("[system] {s}")),
         })
         .collect();
@@ -44,8 +44,8 @@ pub fn render(f: &mut Frame, app: &App) {
     } else {
         app.input.clone()
     };
-    let input = Paragraph::new(input_text)
-        .block(Block::default().borders(Borders::ALL).title("Input"));
+    let input =
+        Paragraph::new(input_text).block(Block::default().borders(Borders::ALL).title("Input"));
     f.render_widget(input, chunks[1]);
 
     // Status bar: provider · model · iter X/Y · in Z · out W · mode

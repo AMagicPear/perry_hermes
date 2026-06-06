@@ -13,9 +13,7 @@ fn empty_app_renders_input_box_and_status_bar() {
     let mut terminal = Terminal::new(backend).expect("terminal");
 
     let app = App::new_for_test();
-    terminal
-        .draw(|f| render(f, &app))
-        .expect("draw");
+    terminal.draw(|f| render(f, &app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
 
@@ -53,9 +51,7 @@ fn populated_app_renders_status_bar_with_provider_and_tokens() {
     app.last_output_tokens = Some(4_549);
     app.mode = AppMode::AwaitingModel;
 
-    terminal
-        .draw(|f| render(f, &app))
-        .expect("draw");
+    terminal.draw(|f| render(f, &app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
     let status_y = buffer.area.height.saturating_sub(1);
@@ -67,10 +63,28 @@ fn populated_app_renders_status_bar_with_provider_and_tokens() {
                 .unwrap_or(' ')
         })
         .collect();
-    assert!(status_row.contains("openai"), "status row missing provider: {status_row:?}");
-    assert!(status_row.contains("gpt-4.1-mini"), "status row missing model: {status_row:?}");
-    assert!(status_row.contains("in 12.3K"), "status row missing input tokens: {status_row:?}");
-    assert!(status_row.contains("out 4.5K"), "status row missing output tokens: {status_row:?}");
-    assert!(status_row.contains("iter 2/10"), "status row missing iteration: {status_row:?}");
-    assert!(status_row.contains("awaiting"), "status row missing mode: {status_row:?}");
+    assert!(
+        status_row.contains("openai"),
+        "status row missing provider: {status_row:?}"
+    );
+    assert!(
+        status_row.contains("gpt-4.1-mini"),
+        "status row missing model: {status_row:?}"
+    );
+    assert!(
+        status_row.contains("in 12.3K"),
+        "status row missing input tokens: {status_row:?}"
+    );
+    assert!(
+        status_row.contains("out 4.5K"),
+        "status row missing output tokens: {status_row:?}"
+    );
+    assert!(
+        status_row.contains("iter 2/10"),
+        "status row missing iteration: {status_row:?}"
+    );
+    assert!(
+        status_row.contains("awaiting"),
+        "status row missing mode: {status_row:?}"
+    );
 }

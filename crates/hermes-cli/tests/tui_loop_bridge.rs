@@ -5,9 +5,9 @@ use hermes_cli::tui::app::App;
 use hermes_cli::tui::event::{AppEvent, AppMode, RenderedLine};
 use hermes_cli::tui::loop_bridge::apply_loop_event;
 use hermes_core::context_engine::CompressionTrigger;
+use hermes_core::error::ToolError;
 use hermes_core::message::ToolCall;
 use hermes_core::provider::ToolCallDelta;
-use hermes_core::error::ToolError;
 use hermes_core::tool::ToolOutput;
 use std::time::Duration;
 
@@ -69,7 +69,9 @@ fn tool_call_finished_pushes_tool_result_line() {
             name: "terminal".to_string(),
             arguments: serde_json::json!({}),
         },
-        result: Ok(ToolOutput { content: "file1\nfile2".to_string() }),
+        result: Ok(ToolOutput {
+            content: "file1\nfile2".to_string(),
+        }),
     };
     let _ = apply_loop_event(&mut app, ev);
     assert!(matches!(
@@ -139,7 +141,11 @@ fn tool_call_finished_error_includes_error_message() {
     };
     let _ = apply_loop_event(&mut app, ev);
     match app.scrollback.last() {
-        Some(RenderedLine::ToolResult { name, output, ok: false }) => {
+        Some(RenderedLine::ToolResult {
+            name,
+            output,
+            ok: false,
+        }) => {
             assert_eq!(name, "terminal");
             assert!(
                 output.contains("command not found"),

@@ -8,10 +8,12 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use futures::stream;
 use hermes_core::message::{Content, Message, Role};
-use hermes_core::provider::{Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta};
+use hermes_core::provider::{
+    Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta,
+};
+use hermes_core::registry::ToolSchema;
 use hermes_core::usage::Usage;
 use hermes_core::ProviderError;
-use hermes_core::registry::ToolSchema;
 use ratatui::backend::TestBackend;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -29,10 +31,8 @@ struct ScriptedProvider {
 
 impl ScriptedProvider {
     fn new(script: Vec<Completion>) -> Self {
-        let script: Vec<Vec<CompletionDelta>> = script
-            .into_iter()
-            .map(completion_to_deltas)
-            .collect();
+        let script: Vec<Vec<CompletionDelta>> =
+            script.into_iter().map(completion_to_deltas).collect();
         Self {
             script: std::sync::Mutex::new(script),
             call_count: AtomicUsize::new(0),

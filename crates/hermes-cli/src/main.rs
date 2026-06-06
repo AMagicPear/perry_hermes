@@ -35,7 +35,11 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
 
     let provider_name = provider_name(&config.provider).to_string();
-    let model_name = config.provider.model.clone().unwrap_or_else(|| "?".to_string());
+    let model_name = config
+        .provider
+        .model
+        .clone()
+        .unwrap_or_else(|| "?".to_string());
 
     let agent = Arc::new(
         AIAgent::from_config(config)
