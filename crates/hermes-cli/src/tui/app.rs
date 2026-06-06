@@ -1,5 +1,7 @@
 //! The TUI's state machine.
 
+use hermes_core::message::Message;
+
 use crate::tui::event::{AppMode, RenderedLine};
 
 /// Top-level TUI state. Owned by the event loop in `tui::mod`.
@@ -25,6 +27,8 @@ pub struct App {
     pub max_iterations: u32,
     /// Display hint shown briefly after a compression event.
     pub compression_hint: Option<String>,
+    /// Conversation history accumulated across turns.
+    pub session_history: Vec<Message>,
 }
 
 impl App {
@@ -41,6 +45,7 @@ impl App {
             iteration: 0,
             max_iterations: 0,
             compression_hint: None,
+            session_history: Vec::new(),
         }
     }
 

@@ -140,6 +140,7 @@ async fn user_message_then_assistant_reply_appears_in_scrollback() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
+        10,
     )
     .await;
 
@@ -186,6 +187,7 @@ async fn user_message_appears_in_buffer() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
+        10,
     )
     .await
     .expect("tui run returned error");
@@ -250,6 +252,7 @@ async fn compact_command_emits_compress_request() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
+        10,
     )
     .await;
     assert!(result.is_ok());

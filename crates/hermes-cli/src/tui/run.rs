@@ -51,6 +51,7 @@ pub async fn run(
     cancel: CancellationToken,
     provider_name: String,
     model_name: String,
+    max_iterations: u32,
 ) -> Result<(), RunError> {
     use crossterm::event::{Event, EventStream};
     use crossterm::execute;
@@ -68,6 +69,7 @@ pub async fn run(
     let mut app = App::new_for_test();
     app.provider_name = Some(provider_name);
     app.model_name = Some(model_name);
+    app.max_iterations = max_iterations;
 
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(16));
@@ -99,18 +101,24 @@ pub async fn run(
                             match next {
                                 AppEvent::Submit(text) => {
                                     app.push_line(RenderedLine::User(text.clone()));
+                                    app.session_history.push(Message::user(&text));
                                     app.mode = AppMode::AwaitingModel;
                                     let on_event = make_on_event(input_tx.clone());
                                     let res = agent
                                         .run_messages(
-                                            vec![Message::user(&text)],
+                                            app.session_history.clone(),
                                             &session,
                                             cancel.clone(),
                                             on_event,
                                         )
                                         .await;
-                                    if let Err(e) = res {
-                                        app.push_line(RenderedLine::System(format!("error: {e}")));
+                                    match res {
+                                        Ok(run_result) => {
+                                            app.session_history = run_result.messages;
+                                        }
+                                        Err(e) => {
+                                            app.push_line(RenderedLine::System(format!("error: {e}")));
+                                        }
                                     }
                                     app.mode = AppMode::Idle;
                                 }
@@ -123,6 +131,8 @@ pub async fn run(
                                     app.scrollback.clear();
                                 }
                                 AppEvent::Compact(focus) => {
+                                    // TODO: wire to AIAgent::run_compact in a follow-up; see
+                                    // docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md §7
                                     app.push_line(RenderedLine::System(format!(
                                         "Manual compact requested (focus: {}).",
                                         focus.as_deref().unwrap_or("(none)")
@@ -151,8 +161,12 @@ pub async fn run(
     }
     .await;
 
-    disable_raw_mode().ok();
-    execute!(stdout(), LeaveAlternateScreen).ok();
+    if let Err(e) = disable_raw_mode() {
+        eprintln!("[hermes-cli] warning: failed to disable raw mode: {e}");
+    }
+    if let Err(e) = execute!(stdout(), LeaveAlternateScreen) {
+        eprintln!("[hermes-cli] warning: failed to leave alternate screen: {e}");
+    }
     result
 }
 
@@ -172,11 +186,13 @@ pub async fn run_with_backend<B: Backend>(
     cancel: CancellationToken,
     provider_name: String,
     model_name: String,
+    max_iterations: u32,
 ) -> Result<(), RunError> {
     let mut terminal = Terminal::new(backend).map_err(|e| RunError::Tui(e.to_string()))?;
     let mut app = App::new_for_test();
     app.provider_name = Some(provider_name);
     app.model_name = Some(model_name);
+    app.max_iterations = max_iterations;
 
     loop {
         terminal
@@ -193,8 +209,7 @@ pub async fn run_with_backend<B: Backend>(
                 let Some(ev) = maybe else { return Ok(()); };
                 match ev {
                     AppEvent::Key(k) => {
-                        let next = handle_key(&mut app, k);
-                        dispatch(&mut app, next);
+                        let _next = handle_key(&mut app, k);
                     }
                     AppEvent::Loop(loop_ev) => {
                         let _ = apply_loop_event(&mut app, loop_ev);
@@ -226,12 +241,6 @@ pub async fn run_with_backend<B: Backend>(
     }
 }
 
-fn dispatch(_app: &mut App, _ev: AppEvent) {
-    // Reserved for the input handler to push derived events back into the queue.
-    // For now, `Submit` / `Quit` / `Clear` are produced directly by `handle_key`
-    // and consumed by the main loop, so this is a no-op.
-}
-
 /// `run_with_backend_and_capture` — a variant that accepts an `Arc<Mutex<TestBackend>>`
 /// so the caller retains access to the backend after the loop. The caller clones
 /// the `Arc` before passing it; after the function returns the clone is still
@@ -243,12 +252,14 @@ pub async fn run_with_backend_and_capture(
     cancel: CancellationToken,
     provider_name: String,
     model_name: String,
+    max_iterations: u32,
 ) -> Result<(), RunError> {
     let backend = SharedTestBackend { inner: backend };
     let mut terminal = Terminal::new(backend).map_err(|e| RunError::Tui(e.to_string()))?;
     let mut app = App::new_for_test();
     app.provider_name = Some(provider_name);
     app.model_name = Some(model_name);
+    app.max_iterations = max_iterations;
     let _ = provider;
 
     loop {
@@ -266,8 +277,7 @@ pub async fn run_with_backend_and_capture(
                 let Some(ev) = maybe else { break; };
                 match ev {
                     AppEvent::Key(k) => {
-                        let next = handle_key(&mut app, k);
-                        dispatch(&mut app, next);
+                        let _next = handle_key(&mut app, k);
                     }
                     AppEvent::Loop(loop_ev) => {
                         let _ = apply_loop_event(&mut app, loop_ev);
