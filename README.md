@@ -54,7 +54,7 @@ hermes-cli (交互式 REPL — Phase 4)
 
 ### 配置
 
-Provider 配置全部放在 TOML 的 `[provider]` 段(`crates/hermes-cli/hermes.example.toml` 是起点):
+Provider 配置全部放在 TOML 的 `[provider]` 段(`examples/config/hermes.toml` 是起点):
 
 ```toml
 [provider]
@@ -77,7 +77,7 @@ cargo build
 CLI 启动时会按 `--config` → `~/.perry_hermes/config.toml` → `./hermes.toml` 顺序查找配置。复制示例配置作为起点:
 
 ```bash
-cp crates/hermes-cli/hermes.example.toml hermes.toml
+cp examples/config/hermes.toml hermes.toml
 # 编辑 hermes.toml,填入 API key 指向的 env 变量、model、base_url
 cargo run -p hermes-cli
 ```

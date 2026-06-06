@@ -93,6 +93,26 @@ async fn read_file_rejects_known_binary_extension() {
 }
 
 #[tokio::test]
+async fn read_file_rejects_binary_content_even_without_binary_extension() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("mystery.data");
+    std::fs::write(&path, b"\x00\x01\x02\x03binary-ish").unwrap();
+
+    let tool = ReadFileTool::new();
+    let out = tool
+        .execute(
+            json!({ "path": path.to_str().unwrap() }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("binary returns JSON error");
+    let v = parse(out);
+    let err = v["error"].as_str().unwrap_or_default();
+    assert!(err.to_lowercase().contains("binary"), "got error: {err}");
+}
+
+#[tokio::test]
 async fn read_file_reports_not_found_with_similar_files() {
     let dir = TempDir::new().unwrap();
     let path = dir.path().join("alpha.py");
@@ -275,6 +295,28 @@ async fn write_file_rejects_cross_profile_write_without_override() {
         .expect("cross-profile write should return JSON error");
     let v = parse(out);
     assert!(v["error"].as_str().unwrap().contains("cross-profile"));
+    unsafe { std::env::remove_var("HERMES_HOME") };
+}
+
+#[tokio::test]
+async fn write_file_rejects_hermes_config_path() {
+    let dir = TempDir::new().unwrap();
+    let hermes_home = dir.path().join("active-profile");
+    std::fs::create_dir_all(&hermes_home).unwrap();
+    unsafe { std::env::set_var("HERMES_HOME", &hermes_home) };
+
+    let target = hermes_home.join("config.yaml");
+    let tool = WriteFileTool::new();
+    let out = tool
+        .execute(
+            json!({ "path": target.to_str().unwrap(), "content": "unsafe = true" }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("config-path write should return JSON error");
+    let v = parse(out);
+    assert!(v["error"].as_str().unwrap().contains("Hermes config file"));
     unsafe { std::env::remove_var("HERMES_HOME") };
 }
 

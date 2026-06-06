@@ -18,14 +18,16 @@ to answer, give a concise final response — do not call tools again.";
 /// Resolution rules:
 /// 1. `HERMES_HOME` env var if set
 /// 2. else `$HOME/.perry_hermes`
-/// 3. append `/skills`
+/// 3. else `./.perry_hermes`
+/// 4. append `/skills`
 ///
 /// This resolver is intentionally side-effect free. Prompt composition should
 /// not create a skills directory just because a turn was started.
 pub fn resolve_skills_dir() -> Option<PathBuf> {
     let base = std::env::var_os("HERMES_HOME")
         .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))?;
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))
+        .or_else(|| std::env::current_dir().ok().map(|cwd| cwd.join(".perry_hermes")))?;
     Some(base.join("skills"))
 }
 
@@ -141,14 +143,53 @@ fn hermes_now() -> chrono::DateTime<chrono::FixedOffset> {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use std::path::Path;
+    use std::sync::Mutex;
+
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    struct CwdGuard {
+        previous: PathBuf,
+    }
+
+    impl CwdGuard {
+        fn enter(dir: &Path) -> Self {
+            let previous = std::env::current_dir().unwrap();
+            std::env::set_current_dir(dir).unwrap();
+            Self { previous }
+        }
+    }
+
+    impl Drop for CwdGuard {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
 
     #[test]
     fn resolve_returns_a_directory_path_that_ends_in_skills() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let home = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("HERMES_HOME", home.path()) };
         let dir = resolve_skills_dir().expect("skills dir should resolve");
         assert_eq!(dir.file_name().and_then(|s| s.to_str()), Some("skills"));
         unsafe { std::env::remove_var("HERMES_HOME") };
+    }
+
+    #[test]
+    fn resolve_skills_dir_falls_back_to_cwd_profile_when_env_is_unset() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let _cwd = CwdGuard::enter(cwd.path());
+        unsafe { std::env::remove_var("HOME") };
+        unsafe { std::env::remove_var("HERMES_HOME") };
+
+        let dir = resolve_skills_dir().expect("skills dir should resolve from cwd fallback");
+        let expected = std::fs::canonicalize(cwd.path())
+            .unwrap_or_else(|_| cwd.path().to_path_buf())
+            .join(".perry_hermes")
+            .join("skills");
+        assert_eq!(dir, expected);
     }
 
     #[test]

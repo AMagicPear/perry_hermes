@@ -175,6 +175,7 @@ mod tests {
         assert!(err.contains("no hermes config found"), "{err}");
         assert!(err.contains(".perry_hermes"), "{err}");
         assert!(err.contains("hermes.toml"), "{err}");
+        assert!(err.contains("examples/config/hermes.toml"), "{err}");
     }
 
     #[test]

@@ -47,13 +47,14 @@ hermes-cli (interactive REPL)
 | File | Responsibility |
 |---|---|
 | `src/lib.rs` | Module declarations + public re-exports only |
-| `src/runtime_agent.rs` | `AIAgent` facade + `SessionContext`; `from_config` / `new` constructors, `run_turn` / `run_messages` |
+| `src/runtime_agent.rs` | `AIAgent` facade; `from_config` / `new` constructors, `run_turn` / `run_messages` |
 | `src/loop_engine.rs` | `AgentLoop` state machine: `stream` → dispatch tools → repeat. Also `LoopConfig`, `LoopEvent`, `RunResult`, `LoopMetrics` |
 | `src/config.rs` | `HermesConfig` / `ProviderConfig` / `AgentConfig` / `ProviderKind` / `ThinkingConfig` + `HermesConfig::from_path` |
-| `src/prompting.rs` | `DEFAULT_SYSTEM_PROMPT`, `compose_system_prompt` (skills-index injection happens here) |
+| `src/session.rs` | `SessionContext` and per-run session metadata carrier |
+| `src/prompting.rs` | Base prompt composition, runtime system-prompt injection, session/environment metadata formatting |
 | `src/provider_factory.rs` | `build_provider(&ProviderConfig) -> Box<dyn Provider>` — single place that knows how to construct each provider from config |
 | `src/tool_catalog.rs` | `build_registry(&[disabled_toolsets])` — wires built-in tools into an `InMemoryRegistry` |
-| `src/tools/bash.rs` | `BashTool` (only built-in tool today) |
+| `src/tools/` | Built-in tool domains: `bash.rs`, `files/`, `skills/`, plus shared `support/` helpers |
 
 Integration tests live in `crates/hermes-agent/tests/`: `echo_loop`, `tool_dispatch`, `arg_validation`, `usage_metrics`, `bash`, `skills_injection`. The `tests/support/mod.rs` `ScriptedProvider` returns a fixed sequence of `Completion`s for multi-iteration scenarios.
 

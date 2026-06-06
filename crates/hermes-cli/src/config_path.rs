@@ -29,7 +29,7 @@ pub(crate) fn resolve_config_path(explicit: Option<&Path>) -> anyhow::Result<Pat
         msg.push_str(&format!("  - {}\n", p.display()));
     }
     msg.push_str(
-        "Pass --config <path> or create one of these. See crates/hermes-cli/hermes.example.toml for a starter.",
+        "Pass --config <path> or create one of these. See examples/config/hermes.toml for a starter.",
     );
     bail!(msg);
 }

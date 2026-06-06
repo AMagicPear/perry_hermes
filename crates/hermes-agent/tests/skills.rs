@@ -221,6 +221,24 @@ async fn skill_view_rejects_traversal_in_file_path() {
 }
 
 #[tokio::test]
+async fn skill_view_rejects_missing_linked_file() {
+    let dir = TempDir::new().unwrap();
+    write_skill(dir.path(), "alpha", "desc", "body");
+    let tool = SkillViewTool::new(dir.path().to_path_buf());
+    let out = tool
+        .execute(
+            json!({"name": "alpha", "file_path": "references/missing.md"}),
+            ctx(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("missing linked file returns JSON error");
+    let v = parse(out);
+    assert_eq!(v["success"].as_bool(), Some(false));
+    assert!(v["error"].as_str().unwrap().contains("not found"));
+}
+
+#[tokio::test]
 async fn skill_view_rejects_plugin_qualified_name() {
     let dir = TempDir::new().unwrap();
     write_skill(dir.path(), "alpha", "desc", "body");
@@ -268,6 +286,7 @@ async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
     let refs = dir.path().join("alpha/references");
     std::fs::create_dir_all(&refs).unwrap();
     std::fs::write(refs.join("file.md"), "x").unwrap();
+    std::fs::write(refs.join("notes.txt"), "y").unwrap();
 
     let templates = dir.path().join("alpha/templates");
     std::fs::create_dir_all(&templates).unwrap();
@@ -289,6 +308,7 @@ async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
     let v = parse(out);
     let lf = &v["linked_files"];
     assert!(lf["references"].as_array().unwrap().iter().any(|x| x == "references/file.md"));
+    assert!(lf["references"].as_array().unwrap().iter().any(|x| x == "references/notes.txt"));
     assert!(lf["templates"].as_array().unwrap().iter().any(|x| x == "templates/file.md"));
     assert!(lf["assets"].as_array().unwrap().iter().any(|x| x == "assets/file.md"));
     assert!(lf["scripts"].as_array().unwrap().iter().any(|x| x == "scripts/file.py"));
