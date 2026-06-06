@@ -2,7 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Consolidate the workspace from seven crates to five by introducing `hermes-agent` and merging `hermes-loop`, `hermes-runtime`, and `hermes-tools` into it while preserving the useful boundaries around `hermes-core`, `hermes-providers`, `hermes-skills`, and `hermes-cli`.
+**Goal:** Consolidate the workspace from seven crates to five by introducing `hermes-agent` and merging `hermes-loop`, `hermes-runtime`, and `hermes-tools` into it while preserving the useful boundaries around `hermes-core`, `hermes-providers`, `hermes-skill-loader`, and `hermes-cli`.
+
+> **Note (Phase 10):** `hermes-skills` was renamed to `hermes-skill-loader` to make its data-only scope explicit. See `2026-06-06-phase-10-rename-and-tui-design.md`.
 
 **Architecture:** Build the new `hermes-agent` crate in phases. First move the current runtime assembly and built-in tools into the new crate, then move the loop engine into the same crate, and finally remove the old crate entries and refresh all references. Keep one responsibility in one internal module; do not let the consolidation recreate fragmentation inside the new crate.
 
@@ -50,7 +52,7 @@ Create `crates/hermes-agent/Cargo.toml` using the current `hermes-runtime` manif
 
 - rename the package to `hermes-agent`
 - replace the old `hermes-tools` dependency by embedding the tool module locally
-- keep dependencies on `hermes-core`, `hermes-providers`, and `hermes-skills`
+- keep dependencies on `hermes-core`, `hermes-providers`, and `hermes-skill-loader`
 
 Create `crates/hermes-agent/src/lib.rs`:
 

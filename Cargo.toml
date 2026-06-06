@@ -4,10 +4,9 @@ members = [
     "crates/hermes-agent",
     "crates/hermes-core",
     "crates/hermes-providers",
-    "crates/hermes-skills",
-    "crates/hermes-cli",
+    "crates/hermes-skill-loader",  # renamed from hermes-skills in Phase 10
+    "crates/hermes-cli",           # currently REPL, being rewritten as ratatui TUI in Phase 10
     # "crates/hermes-gateway",  # phase 11+
-    # "crates/hermes-tui",      # phase 10+
 ]
 
 [workspace.package]

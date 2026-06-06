@@ -4,6 +4,8 @@
 **Status:** Proposed
 **Supersedes:** current REPL behavior that drops the active user turn from history whenever `run_messages(...)` returns a non-cancel error
 
+> **Note (Phase 10):** the "REPL" referenced here is the legacy `hermes-cli` REPL that was the product shell at the time of this spec. Phase 10 replaces it with a `ratatui` TUI; the failure-handling semantics this spec defines still apply, but the `history` state is now held inside the TUI's session model rather than the REPL's loop.
+
 ## 1. Goal
 
 Preserve semantically meaningful output from a failed turn so the next user message continues with the same conversation state the user just saw in the terminal.
