@@ -1,113 +1,130 @@
 # Hermes Rust
 
-> Vibe code 一个 Rust 版的 Nous Research 的 [hermes-agent](https://github.com/NousResearch/hermes-agent) —— 一个自进化的 AI Agent。
+> A Rust reimplementation of Nous Research's [hermes-agent](https://github.com/NousResearch/hermes-agent): an AI agent runtime with tool use, streaming, skills, and an interactive CLI.
 
-当前进度：**Phase 0–6、Phase 8–9 已完成**（核心循环 + OpenAI/Anthropic 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断 + TOML provider/agent 配置 + Skills 加载）。Phase 7 上下文压缩仍暂缓。
+Current status: **Phases 0-6 and 8-9 are complete**. That includes the core agent loop, OpenAI-compatible and Anthropic-compatible providers, the built-in terminal tool, streaming output, Ctrl-C interruption, TOML-based runtime configuration, and runtime skill loading. Phase 7 context compression is still deferred.
 
-## 特性
+## Features
 
-- **ReAct 风格 Agent 循环** — LLM 决策 → 工具调用 → 结果反馈 → 继续决策，直到任务完成
-- **工具错误非致命** — 执行失败不会崩溃循环，而是把错误信息反馈给 LLM，让它自行调整策略
-- **OpenAI 兼容** — 通过 `with_base_url()` 支持 OpenAI、DeepSeek、MiniMax、Ollama、vLLM 等任意兼容端点；普通 content 中的 `<think>...</think>` fallback 会被归一化为 reasoning
-- **Anthropic 兼容** — 支持 Anthropic Messages API，以及 MiMo 这类需要 `api-key` header 的兼容端点
-- **TOML 配置文件** — CLI 启动时必须有一个 `HermesConfig`(TOML)。查找顺序:`--config` 显式路径 → `~/.perry_hermes/config.toml` → `./hermes.toml`;三者皆无则报错退出
-- **协作式取消** — `CancellationToken` 贯穿所有异步调用，支持 Ctrl-C 优雅中断(第一次中断当前 turn，第二次退出 REPL)
-- **交互式 REPL CLI** — 多轮对话、工具调用实时渲染(emoji + 截断预览)、`/quit`/`/exit` 斜杠命令、`[agent].disabled_toolsets` 细粒度控制
-- **Toolset 过滤** — 通过 runtime 配置按 toolset 名启用/禁用工具(目前内置 `core` / `terminal`)
-- **Skills 加载** — `~/.perry_hermes/skills/` 下的 `.md` skill 文件在运行时自动加载，名称和描述注入 system prompt
-- **健壮的 BashTool** — stdout/stderr 并发 drain 避免管道死锁；输出采用 head+tail 40%/60% 截断策略，与 Python Hermes 对齐
-- **严格的分层架构** — `hermes-core` 保持传输无关；`hermes-agent` 集中运行时内核、循环状态机、built-in tools 和组装逻辑，`hermes-cli` 保持为外层产品入口
+- **ReAct-style agent loop**: the model decides, calls tools, receives results, and continues until the task is complete.
+- **Non-fatal tool failures**: tool errors are returned to the model instead of crashing the loop.
+- **OpenAI-compatible provider support**: works with OpenAI and compatible endpoints such as DeepSeek, MiniMax, Ollama, and vLLM via configurable `base_url`.
+- **Anthropic-compatible provider support**: supports the Anthropic Messages API and compatible services that require custom API key headers.
+- **TOML runtime configuration**: the CLI resolves config files in this order: `--config`, `~/.perry_hermes/config.toml`, then `./hermes.toml`.
+- **Cooperative cancellation**: a shared `CancellationToken` flows through model calls and tool execution, enabling graceful Ctrl-C interruption.
+- **Interactive REPL CLI**: multi-turn chat, streaming output, live tool rendering, slash commands, and per-agent toolset filtering.
+- **Runtime skill loading**: `SKILL.md` files under `~/.perry_hermes/skills/` are discovered and injected into the system prompt.
+- **Robust terminal tooling**: concurrent stdout/stderr draining avoids pipe deadlocks, and output truncation is aligned with Python Hermes behavior.
+- **Clear crate boundaries**: `hermes-core` stays transport-agnostic, while runtime orchestration lives in `hermes-agent` and the product shell lives in `hermes-cli`.
 
-## 架构
+## Architecture
 
+```text
+hermes-cli
+  └─ hermes-agent
+       ├─ hermes-core
+       ├─ hermes-providers
+       └─ hermes-skills
 ```
-hermes-cli (交互式 REPL — Phase 4)
-  └─ hermes-agent (AIAgent + AgentLoop + built-in tools)
-       ├─ hermes-core (类型、特征、错误 — 无 IO)
-       ├─ hermes-providers (OpenAI / Anthropic 适配器、Echo 模拟)
-       └─ hermes-skills (SKILL.md 加载 + system prompt 注入)
-```
 
-### 核心 Crate
+### Crates
 
-| Crate | 职责 | 关键类型/特征 |
+| Crate | Responsibility | Key concepts |
 |---|---|---|
-| `hermes-core` | 核心类型、特征定义、错误类型，无 IO | `Provider`, `Tool`, `InMemoryRegistry`, `Message`, `Completion`, `FinishReason` |
-| `hermes-providers` | LLM 提供者实现 | `OpenAiProvider` (兼容 DeepSeek/MiniMax/Ollama/vLLM), `AnthropicProvider`, `EchoProvider` |
-| `hermes-agent` | 运行时内核 crate，集中 loop/runtime/tools | `AIAgent`, `AgentLoop`, `LoopConfig`, `RunResult`, `LoopEvent`, `SessionContext`, `BashTool` |
-| `hermes-cli` | 交互式 REPL 二进制 | `hermes` 命令，clap 参数解析，多轮历史，事件渲染 |
+| `hermes-core` | Shared types, traits, and errors with no IO concerns | `Provider`, `Tool`, `Message`, `Completion`, `FinishReason` |
+| `hermes-providers` | Provider implementations and streaming protocol adapters | `OpenAiProvider`, `AnthropicProvider`, `EchoProvider` |
+| `hermes-agent` | Runtime assembly, loop execution, session context, and built-in tools | `AIAgent`, `AgentLoop`, `SessionContext`, built-in tool registry |
+| `hermes-skills` | Skill discovery, parsing, validation, and prompt-ready metadata | `SKILL.md` loading and validation |
+| `hermes-cli` | Interactive terminal entrypoint | config resolution, REPL loop, event rendering |
 
-### 核心边界
+### Runtime boundaries
 
-- **`Provider`** — 异步 `stream(messages, tools, cancel) -> CompletionStream`，LLM 调用的统一抽象
-- **`Tool`** — 异步 `execute(args, ctx, cancel) -> ToolOutput`，工具调用的统一抽象
-- **`InMemoryRegistry`** — 工具名到 `Arc<dyn Tool>` 的简单映射，运行时负责按 toolset 过滤
-- **`LoopEvent`** — agent 到 CLI/gateway 的展示事件；平台适配器决定怎么渲染
-- **`ProviderError::Transport`** — 在 `hermes-core` 中保持传输无关，具体 HTTP 错误在 provider 边界转换为字符串上下文
+- **`Provider`** is the async model interface used by the agent loop.
+- **`Tool`** is the async execution interface for built-in and future external tools.
+- **Tool registry and toolset filtering** are runtime concerns handled by `hermes-agent`.
+- **Prompt and session composition** are isolated from the CLI so the runtime can stay reusable.
+- **Display logic** is kept in the CLI layer instead of leaking into the runtime.
 
-## 快速开始
+## Quick Start
 
-### 环境要求
+### Requirements
 
-- Rust 1.75+（MSRV）
-- `direnv`（可选，自动加载环境变量）
+- Rust 1.75+
+- `direnv` (optional)
 
-### 配置
+### Configuration
 
-Provider 配置全部放在 TOML 的 `[provider]` 段(`examples/config/hermes.toml` 是起点):
+Start from the sample config in [examples/config/hermes.toml](/Users/amagicpear/projects/perry_hermes/examples/config/hermes.toml).
 
 ```toml
 [provider]
-kind = "openai"               # openai | anthropic | echo
-api_key_env = "OPENAI_API_KEY"  # 运行时只读取这一个环境变量
-model = "gpt-4o-mini"
+kind = "openai" # openai | anthropic | echo
+api_key_env = "OPENAI_API_KEY"
+model = "gpt-4.1-mini"
 base_url = "https://api.openai.com/v1"
 ```
 
-运行时只读取 `[provider].api_key_env` 指向的那一个环境变量(默认 `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`),其他环境变量(URL、模型、header 名称等)都会被忽略 —— 这些值必须写在 TOML 里。支持 OpenAI 兼容端点(DeepSeek、MiniMax、Ollama、vLLM)只需修改 `base_url` 和 `model`;Anthropic / MiMo 兼容端点改 `api_key_header` 和 `base_url`。
+Provider credentials are read from the single environment variable named by `api_key_env`. Other provider settings such as `model`, `base_url`, and optional header names belong in TOML.
 
-### 构建
+For OpenAI-compatible services such as DeepSeek, MiniMax, Ollama, or vLLM, change `base_url` and `model`.
+
+For Anthropic-compatible services, you can also set `api_key_header` when the endpoint expects something other than the default header.
+
+### Build
 
 ```bash
 cargo build
 ```
 
-### 运行 CLI
+### Run the CLI
 
-CLI 启动时会按 `--config` → `~/.perry_hermes/config.toml` → `./hermes.toml` 顺序查找配置。复制示例配置作为起点:
+Copy the sample config and edit it for your provider:
 
 ```bash
 cp examples/config/hermes.toml hermes.toml
-# 编辑 hermes.toml,填入 API key 指向的 env 变量、model、base_url
 cargo run -p hermes-cli
 ```
 
-离线烟囱测试(用 echo provider 模拟 LLM,不发任何 HTTP 请求):
+The CLI resolves config files in this order:
 
-```bash
-echo '[provider]\nkind = "echo"' > hermes.toml
-cargo run -p hermes-cli
-```
+1. `--config /path/to/file.toml`
+2. `~/.perry_hermes/config.toml`
+3. `./hermes.toml`
 
-切换模型/端点(也支持 DeepSeek / MiniMax / Ollama / vLLM 等任意 OpenAI 兼容服务):改 `hermes.toml` 里的 `model` 和 `base_url`。
-
-禁用 bash(关闭 `terminal` toolset,只做对话):在 `hermes.toml` 的 `[agent]` 段加 `disabled_toolsets = ["terminal"]`。
-
-调高最大迭代次数(默认 10):在 `hermes.toml` 的 `[agent]` 段加 `max_iterations = 50`。
-
-指定工作目录:用 `--cwd`(只影响该次启动的 `SessionContext`):
+Run with an explicit working directory:
 
 ```bash
 cargo run -p hermes-cli -- --cwd /tmp
 ```
 
-显式指定配置文件:
+Run with an explicit config file:
 
 ```bash
 cargo run -p hermes-cli -- --config /path/to/hermes.toml
 ```
 
-示例 `hermes.toml`：
+Offline smoke test with the `echo` provider:
+
+```bash
+printf '[provider]\nkind = "echo"\n' > hermes.toml
+cargo run -p hermes-cli
+```
+
+Disable the terminal toolset:
+
+```toml
+[agent]
+disabled_toolsets = ["terminal"]
+```
+
+Increase the agent iteration budget:
+
+```toml
+[agent]
+max_iterations = 50
+```
+
+Example full config:
 
 ```toml
 [provider]
@@ -127,99 +144,104 @@ max_iterations = 10
 disabled_toolsets = []
 ```
 
-REPL 内可用命令：
+### REPL controls
 
-- 输入任意文本 → 提交给 agent
-- `/quit` / `/exit` → 退出
-- `Ctrl-C` 第一次 → 取消当前 turn；第二次 → 退出 REPL
-- `Ctrl-D` → 退出
+- Type any message to send it to the agent.
+- `/quit` or `/exit` exits the REPL.
+- `Ctrl-C` once cancels the current turn.
+- `Ctrl-C` twice exits the REPL.
+- `Ctrl-D` exits the REPL.
 
-### 运行示例
+### Examples
+
+Provider-only smoke example:
 
 ```bash
-# 纯 LLM 调用（无工具）
 cargo run -p hermes-providers --example live_smoke -- "say hi"
+```
 
-# 带工具调用的完整 Agent(单 turn,程序化)
+Single-turn agent example with tools:
+
+```bash
 cargo run -p hermes-agent --example live_tool_use -- "what time is it?"
 ```
 
-## 开发
+## Development
 
-### 构建与测试
-
-```bash
-cargo build                              # 构建所有 crate
-cargo test                               # 运行所有测试
-cargo test -p hermes-core                # 测试单个 crate
-cargo test -p hermes-agent --test tool_dispatch  # 运行单个集成测试
-cargo clippy --all-targets --all-features -- -D warnings  # Lint
-```
-
-### CLI 自检
+### Common commands
 
 ```bash
-# 离线烟囱测试：确认 REPL 能正常启动、echo provider 能跑通整个循环
-echo '[provider]\nkind = "echo"' > /tmp/hermes-smoke.toml
-echo "hello" | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.toml
+cargo build
+cargo test
+cargo test -p hermes-core
+cargo test -p hermes-agent --test tool_dispatch
+cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-### 测试结构
+### CLI smoke check
 
-```
-crates/hermes-agent/tests/
-  ├── echo_loop.rs          # Echo 模拟循环测试
-  ├── tool_dispatch.rs      # 工具调度集成测试
-  ├── arg_validation.rs     # 工具参数校验测试
-  ├── usage_metrics.rs      # streaming usage 指标测试
-  ├── bash.rs               # BashTool 实际执行测试
-  └── support/              # loop 集成测试共享 provider
-
-crates/hermes-providers/tests/
-  ├── openai.rs             # OpenAI 适配器 HTTP 测试（httpmock）
-  ├── openai_stream.rs      # SSE streaming 测试
-  ├── anthropic.rs          # Anthropic/MiMo-compatible HTTP + SSE 测试
-  └── tool_call_roundtrip.rs  # tool_calls 序列化往返测试
+```bash
+printf '[provider]\nkind = "echo"\n' > /tmp/hermes-smoke.toml
+printf 'hello\n' | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.toml
 ```
 
-项目采用 **TDD 工作流**：RED → GREEN → REFACTOR，严格先写失败测试再写实现代码。
-同时会定期删减重复、低信噪比测试，优先保留能守住模块边界和用户可观察行为的测试。
+### Test layout
 
-## 设计文档
+Current integration tests focus on core behavior and module boundaries rather than high-level scripted workflows.
 
-| 文档 | 内容 |
+`crates/hermes-agent/tests/`
+
+- `arg_validation.rs`
+- `bash.rs`
+- `files.rs`
+- `skills.rs`
+- `skills_injection.rs`
+- `tool_dispatch.rs`
+- `usage_metrics.rs`
+
+`crates/hermes-providers/tests/`
+
+- `openai.rs`
+- `openai_stream.rs`
+- `anthropic.rs`
+- `tool_call_roundtrip.rs`
+
+## Documentation
+
+| File | Purpose |
 |---|---|
-| [plans/rust-port-design.md](plans/rust-port-design.md) | 历史主设计草稿：早期类型定义、特征设计、12 阶段路线图；部分 API 已被当前实现简化 |
-| [plans/hermes-comparison.md](plans/hermes-comparison.md) | Rust 移植与 Python 原版的差异对比；顶部有当前状态修订 |
-| [CLAUDE.md](CLAUDE.md) | Claude Code 的开发指引 |
+| [docs/history/rust-port-design.md](/Users/amagicpear/projects/perry_hermes/docs/history/rust-port-design.md) | Historical design draft for the Rust port |
+| [docs/history/hermes-comparison.md](/Users/amagicpear/projects/perry_hermes/docs/history/hermes-comparison.md) | Comparison notes between the Rust implementation and Python Hermes |
+| [docs/superpowers/specs/2026-06-06-builtin-tools-expansion-design.md](/Users/amagicpear/projects/perry_hermes/docs/superpowers/specs/2026-06-06-builtin-tools-expansion-design.md) | Built-in tools expansion design |
+| [docs/superpowers/specs/2026-06-06-architecture-cohesion-refactor-design.md](/Users/amagicpear/projects/perry_hermes/docs/superpowers/specs/2026-06-06-architecture-cohesion-refactor-design.md) | Architecture cleanup and cohesion refactor |
+| [CLAUDE.md](/Users/amagicpear/projects/perry_hermes/CLAUDE.md) | Development guidance for in-repo agent workflows |
 
-## 路线图
+## Roadmap
 
-| 阶段 | 目标 | 状态 |
+| Phase | Goal | Status |
 |---|---|---|
-| Phase 0 | 骨架：可编译的空工作空间 + 特征定义 | ✅ |
-| Phase 1 | Echo 循环：Mock Provider 返回 Stop，循环跑一次 | ✅ |
-| Phase 2 | OpenAI Provider：真实 gpt-4o-mini 调用 | ✅ |
-| Phase 3 | BashTool：真实 shell 命令执行 | ✅ |
-| Phase 4 | CLI：交互式 REPL，clap 参数，多轮历史，事件渲染 | ✅ |
-| Phase 5 | 流式输出：逐 token 输出 | ✅ |
-| Phase 6 | 中断：Ctrl-C 停止流式输出并保留 partial assistant message | ✅ |
-| Phase 7 | 上下文压缩：消息过长时自动摘要 | |
-| Phase 8 | Anthropic Provider：多 Provider 支持 | ✅ |
-| Phase 9 | Skills 加载：SKILL.md 加载 + system prompt 注入 | ✅ |
-| Phase 10 | TUI：ratatui 多行编辑器 | |
-| Phase 11 | 平台网关：Telegram（grammY-rs） | |
-| Phase 12 | Curator：学习循环（Hermes 的灵魂） | |
+| Phase 0 | Workspace skeleton and core traits | Done |
+| Phase 1 | Echo loop with a minimal provider | Done |
+| Phase 2 | OpenAI provider with real model calls | Done |
+| Phase 3 | Terminal tool execution | Done |
+| Phase 4 | Interactive CLI and REPL | Done |
+| Phase 5 | Streaming output | Done |
+| Phase 6 | Interrupt handling with Ctrl-C | Done |
+| Phase 7 | Context compression | Pending |
+| Phase 8 | Anthropic provider | Done |
+| Phase 9 | Skill loading and prompt injection | Done |
+| Phase 10 | TUI with `ratatui` | Pending |
+| Phase 11 | Platform gateway integrations | Pending |
+| Phase 12 | Curator and learning loop | Pending |
 
-## 已知问题
+## Known Limitations
 
-- `ToolContext.permissions` 已建模但未强制执行
-- 未知 `finish_reason` 会映射为 `FinishReason::Error`，但错误信息仍较粗
-- OpenAI-compatible provider 已支持 `Content::Parts` 的 text/image_url content array；其他多媒体 part 类型尚未建模
-- OpenAI-compatible provider 会把普通 content 中的 `<think>...</think>` fallback 解析为 reasoning；支持原生 `reasoning_content` 的端点仍优先使用原生字段
-- Anthropic provider 支持官方 `x-api-key` header，可通过 TOML `api_key_header = "api-key"` 适配 MiMo 这类 Anthropic-compatible 端点
-- Anthropic thinking 默认关闭；如需发送 `thinking` 参数，必须在 TOML 中显式设置 `mode = "manual"` 或 `mode = "adaptive"`。第三方 Anthropic-compatible API 建议先保持 `off`。
-- 复用同一 `BashTool` 时 `child.kill().await` 的并发安全未充分测试
+- `ToolContext.permissions` is modeled but not enforced yet.
+- Unknown provider `finish_reason` values still collapse into a generic runtime error path.
+- OpenAI-compatible providers support text and `image_url` content parts, but not every possible multimodal part type yet.
+- The OpenAI-compatible provider can normalize `<think>...</think>` fallback content into reasoning text when a provider does not expose a native reasoning field.
+- Anthropic-compatible thinking is off by default and must be enabled explicitly in TOML.
+- Reusing the same terminal tool instance under concurrent cancellation has not been stress-tested deeply.
 
 ## License
 
