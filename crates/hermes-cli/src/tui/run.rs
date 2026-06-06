@@ -2,11 +2,14 @@
 //! accepts a `TestBackend` and an injected input channel; the production
 //! `run` function wraps it with `CrosstermBackend::Stdout`.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use hermes_agent::AIAgent;
+use futures::StreamExt;
+use hermes_agent::{AIAgent, AgentRunError, SessionContext};
+use hermes_core::message::Message;
 use hermes_core::provider::Provider;
-use ratatui::backend::Backend;
+use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::Terminal;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -16,9 +19,9 @@ use crate::tui::event::{AppEvent, AppMode, RenderedLine};
 use crate::tui::input::handle_key;
 use crate::tui::loop_bridge::apply_loop_event;
 use crate::tui::render::render;
+use crate::tui::make_on_event;
 
-/// Local error type for the TUI run loop. Since `AgentRunError` only has
-/// `Loop` and `FailedTurn` variants, we use a simple enum for now.
+/// Local error type for the TUI run loop.
 #[derive(Debug)]
 pub enum RunError {
     Tui(String),
@@ -36,15 +39,123 @@ impl std::fmt::Display for RunError {
 
 impl std::error::Error for RunError {}
 
+impl From<AgentRunError> for RunError {
+    fn from(e: AgentRunError) -> Self {
+        RunError::Tui(e.to_string())
+    }
+}
+
 /// Production entry point: drives the TUI against stdout / real keyboard.
 pub async fn run(
-    _agent: Arc<AIAgent>,
-    _cancel: CancellationToken,
-    _provider_name: String,
-    _model_name: String,
+    agent: Arc<AIAgent>,
+    cancel: CancellationToken,
+    provider_name: String,
+    model_name: String,
 ) -> Result<(), RunError> {
-    // Stub for Task 12; see Step 6 in the plan.
-    unimplemented!("production run() is Task 12; for now use run_with_backend")
+    use crossterm::event::{Event, EventStream};
+    use crossterm::execute;
+    use crossterm::terminal::{
+        disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    };
+    use std::io::stdout;
+
+    enable_raw_mode().map_err(|e| RunError::Tui(e.to_string()))?;
+    execute!(stdout(), EnterAlternateScreen)
+        .map_err(|e| RunError::Tui(e.to_string()))?;
+    let backend = CrosstermBackend::new(stdout());
+    let mut terminal = Terminal::new(backend)
+        .map_err(|e| RunError::Tui(e.to_string()))?;
+
+    let (input_tx, mut input_rx) = mpsc::unbounded_channel::<AppEvent>();
+    let mut app = App::new_for_test();
+    app.provider_name = Some(provider_name);
+    app.model_name = Some(model_name);
+
+    let mut events = EventStream::new();
+    let mut tick = tokio::time::interval(std::time::Duration::from_millis(16));
+
+    let session = SessionContext {
+        working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
+        session_id: "cli".into(),
+    };
+
+    let result: Result<(), RunError> = async {
+        loop {
+            terminal
+                .draw(|f| render(f, &app))
+                .map_err(|e| RunError::Tui(e.to_string()))?;
+
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => {
+                    app.push_line(RenderedLine::System("⚠ cancelled".to_string()));
+                    return Ok(());
+                }
+                _ = tick.tick() => {
+                    // Periodic redraw keeps the display fresh while streaming.
+                }
+                maybe = events.next() => {
+                    match maybe {
+                        Some(Ok(Event::Key(k))) => {
+                            let next = handle_key(&mut app, k);
+                            match next {
+                                AppEvent::Submit(text) => {
+                                    app.push_line(RenderedLine::User(text.clone()));
+                                    app.mode = AppMode::AwaitingModel;
+                                    let on_event = make_on_event(input_tx.clone());
+                                    let res = agent
+                                        .run_messages(
+                                            vec![Message::user(&text)],
+                                            &session,
+                                            cancel.clone(),
+                                            on_event,
+                                        )
+                                        .await;
+                                    if let Err(e) = res {
+                                        app.push_line(RenderedLine::System(format!("error: {e}")));
+                                    }
+                                    app.mode = AppMode::Idle;
+                                }
+                                AppEvent::Quit => return Ok(()),
+                                AppEvent::CancelInFlight => {
+                                    app.mode = AppMode::Cancelling;
+                                    cancel.cancel();
+                                }
+                                AppEvent::Clear => {
+                                    app.scrollback.clear();
+                                }
+                                AppEvent::Compact(focus) => {
+                                    app.push_line(RenderedLine::System(format!(
+                                        "Manual compact requested (focus: {}).",
+                                        focus.as_deref().unwrap_or("(none)")
+                                    )));
+                                }
+                                _ => {}
+                            }
+                        }
+                        Some(Ok(Event::Resize(_, _))) => {
+                            // Next tick will redraw at the new size.
+                        }
+                        Some(Err(e)) => {
+                            return Err(RunError::Tui(e.to_string()));
+                        }
+                        None => return Ok(()),
+                        _ => {}
+                    }
+                }
+                maybe = input_rx.recv() => {
+                    if let Some(AppEvent::Loop(loop_ev)) = maybe {
+                        let _ = apply_loop_event(&mut app, loop_ev);
+                    }
+                }
+            }
+        }
+    }
+    .await;
+
+    disable_raw_mode().ok();
+    execute!(stdout(), LeaveAlternateScreen).ok();
+    result
 }
 
 /// Test-friendly entry point. The caller supplies:
