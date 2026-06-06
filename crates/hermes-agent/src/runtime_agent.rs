@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::HermesConfig;
 use crate::provider_factory::build_provider;
-use crate::prompting::compose_system_prompt;
+use crate::prompting::{compose_system_prompt, resolve_skills_dir};
 use crate::tool_catalog::build_registry;
 
 #[derive(Debug, Clone)]
@@ -84,7 +84,8 @@ impl AIAgent {
 }
 
 fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
-    let registry = Arc::new(build_registry(&config.agent.disabled_toolsets));
+    let skills_dir = resolve_skills_dir();
+    let registry = Arc::new(build_registry(&config.agent.disabled_toolsets, &skills_dir));
     let system_prompt = compose_system_prompt(config.agent.system_prompt.as_deref());
     AgentLoop::from_provider(
         provider,

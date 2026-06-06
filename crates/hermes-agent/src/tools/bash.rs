@@ -1,4 +1,9 @@
-//! `BashTool` — run a shell command, return its combined output.
+//! `BashTool` — the public `terminal` tool, exposed to the model as `"terminal"`.
+//!
+//! The Rust struct keeps the name `BashTool` (smaller diff against the existing
+//! public re-export) but its public tool contract — `name()`, `toolset()`,
+//! `description()`, `parameters_schema()` — is aligned with Python's
+//! `TERMINAL_SCHEMA` so prompts and provider tool calls stay portable.
 
 use std::process::Stdio;
 
@@ -11,7 +16,35 @@ use tokio::process::Command;
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 
-fn truncate_output(s: &str, max_chars: usize) -> String {
+/// The model-visible description for the `terminal` tool.
+///
+/// Copied verbatim from Python's `TERMINAL_TOOL_DESCRIPTION` so prompts and
+/// provider tool calls stay aligned.
+pub const TERMINAL_TOOL_DESCRIPTION: &str = "Execute shell commands on a Linux environment. Filesystem usually persists between calls.\n\
+\n\
+Do NOT use cat/head/tail to read files — use read_file instead.\n\
+Do NOT use grep/rg/find to search — use search_files instead.\n\
+Do NOT use ls to list directories — use search_files(target='files') instead.\n\
+Do NOT use sed/awk to edit files — use patch instead.\n\
+Do NOT use echo/cat heredoc to create files — use write_file instead.\n\
+Reserve terminal for: builds, installs, git, processes, scripts, network, package managers, and anything that needs a shell.\n\
+\n\
+Foreground (default): Commands return INSTANTLY when done, even if the timeout is high. Set timeout=300 for long builds/scripts — you'll still get the result in seconds if it's fast. Prefer foreground for short commands.\n\
+Background: Set background=true to get a session_id. Almost always pair with notify_on_complete=true — bg without notify runs SILENTLY and you have no way to learn it finished short of calling process(action='poll') yourself. Two legitimate uses:\n\
+  (1) Long-lived processes that never exit (servers, watchers, daemons) — silent is correct, there's no exit to notify on.\n\
+  (2) Long-running bounded tasks (tests, builds, deploys, CI pollers, batch jobs) — MUST set notify_on_complete=true. Without it you'll either forget to poll or sit blocked waiting for the user to surface the result.\n\
+For servers/watchers, do NOT use shell-level background wrappers (nohup/disown/setsid/trailing '&') in foreground mode. Use background=true so Hermes can track lifecycle and output.\n\
+After starting a server, verify readiness with a health check or log signal, then run tests in a separate terminal() call. Avoid blind sleep loops.\n\
+Use process(action=\"poll\") for progress checks, process(action=\"wait\") to block until done.\n\
+Working directory: Use 'workdir' for per-command cwd.\n\
+PTY mode: Set pty=true for interactive CLI tools (Codex, Claude Code, Python REPL).\n\
+\n\
+Do NOT use vim/nano/interactive tools without pty=true — they hang without a pseudo-terminal. Pipe git output to cat if it might page.";
+
+/// Default command timeout in seconds when the model does not specify one.
+const DEFAULT_TIMEOUT_SECS: u64 = 30;
+
+pub(crate) fn truncate_output(s: &str, max_chars: usize) -> String {
     let char_count = s.chars().count();
     if char_count <= max_chars {
         return s.to_string();
@@ -43,28 +76,53 @@ impl Default for BashTool {
 #[async_trait]
 impl Tool for BashTool {
     fn name(&self) -> &str {
-        "bash"
+        "terminal"
     }
 
     fn description(&self) -> &str {
-        "Run a shell command and return its combined stdout+stderr. \
-         Use for file operations, running scripts, inspecting the system, etc."
+        TERMINAL_TOOL_DESCRIPTION
     }
 
     fn parameters_schema(&self) -> Value {
+        // Mirrors Python's TERMINAL_SCHEMA. The Rust backend only honors a
+        // subset of these fields today (command, workdir, timeout) and ignores
+        // the rest; the schema advertises the full surface so prompts and
+        // tool calls line up with Python.
         json!({
             "type": "object",
             "properties": {
                 "command": {
                     "type": "string",
-                    "description": "The shell command to execute."
+                    "description": "The command to execute on the VM"
                 },
-                "timeout_secs": {
+                "background": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Run the command in the background; returns a session_id"
+                },
+                "timeout": {
                     "type": "integer",
-                    "description": "Maximum wall-clock seconds before the command is killed.",
-                    "default": 30,
                     "minimum": 1,
-                    "maximum": 600
+                    "description": "Maximum wall-clock seconds before the command is killed (default 30)"
+                },
+                "workdir": {
+                    "type": "string",
+                    "description": "Working directory for this command (absolute path). Defaults to the session working directory."
+                },
+                "pty": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Allocate a pseudo-terminal (for interactive CLIs)"
+                },
+                "notify_on_complete": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "When background=true, notify when the process exits"
+                },
+                "watch_patterns": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Glob patterns to watch for changes while the command runs"
                 }
             },
             "required": ["command"],
@@ -73,7 +131,7 @@ impl Tool for BashTool {
     }
 
     fn toolset(&self) -> &'static str {
-        "core"
+        "terminal"
     }
 
     async fn execute(
@@ -92,14 +150,31 @@ impl Tool for BashTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidArgs("missing 'command'".into()))?;
         let timeout_secs = args
-            .get("timeout_secs")
+            .get("timeout")
             .and_then(|v| v.as_u64())
-            .unwrap_or(30);
+            .unwrap_or(DEFAULT_TIMEOUT_SECS);
+        let workdir = args
+            .get("workdir")
+            .and_then(|v| v.as_str())
+            .map(std::path::PathBuf::from);
+        let cwd = workdir.as_ref().unwrap_or(&ctx.working_dir);
+
+        // `background`, `pty`, `notify_on_complete`, `watch_patterns` are
+        // accepted by the schema for parity with Python but the Rust backend
+        // only implements foreground, non-PTY execution today. We deliberately
+        // do not error on them so prompts that mention them still work; the
+        // tool just runs to completion inline.
+        let _ = (
+            args.get("background"),
+            args.get("pty"),
+            args.get("notify_on_complete"),
+            args.get("watch_patterns"),
+        );
 
         let mut child = Command::new("bash")
             .arg("-c")
             .arg(command)
-            .current_dir(&ctx.working_dir)
+            .current_dir(cwd)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
