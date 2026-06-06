@@ -155,3 +155,45 @@ fn tool_call_finished_error_includes_error_message() {
         other => panic!("expected ToolResult with ok=false; got {other:?}"),
     }
 }
+
+#[test]
+fn read_file_tool_result_is_summarized_for_tui() {
+    let mut app = app_with_mode(AppMode::AwaitingModel);
+    let ev = LoopEvent::ToolCallFinished {
+        call: ToolCall {
+            id: "call_read".to_string(),
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({}),
+        },
+        result: Ok(ToolOutput {
+            content: serde_json::json!({
+                "content": "1|# Title\n2|line one\n3|line two\n4|line three\n5|line four\n6|line five\n",
+                "total_lines": 2000,
+                "file_size": 123456,
+                "truncated": true,
+                "_hint": "Use offset=7 to continue reading (showing 1-6 of 2000 lines)"
+            })
+            .to_string(),
+        }),
+    };
+    let _ = apply_loop_event(&mut app, ev);
+    match app.scrollback.last() {
+        Some(RenderedLine::ToolResult { name, output, ok }) => {
+            assert_eq!(name, "read_file");
+            assert!(*ok);
+            assert!(
+                output.contains("# Title") && output.contains("line one"),
+                "expected preview content in summarized tool output: {output:?}"
+            );
+            assert!(
+                output.contains("Use offset=7"),
+                "expected pagination hint in summarized tool output: {output:?}"
+            );
+            assert!(
+                !output.contains("\"file_size\""),
+                "raw JSON should not be rendered into TUI: {output:?}"
+            );
+        }
+        other => panic!("expected ToolResult preview; got {other:?}"),
+    }
+}

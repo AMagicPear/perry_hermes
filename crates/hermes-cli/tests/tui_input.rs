@@ -134,3 +134,26 @@ fn cancelling_mode_ignores_typing() {
         "expected Tick for ignored Backspace in Cancelling; got {ev:?}"
     );
 }
+
+#[test]
+fn arrow_up_scrolls_chat_when_idle() {
+    use hermes_cli::tui::event::AppMode;
+
+    let mut app = App::new_for_test();
+    app.mode = AppMode::Idle;
+    let ev = handle_key(&mut app, key(KeyCode::Up));
+    assert!(matches!(ev, AppEvent::Tick));
+    assert_eq!(app.chat_scroll, 1);
+}
+
+#[test]
+fn arrow_down_scrolls_chat_toward_bottom_when_idle() {
+    use hermes_cli::tui::event::AppMode;
+
+    let mut app = App::new_for_test();
+    app.mode = AppMode::Idle;
+    app.chat_scroll = 3;
+    let ev = handle_key(&mut app, key(KeyCode::Down));
+    assert!(matches!(ev, AppEvent::Tick));
+    assert_eq!(app.chat_scroll, 2);
+}

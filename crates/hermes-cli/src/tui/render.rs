@@ -5,13 +5,15 @@ use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
 use ratatui::Frame;
+use std::time::{SystemTime, UNIX_EPOCH};
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::tui::app::App;
 use crate::tui::event::{AppMode, RenderedLine};
 
 /// Paint one frame.
 pub fn render(f: &mut Frame, app: &App) {
-    let working_h = if matches!(app.mode, AppMode::AwaitingModel) {
+    let activity_h = if matches!(app.mode, AppMode::AwaitingModel | AppMode::Cancelling) {
         1
     } else {
         0
@@ -20,10 +22,10 @@ pub fn render(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Min(1),            // chat scrollback
-            Constraint::Length(working_h), // working indicator (awaiting only)
-            Constraint::Length(1),         // status row 1
-            Constraint::Length(3),         // input block
+            Constraint::Min(1),             // chat scrollback
+            Constraint::Length(activity_h), // activity indicator (busy only)
+            Constraint::Length(1),          // status row
+            Constraint::Length(3),          // input block
         ])
         .split(f.area());
 
@@ -46,16 +48,16 @@ pub fn render(f: &mut Frame, app: &App) {
         .scroll((scroll_y, 0));
     f.render_widget(chat, chat_area);
 
-    // --- Working indicator (only when awaiting) -----------------------------
-    if matches!(app.mode, AppMode::AwaitingModel) {
-        let working = build_working_line(app);
-        let working_widget = Paragraph::new(working)
+    // --- Activity indicator (only when busy) --------------------------------
+    if matches!(app.mode, AppMode::AwaitingModel | AppMode::Cancelling) {
+        let activity = build_activity_line(app);
+        let activity_widget = Paragraph::new(activity)
             .style(Style::default().fg(Color::DarkGray))
             .block(Block::default().borders(Borders::NONE));
-        f.render_widget(working_widget, chunks[1]);
+        f.render_widget(activity_widget, chunks[1]);
     }
 
-    // --- Status row 1 (always visible) --------------------------------------
+    // --- Status row (always visible metadata) --------------------------------
     let status_line = build_status_line_1(app);
     let status = Paragraph::new(status_line)
         .style(Style::default().fg(Color::DarkGray))
@@ -77,7 +79,7 @@ pub fn render(f: &mut Frame, app: &App) {
     // after the "❯ " prompt and the typed text.
     let input_x = chunks[3].x;
     let input_y = chunks[3].y;
-    let cursor_x = input_x + 1 + 2 + app.input.chars().count() as u16;
+    let cursor_x = input_x + 1 + visible_width("❯ ") as u16 + visible_width(&app.input) as u16;
     let cursor_y = input_y + 1;
     f.set_cursor_position(Position::new(cursor_x, cursor_y));
 }
@@ -92,29 +94,38 @@ fn build_chat_lines(scrollback: &[RenderedLine], width: u16) -> Vec<Line<'static
         match line {
             RenderedLine::User(s) => {
                 let raw = format!("> {s}");
-                out.extend(wrap_to_width(&raw, width));
+                out.extend(wrap_multiline_text(&raw, width));
             }
             RenderedLine::Assistant(s) => {
                 out.extend(assistant_block(s, width));
             }
             RenderedLine::Reasoning(s) => {
                 let raw = format!("… {s}");
-                out.extend(wrap_to_width(&raw, width));
+                out.extend(wrap_multiline_text(&raw, width));
             }
             RenderedLine::ToolCall { name, args_preview } => {
                 let raw = format!("⚙ {name}({args_preview})");
-                out.extend(wrap_to_width(&raw, width));
+                out.extend(wrap_multiline_text(&raw, width));
             }
             RenderedLine::ToolResult { name, output, ok } => {
                 let glyph = if *ok { "✓" } else { "✗" };
                 let raw = format!("{glyph} {name}: {output}");
-                out.extend(wrap_to_width(&raw, width));
+                out.extend(wrap_multiline_text(&raw, width));
             }
             RenderedLine::System(s) => {
                 let raw = format!("[system] {s}");
-                out.extend(wrap_to_width(&raw, width));
+                out.extend(wrap_multiline_text(&raw, width));
             }
         }
+    }
+    out
+}
+
+fn wrap_multiline_text(text: &str, width: u16) -> Vec<Line<'static>> {
+    let normalized = text.replace("\r\n", "\n");
+    let mut out = Vec::new();
+    for segment in normalized.split('\n') {
+        out.extend(wrap_to_width(segment, width));
     }
     out
 }
@@ -127,25 +138,28 @@ fn wrap_to_width(text: &str, width: u16) -> Vec<Line<'static>> {
     if w == 0 {
         return vec![Line::from(text.to_string())];
     }
-    let total_chars = text.chars().count();
-    if total_chars <= w {
+    if visible_width(text) <= w {
         return vec![Line::from(text.to_string())];
     }
     let mut out: Vec<Line<'static>> = Vec::new();
     let mut current = String::new();
     for word in text.split_whitespace() {
-        let word_len = word.chars().count();
+        let word_len = visible_width(word);
         if word_len > w {
             // Hard-split the overlong word across multiple lines.
             if !current.is_empty() {
                 out.push(Line::from(std::mem::take(&mut current)));
             }
             let mut chunk = String::new();
+            let mut chunk_width = 0usize;
             for ch in word.chars() {
-                if chunk.chars().count() == w {
+                let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+                if chunk_width.saturating_add(ch_width) > w && !chunk.is_empty() {
                     out.push(Line::from(std::mem::take(&mut chunk)));
+                    chunk_width = 0;
                 }
                 chunk.push(ch);
+                chunk_width += ch_width;
             }
             if !chunk.is_empty() {
                 current = chunk;
@@ -154,7 +168,7 @@ fn wrap_to_width(text: &str, width: u16) -> Vec<Line<'static>> {
         }
         if current.is_empty() {
             current.push_str(word);
-        } else if current.chars().count() + 1 + word_len <= w {
+        } else if visible_width(&current) + 1 + word_len <= w {
             current.push(' ');
             current.push_str(word);
         } else {
@@ -171,20 +185,17 @@ fn wrap_to_width(text: &str, width: u16) -> Vec<Line<'static>> {
     out
 }
 
-/// Render assistant text inside a rounded box of `width` columns.
-/// Top: `╭─ Hermes ─...─╮`, body: `│ <wrapped text> │`, bottom: `╰─...─╯`.
+/// Render assistant text with a framed header/footer and plain indented body.
+/// Top: `╭─ ⚕ Hermes ─...─╮`, body: `  <wrapped text>`, bottom: `╰─...─╯`.
 fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
     let w = width.max(20) as usize;
-    // Inner content width = total width - 4 (for `│ ` and ` │`).
-    let inner_w = w.saturating_sub(4).max(1);
-    let title = " Hermes ";
-    // Top border: `╭─ Hermes ─...─╮` — title takes (2 + title.len() + 1) cols,
-    // fill the rest with `─`.
+    let body_indent = "  ";
+    let inner_w = w.saturating_sub(body_indent.len()).max(1);
+    let title = " ⚕ Hermes ";
     let top_prefix = "╭─";
     let top_suffix = "╮";
     let top_filler_dashes = w.saturating_sub(top_prefix.len() + title.len() + top_suffix.len());
     let top = format!("{top_prefix}{title}{}", "─".repeat(top_filler_dashes));
-    // Bottom border: `╰─...─╯`
     let bot_prefix = "╰─";
     let bot_suffix = "╯";
     let bot_filler_dashes = w.saturating_sub(bot_prefix.len() + bot_suffix.len());
@@ -193,51 +204,32 @@ fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     out.push(Line::from(top).bold().cyan());
 
-    // Wrap text into lines of `inner_w` columns. Hard-wrap on character
-    // boundaries (preserves spaces, breaks words wider than inner_w).
-    let mut current = String::new();
-    for word in text.split_whitespace() {
-        // Truncate an overlong word to inner_w.
-        let word = if word.chars().count() > inner_w {
-            word.chars().take(inner_w).collect::<String>()
-        } else {
-            word.to_string()
-        };
-        if current.is_empty() {
-            current.push_str(&word);
-        } else if current.chars().count() + 1 + word.chars().count() <= inner_w {
-            current.push(' ');
-            current.push_str(&word);
-        } else {
-            out.push(Line::from(format!("│ {:<inner_w$} │", current)));
-            current = word;
+    let normalized = text.replace("\r\n", "\n");
+    for segment in normalized.split('\n') {
+        let wrapped = wrap_to_width(segment, inner_w as u16);
+        for line in wrapped {
+            let content = line.spans.first().map(|span| span.content.as_ref()).unwrap_or("");
+            out.push(Line::from(format!(
+                "{body_indent}{}",
+                pad_to_width(content, inner_w)
+            )));
         }
     }
-    if !current.is_empty() {
-        out.push(Line::from(format!("│ {:<inner_w$} │", current)));
-    } else if text.is_empty() {
-        out.push(Line::from(format!("│ {:<inner_w$} │", "")));
-    }
 
-    out.push(Line::from(bot));
+    out.push(Line::from(bot).cyan());
     out
 }
 
-/// Build status row 1: `⚕ {provider} · {model} · {in_tok} / {total} {pct}% · {elapsed} · {mode}`.
-/// The `{in_tok} / {total} {pct}%` segment is omitted when
-/// `app.context_window_size` is `None`.
+/// Build the metadata row: `⚕ {provider} · {model} · {in_tok} / {total} {pct}% · {elapsed}`.
+/// The context segment is omitted when `app.context_window_size` is `None`.
+/// The elapsed segment is omitted when there is no active turn timer.
 fn build_status_line_1(app: &App) -> Line<'static> {
     let provider = app.provider_name.as_deref().unwrap_or("?");
     let model = app.model_name.as_deref().unwrap_or("?");
-    let mode = match app.mode {
-        AppMode::Idle => "idle",
-        AppMode::AwaitingModel => "awaiting",
-        AppMode::Cancelling => "cancelling",
-    };
     let elapsed = app
         .turn_started_at
         .map(|t| fmt_elapsed_compact(t.elapsed().as_secs()))
-        .unwrap_or_else(|| "—".to_string());
+        .filter(|elapsed| !elapsed.is_empty());
 
     let mut spans: Vec<Span<'static>> = vec![
         Span::raw("⚕ "),
@@ -256,31 +248,38 @@ fn build_status_line_1(app: &App) -> Line<'static> {
             format_tokens(total)
         )));
         spans.push(Span::raw(format!(" {pct}%")));
-        spans.push(Span::raw(" · "));
-        spans.push(Span::raw(elapsed));
-    } else {
+    }
+
+    if let Some(elapsed) = elapsed {
         spans.push(Span::raw(" · "));
         spans.push(Span::raw(elapsed));
     }
 
-    spans.push(Span::raw(" · "));
-    spans.push(Span::raw(mode.to_string()));
     Line::from(spans)
 }
 
-/// Build the working-indicator line: `⠋ Working · {elapsed} · esc to interrupt`.
-fn build_working_line(app: &App) -> Line<'static> {
+/// Build the activity line shown while a turn is in flight or being cancelled.
+fn build_activity_line(app: &App) -> Line<'static> {
     let elapsed = app
         .turn_started_at
         .map(|t| fmt_elapsed_compact(t.elapsed().as_secs()))
         .unwrap_or_else(|| "0s".to_string());
-    Line::from(vec![
-        Span::raw("⠋ "),
-        Span::raw("Working").bold(),
-        Span::raw(" · "),
-        Span::raw(elapsed),
-        Span::raw(" · esc to interrupt").dim(),
-    ])
+    match app.mode {
+        AppMode::AwaitingModel => Line::from(vec![
+            Span::raw(format!("{} ", spinner_frame())),
+            Span::raw("Working").bold(),
+            Span::raw(" · "),
+            Span::raw(elapsed),
+            Span::raw(" · Esc to stop").dim(),
+        ]),
+        AppMode::Cancelling => Line::from(vec![
+            Span::raw("◌ "),
+            Span::raw("Cancelling").bold(),
+            Span::raw(" · "),
+            Span::raw(elapsed),
+        ]),
+        AppMode::Idle => Line::default(),
+    }
 }
 
 /// Build the input line: `❯ {text_or_placeholder}`.
@@ -330,6 +329,24 @@ fn format_tokens(n: u64) -> String {
     } else {
         n.to_string()
     }
+}
+
+fn visible_width(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
+}
+
+fn spinner_frame() -> &'static str {
+    const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    let idx = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| ((elapsed.as_millis() / 80) % FRAMES.len() as u128) as usize)
+        .unwrap_or(0);
+    FRAMES[idx]
+}
+
+fn pad_to_width(text: &str, width: usize) -> String {
+    let padding = width.saturating_sub(visible_width(text));
+    format!("{text}{}", " ".repeat(padding))
 }
 
 #[cfg(test)]

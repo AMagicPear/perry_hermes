@@ -3,6 +3,7 @@
 use crate::tui::app::App;
 use crate::tui::event::{AppEvent, AppMode, RenderedLine};
 use hermes_agent::LoopEvent;
+use serde_json::Value;
 
 /// Apply a `LoopEvent` to the `App`, returning the `AppEvent` the main loop
 /// should dispatch next.
@@ -40,7 +41,7 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
         }
         LoopEvent::ToolCallFinished { call, result } => {
             let (output, ok) = match result {
-                Ok(tool_output) => (tool_output.content, true),
+                Ok(tool_output) => (summarize_tool_output(&call.name, &tool_output.content), true),
                 Err(e) => (e.to_string(), false),
             };
             app.push_line(RenderedLine::ToolResult {
@@ -94,4 +95,64 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
             AppEvent::Tick
         }
     }
+}
+
+fn summarize_tool_output(tool_name: &str, raw: &str) -> String {
+    if tool_name == "read_file" {
+        return summarize_read_file_output(raw);
+    }
+    summarize_generic_output(raw)
+}
+
+fn summarize_read_file_output(raw: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(raw) else {
+        return raw.to_string();
+    };
+    let Some(content) = value.get("content").and_then(|v| v.as_str()) else {
+        return raw.to_string();
+    };
+    let hint = value.get("_hint").and_then(|v| v.as_str()).unwrap_or("");
+    let total_lines = value.get("total_lines").and_then(|v| v.as_i64());
+    let truncated = value
+        .get("truncated")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut preview_lines: Vec<&str> = content.lines().take(12).collect();
+    if preview_lines.is_empty() {
+        preview_lines.push("(empty)");
+    }
+
+    let mut out = preview_lines.join("\n");
+    if truncated || content.lines().count() > preview_lines.len() {
+        out.push_str("\n…");
+    }
+    if let Some(total_lines) = total_lines {
+        out.push_str(&format!("\n[{total_lines} lines total]"));
+    }
+    if !hint.is_empty() {
+        out.push('\n');
+        out.push_str(hint);
+    }
+    out
+}
+
+fn summarize_generic_output(raw: &str) -> String {
+    const MAX_PREVIEW_LINES: usize = 20;
+    const MAX_PREVIEW_CHARS: usize = 4_000;
+
+    let mut preview = raw
+        .lines()
+        .take(MAX_PREVIEW_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if preview.chars().count() > MAX_PREVIEW_CHARS {
+        preview = preview.chars().take(MAX_PREVIEW_CHARS).collect();
+        preview.push('…');
+        return preview;
+    }
+    if raw.lines().count() > MAX_PREVIEW_LINES {
+        preview.push_str("\n…");
+    }
+    preview
 }

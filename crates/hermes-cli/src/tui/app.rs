@@ -3,6 +3,7 @@
 use std::time::Instant;
 
 use hermes_core::message::Message;
+use tokio_util::sync::CancellationToken;
 
 use crate::tui::event::{AppMode, RenderedLine};
 
@@ -42,6 +43,9 @@ pub struct App {
     /// Total context window in tokens, if configured. When `None`, the status
     /// bar hides the context segment entirely.
     pub context_window_size: Option<u64>,
+    /// Per-turn cancellation handle. Recreated for each submit so a cancelled
+    /// turn does not poison future turns.
+    pub active_turn_cancel: Option<CancellationToken>,
 }
 
 impl App {
@@ -62,6 +66,7 @@ impl App {
             turn_started_at: None,
             context_window_size: None,
             chat_scroll: 0,
+            active_turn_cancel: None,
         }
     }
 

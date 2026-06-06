@@ -2,12 +2,16 @@
 //! drive one turn, and assert the rendered `TestBackend` buffer contains the
 //! expected user and assistant lines.
 
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::stream;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use hermes_agent::AgentRunError;
 use hermes_core::message::{Content, Message, Role};
+use hermes_core::error::LoopError;
 use hermes_core::provider::{
     Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta,
 };
@@ -81,6 +85,23 @@ fn completion_to_deltas(c: Completion) -> Vec<CompletionDelta> {
         finish_reason: Some(c.finish_reason),
     });
     deltas
+}
+
+fn buffer_text(backend: &Arc<Mutex<TestBackend>>) -> String {
+    let guard = backend.lock().unwrap();
+    let buffer = guard.buffer();
+    let width = buffer.area.width as usize;
+    let height = buffer.area.height as usize;
+    let mut text = String::new();
+    for y in 0..height {
+        for x in 0..width {
+            if let Some(cell) = buffer.cell((x as u16, y as u16)) {
+                text.push(cell.symbol().chars().next().unwrap_or(' '));
+            }
+        }
+        text.push('\n');
+    }
+    text
 }
 
 #[async_trait]
@@ -193,23 +214,7 @@ async fn user_message_appears_in_buffer() {
     .expect("tui run returned error");
 
     // The user message "hi" should appear as "> hi" somewhere in the buffer.
-    let guard = backend.lock().unwrap();
-    let buffer = guard.buffer();
-    let width = buffer.area.width as usize;
-    let height = buffer.area.height as usize;
-    let mut found = false;
-    for y in 0..height {
-        let mut row = String::new();
-        for x in 0..width {
-            if let Some(cell) = buffer.cell((x as u16, y as u16)) {
-                row.push(cell.symbol().chars().next().unwrap_or(' '));
-            }
-        }
-        if row.contains("> hi") {
-            found = true;
-            break;
-        }
-    }
+    let found = buffer_text(&backend).contains("> hi");
     assert!(found, "user message '> hi' not found in buffer");
 }
 
@@ -256,4 +261,102 @@ async fn compact_command_emits_compress_request() {
     )
     .await;
     assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn unknown_slash_command_is_rendered_to_scrollback() {
+    let backend = Arc::new(Mutex::new(TestBackend::new(80, 24)));
+    let cancel = CancellationToken::new();
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<AppEvent>();
+
+    for ch in "/bogus".chars() {
+        input_tx
+            .send(AppEvent::Key(KeyEvent::new(
+                KeyCode::Char(ch),
+                KeyModifiers::NONE,
+            )))
+            .expect("send char");
+    }
+    input_tx
+        .send(AppEvent::Key(KeyEvent::new(
+            KeyCode::Enter,
+            KeyModifiers::NONE,
+        )))
+        .expect("send enter");
+    input_tx.send(AppEvent::Quit).expect("send quit");
+    drop(input_tx);
+
+    run_with_backend(
+        backend.clone(),
+        input_rx,
+        cancel,
+        "echo".to_string(),
+        "test-model".to_string(),
+        10,
+        None,
+    )
+    .await
+    .expect("tui run returned error");
+
+    let text = buffer_text(&backend);
+    assert!(
+        text.contains("Unknown command: /bogus"),
+        "expected unknown slash command in scrollback; full buffer:\n{text}"
+    );
+}
+
+#[tokio::test]
+async fn cancelled_turn_does_not_block_following_submit() {
+    let backend = Arc::new(Mutex::new(TestBackend::new(80, 24)));
+    let cancel = CancellationToken::new();
+    let (input_tx, input_rx) = mpsc::unbounded_channel::<AppEvent>();
+    let finished = Arc::new(AtomicBool::new(false));
+    let finished_clone = Arc::clone(&finished);
+
+    let handle = tokio::spawn(async move {
+        let result = run_with_backend(
+            backend.clone(),
+            input_rx,
+            cancel,
+            "echo".to_string(),
+            "test-model".to_string(),
+            10,
+            None,
+        )
+        .await;
+        finished_clone.store(true, Ordering::SeqCst);
+        (result, backend)
+    });
+
+    input_tx
+        .send(AppEvent::Submit("first".to_string()))
+        .expect("send first submit");
+    input_tx
+        .send(AppEvent::CancelInFlight)
+        .expect("send cancel event");
+    input_tx
+        .send(AppEvent::TurnCompleted(Err(AgentRunError::Loop(
+            LoopError::Cancelled,
+        ))))
+        .expect("send cancelled completion");
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        !finished.load(Ordering::SeqCst),
+        "run loop exited after first cancellation"
+    );
+
+    input_tx
+        .send(AppEvent::Submit("second".to_string()))
+        .expect("send second submit");
+    input_tx.send(AppEvent::Quit).expect("send quit");
+    drop(input_tx);
+
+    let (result, backend) = handle.await.expect("join tui task");
+    result.expect("tui run returned error");
+
+    let text = buffer_text(&backend);
+    assert!(
+        text.contains("> second"),
+        "expected second submit to remain usable after cancellation; full buffer:\n{text}"
+    );
 }

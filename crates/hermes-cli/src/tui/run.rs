@@ -4,9 +4,11 @@
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 use futures::StreamExt;
 use hermes_agent::{AIAgent, AgentRunError, SessionContext};
+use hermes_core::error::LoopError;
 use hermes_core::message::Message;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::Terminal;
@@ -53,16 +55,20 @@ pub async fn run(
     max_iterations: u32,
     context_window_size: Option<u64>,
 ) -> Result<(), RunError> {
-    use crossterm::event::{Event, EventStream};
+    use crossterm::event::{Event, EventStream, MouseEventKind};
     use crossterm::execute;
     use crossterm::terminal::{
         disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
     };
     use std::io::stdout;
-    use std::time::Instant;
 
     enable_raw_mode().map_err(|e| RunError::Tui(e.to_string()))?;
-    execute!(stdout(), EnterAlternateScreen).map_err(|e| RunError::Tui(e.to_string()))?;
+    execute!(
+        stdout(),
+        EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture
+    )
+    .map_err(|e| RunError::Tui(e.to_string()))?;
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend).map_err(|e| RunError::Tui(e.to_string()))?;
 
@@ -100,60 +106,37 @@ pub async fn run(
                     match maybe {
                         Some(Ok(Event::Key(k))) => {
                             let next = handle_key(&mut app, k);
-                            match next {
-                                AppEvent::Submit(text) => {
-                                    app.push_line(RenderedLine::User(text.clone()));
-                                    app.session_history.push(Message::user(&text));
-                                    app.mode = AppMode::AwaitingModel;
-                                    app.turn_started_at = Some(Instant::now());
-                                    let on_event = make_on_event(input_tx.clone());
-                                    // Spawn the agent call so the main event loop
-                                    // keeps redrawing while the model thinks.
-                                    let agent = Arc::clone(&agent);
-                                    let session = session.clone();
-                                    let cancel = cancel.clone();
-                                    let messages = app.session_history.clone();
-                                    let result_tx = input_tx.clone();
-                                    tokio::spawn(async move {
-                                        let res = agent
-                                            .run_messages(messages, &session, cancel, on_event)
-                                            .await;
-                                        let _ = result_tx.send(AppEvent::TurnCompleted(res));
-                                    });
-                                }
-                                AppEvent::TurnCompleted(res) => {
-                                    app.turn_started_at = None;
-                                    match res {
-                                        Ok(run_result) => {
-                                            app.session_history = run_result.messages;
-                                        }
-                                        Err(e) => {
-                                            app.push_line(RenderedLine::System(format!("error: {e}")));
-                                        }
-                                    }
-                                    app.mode = AppMode::Idle;
-                                }
-                                AppEvent::Quit => return Ok(()),
-                                AppEvent::CancelInFlight => {
-                                    app.mode = AppMode::Cancelling;
-                                    cancel.cancel();
-                                }
-                                AppEvent::Clear => {
-                                    app.scrollback.clear();
-                                }
-                                AppEvent::Compact(focus) => {
-                                    // TODO: wire to AIAgent::run_compact in a follow-up; see
-                                    // docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md §7
-                                    app.push_line(RenderedLine::System(format!(
-                                        "Manual compact requested (focus: {}).",
-                                        focus.as_deref().unwrap_or("(none)")
-                                    )));
-                                }
-                                _ => {}
+                            if dispatch_event(
+                                &mut app,
+                                next,
+                                &cancel,
+                                Some(RunContext {
+                                    agent: &agent,
+                                    session: &session,
+                                    input_tx: &input_tx,
+                                }),
+                            )? {
+                                return Ok(());
                             }
                         }
                         Some(Ok(Event::Resize(_, _))) => {
                             // Next tick will redraw at the new size.
+                        }
+                        Some(Ok(Event::Mouse(mouse))) => {
+                            let ev = match mouse.kind {
+                                MouseEventKind::ScrollUp if app.mode == AppMode::Idle => {
+                                    app.chat_scroll = app.chat_scroll.saturating_add(3);
+                                    Some(AppEvent::Tick)
+                                }
+                                MouseEventKind::ScrollDown if app.mode == AppMode::Idle => {
+                                    app.chat_scroll = app.chat_scroll.saturating_sub(3);
+                                    Some(AppEvent::Tick)
+                                }
+                                _ => None,
+                            };
+                            if let Some(ev) = ev {
+                                let _ = dispatch_event(&mut app, ev, &cancel, None)?;
+                            }
                         }
                         Some(Err(e)) => {
                             return Err(RunError::Tui(e.to_string()));
@@ -163,8 +146,10 @@ pub async fn run(
                     }
                 }
                 maybe = input_rx.recv() => {
-                    if let Some(AppEvent::Loop(loop_ev)) = maybe {
-                        let _ = apply_loop_event(&mut app, loop_ev);
+                    if let Some(ev) = maybe {
+                        if dispatch_event(&mut app, ev, &cancel, None)? {
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -175,7 +160,11 @@ pub async fn run(
     if let Err(e) = disable_raw_mode() {
         eprintln!("[hermes-cli] warning: failed to disable raw mode: {e}");
     }
-    if let Err(e) = execute!(stdout(), LeaveAlternateScreen) {
+    if let Err(e) = execute!(
+        stdout(),
+        crossterm::event::DisableMouseCapture,
+        LeaveAlternateScreen
+    ) {
         eprintln!("[hermes-cli] warning: failed to leave alternate screen: {e}");
     }
     result
@@ -220,65 +209,109 @@ pub async fn run_with_backend(
             }
             maybe = input_rx.recv() => {
                 let Some(ev) = maybe else { return Ok(()); };
-                match ev {
-                    AppEvent::Key(k) => {
-                        let next = handle_key(&mut app, k);
-                        match next {
-                            AppEvent::Submit(text) => {
-                                app.push_line(RenderedLine::User(text));
-                                app.mode = AppMode::AwaitingModel;
-                                app.turn_started_at = Some(std::time::Instant::now());
-                            }
-                            AppEvent::Quit => return Ok(()),
-                            AppEvent::Compact(focus) => {
-                                app.push_line(RenderedLine::System(format!(
-                                    "Manual compact requested (focus: {}).",
-                                    focus.as_deref().unwrap_or("(none)")
-                                )));
-                            }
-                            AppEvent::Clear => {
-                                app.scrollback.clear();
-                            }
-                            AppEvent::TurnCompleted(_) => {
-                                // handle_key never returns this; ignore if it somehow does.
-                            }
-                            _ => {}
-                        }
-                    }
-                    AppEvent::Loop(loop_ev) => {
-                        let _ = apply_loop_event(&mut app, loop_ev);
-                    }
-                    AppEvent::Tick => {}
-                    AppEvent::Submit(text) => {
-                        app.push_line(RenderedLine::User(text));
-                        app.mode = AppMode::AwaitingModel;
-                        app.turn_started_at = Some(std::time::Instant::now());
-                    }
-                    AppEvent::Quit => return Ok(()),
-                    AppEvent::Compact(focus) => {
-                        app.push_line(RenderedLine::System(format!(
-                            "Manual compact requested (focus: {}).",
-                            focus.as_deref().unwrap_or("(none)")
-                        )));
-                    }
-                    AppEvent::Clear => {
-                        app.scrollback.clear();
-                    }
-                    AppEvent::Append(line) => app.push_line(line),
-                    AppEvent::SetInput(s) => app.input = s,
-                    AppEvent::CancelInFlight => {
-                        app.mode = AppMode::Cancelling;
-                        cancel.cancel();
-                    }
-                    AppEvent::TurnCompleted(res) => {
-                        app.turn_started_at = None;
-                        if let Err(e) = res {
-                            app.push_line(RenderedLine::System(format!("error: {e}")));
-                        }
-                        app.mode = AppMode::Idle;
-                    }
+                if dispatch_event(&mut app, ev, &cancel, None)? {
+                    return Ok(());
                 }
             }
+        }
+    }
+}
+
+struct RunContext<'a> {
+    agent: &'a Arc<AIAgent>,
+    session: &'a SessionContext,
+    input_tx: &'a mpsc::UnboundedSender<AppEvent>,
+}
+
+fn dispatch_event(
+    app: &mut App,
+    ev: AppEvent,
+    cancel: &CancellationToken,
+    run_ctx: Option<RunContext<'_>>,
+) -> Result<bool, RunError> {
+    match ev {
+        AppEvent::Key(k) => {
+            let next = handle_key(app, k);
+            dispatch_event(app, next, cancel, run_ctx)
+        }
+        AppEvent::Loop(loop_ev) => {
+            let _ = apply_loop_event(app, loop_ev);
+            Ok(false)
+        }
+        AppEvent::Tick => Ok(false),
+        AppEvent::Submit(text) => {
+            app.push_line(RenderedLine::User(text.clone()));
+            app.session_history.push(Message::user(&text));
+            app.mode = AppMode::AwaitingModel;
+            app.turn_started_at = Some(Instant::now());
+            if app.active_turn_cancel.is_none() {
+                app.active_turn_cancel = Some(CancellationToken::new());
+            }
+            if let Some(ctx) = run_ctx {
+                let turn_cancel = CancellationToken::new();
+                let on_event = make_on_event(ctx.input_tx.clone());
+                let agent = Arc::clone(ctx.agent);
+                let session = ctx.session.clone();
+                let messages = app.session_history.clone();
+                let result_tx = ctx.input_tx.clone();
+                app.active_turn_cancel = Some(turn_cancel.clone());
+                tokio::spawn(async move {
+                    let res = agent
+                        .run_messages(messages, &session, turn_cancel, on_event)
+                        .await;
+                    let _ = result_tx.send(AppEvent::TurnCompleted(res));
+                });
+            }
+            Ok(false)
+        }
+        AppEvent::Quit => Ok(true),
+        AppEvent::Compact(focus) => {
+            app.push_line(RenderedLine::System(format!(
+                "Manual compact requested (focus: {}).",
+                focus.as_deref().unwrap_or("(none)")
+            )));
+            Ok(false)
+        }
+        AppEvent::Clear => {
+            app.scrollback.clear();
+            app.session_history.clear();
+            app.chat_scroll = 0;
+            Ok(false)
+        }
+        AppEvent::Append(line) => {
+            app.push_line(line);
+            Ok(false)
+        }
+        AppEvent::SetInput(s) => {
+            app.input = s;
+            Ok(false)
+        }
+        AppEvent::CancelInFlight => {
+            app.mode = AppMode::Cancelling;
+            if let Some(turn_cancel) = app.active_turn_cancel.take() {
+                turn_cancel.cancel();
+            } else {
+                cancel.cancel();
+            }
+            Ok(false)
+        }
+        AppEvent::TurnCompleted(res) => {
+            app.turn_started_at = None;
+            app.active_turn_cancel = None;
+            match res {
+                Ok(run_result) => {
+                    app.session_history = run_result.messages;
+                }
+                Err(AgentRunError::Loop(LoopError::CancelledWith(partial))) => {
+                    app.session_history.push(partial);
+                }
+                Err(AgentRunError::Loop(LoopError::Cancelled)) => {}
+                Err(e) => {
+                    app.push_line(RenderedLine::System(format!("error: {e}")));
+                }
+            }
+            app.mode = AppMode::Idle;
+            Ok(false)
         }
     }
 }

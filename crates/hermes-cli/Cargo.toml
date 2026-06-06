@@ -21,10 +21,11 @@ clap = { workspace = true, features = ["derive"] }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 futures = "0.3"
+unicode-width = "0.2"
+serde_json = "1"
 
 [dev-dependencies]
 tempfile = "3"
 ratatui = "0.29"
-serde_json = "1"
 async-trait = "0.1"
 futures = "0.3"

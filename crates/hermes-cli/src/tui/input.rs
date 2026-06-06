@@ -15,7 +15,15 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> AppEvent {
     // second press (in any mode) -> Quit.
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return match app.mode {
-            AppMode::AwaitingModel | AppMode::Idle => AppEvent::CancelInFlight,
+            AppMode::AwaitingModel => AppEvent::CancelInFlight,
+            AppMode::Idle => AppEvent::Quit,
+            AppMode::Cancelling => AppEvent::Quit,
+        };
+    }
+    if key.code == KeyCode::Esc {
+        return match app.mode {
+            AppMode::AwaitingModel => AppEvent::CancelInFlight,
+            AppMode::Idle => AppEvent::Tick,
             AppMode::Cancelling => AppEvent::Quit,
         };
     }
@@ -34,6 +42,14 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> AppEvent {
     // auto-scroll to bottom so the user can watch the reply).
     if app.mode == AppMode::Idle {
         match key.code {
+            KeyCode::Up => {
+                app.chat_scroll = app.chat_scroll.saturating_add(1);
+                return AppEvent::Tick;
+            }
+            KeyCode::Down => {
+                app.chat_scroll = app.chat_scroll.saturating_sub(1);
+                return AppEvent::Tick;
+            }
             KeyCode::PageUp => {
                 app.chat_scroll = app.chat_scroll.saturating_add(SCROLL_PAGE);
                 return AppEvent::Tick;

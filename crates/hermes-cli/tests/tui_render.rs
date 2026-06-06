@@ -1,10 +1,12 @@
 //! Smoke test for the TUI render module. Visual output is verified manually.
 
 use hermes_cli::tui::app::App;
-use hermes_cli::tui::event::RenderedLine;
+use hermes_cli::tui::event::{AppMode, RenderedLine};
 use hermes_cli::tui::render::render;
+use ratatui::layout::Position;
 use ratatui::backend::TestBackend;
 use ratatui::Terminal;
+use std::time::{Duration, Instant};
 
 fn row_at(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
     (0..buffer.area.width)
@@ -64,5 +66,202 @@ fn chat_scrolls_to_show_most_recent_message() {
     assert!(
         text.contains("LATEST REPLY"),
         "expected most recent message to be visible after auto-scroll; full text:\n{text}"
+    );
+}
+
+#[test]
+fn cursor_uses_display_width_for_cjk_input() {
+    let backend = TestBackend::new(20, 6);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.input = "你好".to_string();
+    terminal.draw(|f| render(f, &app)).expect("draw");
+
+    terminal
+        .backend_mut()
+        .assert_cursor_position(Position::new(7, 4));
+}
+
+#[test]
+fn assistant_render_preserves_explicit_newlines() {
+    let backend = TestBackend::new(18, 12);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.push_line(RenderedLine::Assistant(
+        "first line wraps\n\nthird line wraps".to_string(),
+    ));
+    terminal.draw(|f| render(f, &app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let mut rows = Vec::new();
+    for y in 0..buffer.area.height {
+        rows.push(row_at(&buffer, y));
+    }
+    let first_idx = rows
+        .iter()
+        .position(|row| row.contains("first line"))
+        .expect("expected first line row");
+    let third_idx = rows
+        .iter()
+        .position(|row| row.contains("third line"))
+        .expect("expected third line row");
+    assert!(
+        third_idx > first_idx + 1,
+        "expected a preserved blank line between paragraphs; rows:\n{}",
+        rows.join("\n")
+    );
+    assert!(
+        rows.iter()
+            .any(|row| row.contains("╭─ ⚕ Hermes")),
+        "expected framed assistant header; rows:\n{}",
+        rows.join("\n")
+    );
+    assert!(
+        rows.iter()
+            .filter(|row| row.contains("first line") || row.contains("third line"))
+            .all(|row| !row.contains('│')),
+        "expected assistant body rows without vertical borders; rows:\n{}",
+        rows.join("\n")
+    );
+}
+
+#[test]
+fn tool_result_render_preserves_multiline_preview() {
+    let backend = TestBackend::new(50, 12);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.push_line(RenderedLine::ToolResult {
+        name: "read_file".to_string(),
+        output: "1|first\n2|second\n3|third".to_string(),
+        ok: true,
+    });
+    terminal.draw(|f| render(f, &app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let mut text = String::new();
+    for y in 0..buffer.area.height {
+        text.push_str(&row_at(&buffer, y));
+        text.push('\n');
+    }
+    assert!(text.contains("1|first"), "expected first preview line: {text}");
+    assert!(text.contains("2|second"), "expected second preview line: {text}");
+    assert!(text.contains("3|third"), "expected third preview line: {text}");
+}
+
+#[test]
+fn assistant_body_is_indented_without_vertical_borders() {
+    let backend = TestBackend::new(60, 10);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.push_line(RenderedLine::Assistant(
+        "Hey, 我在～ 🌊✨ 有什么需要帮忙的吗？".to_string(),
+    ));
+    terminal.draw(|f| render(f, &app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let mut rows = Vec::new();
+    for y in 0..buffer.area.height {
+        rows.push(row_at(&buffer, y));
+    }
+
+    let body_row = rows
+        .iter()
+        .find(|row| row.contains("Hey,") || row.contains("有什么需要"))
+        .expect("expected assistant body row");
+    assert!(
+        body_row.starts_with("  "),
+        "expected assistant body indentation: {body_row:?}"
+    );
+    assert!(
+        !body_row.contains('│'),
+        "expected no vertical borders in assistant body: {body_row:?}"
+    );
+}
+
+#[test]
+fn awaiting_state_renders_interrupt_hint_without_needing_full_phrase() {
+    let backend = TestBackend::new(40, 8);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.mode = AppMode::AwaitingModel;
+    app.turn_started_at = Some(Instant::now() - Duration::from_secs(2));
+    terminal.draw(|f| render(f, &app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let mut text = String::new();
+    for y in 0..buffer.area.height {
+        text.push_str(&row_at(&buffer, y));
+        text.push('\n');
+    }
+    assert!(text.contains("Working"), "expected working row: {text}");
+    assert!(
+        text.contains("Esc to stop") || text.contains("stop"),
+        "expected interrupt hint to remain visible in narrow width: {text}"
+    );
+}
+
+#[test]
+fn cancelling_state_renders_activity_line() {
+    let backend = TestBackend::new(50, 8);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.mode = AppMode::Cancelling;
+    app.turn_started_at = Some(Instant::now() - Duration::from_secs(1));
+    terminal.draw(|f| render(f, &app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let activity_row_y = buffer.area.height.saturating_sub(5);
+    let activity_row = row_at(&buffer, activity_row_y);
+    assert!(
+        activity_row.contains("Cancelling"),
+        "expected explicit cancelling activity row: {activity_row:?}"
+    );
+}
+
+#[test]
+fn idle_state_has_no_activity_row() {
+    let backend = TestBackend::new(50, 8);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let app = App::new_for_test();
+    terminal.draw(|f| render(f, &app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let status_row_y = buffer.area.height.saturating_sub(4);
+    let status_row = row_at(&buffer, status_row_y);
+    assert!(
+        !status_row.contains("ready") && !status_row.contains("working"),
+        "expected idle metadata row to avoid mode labels: {status_row:?}"
+    );
+}
+
+#[test]
+fn awaiting_state_uses_activity_row_without_duplicate_status_label() {
+    let backend = TestBackend::new(50, 8);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.mode = AppMode::AwaitingModel;
+    app.turn_started_at = Some(Instant::now() - Duration::from_secs(2));
+    terminal.draw(|f| render(f, &app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let activity_row_y = buffer.area.height.saturating_sub(5);
+    let activity_row = row_at(&buffer, activity_row_y);
+    let status_row_y = buffer.area.height.saturating_sub(4);
+    let status_row = row_at(&buffer, status_row_y);
+    assert!(
+        activity_row.contains("Working"),
+        "expected working activity row: {activity_row:?}"
+    );
+    assert!(
+        !status_row.to_lowercase().contains("working"),
+        "expected status metadata row to avoid duplicate working label: {status_row:?}"
     );
 }
