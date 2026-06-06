@@ -23,6 +23,10 @@ pub enum AppEvent {
     Append(RenderedLine),
     /// Replace the input-box contents (used by `/clear` and similar commands).
     SetInput(String),
+    /// User pressed Ctrl-C while the agent is running. The main loop
+    /// translates this into `cancel.cancel()` and switches the App to
+    /// `Cancelling`. The second Ctrl-C in `Cancelling` mode becomes `Quit`.
+    CancelInFlight,
 }
 
 /// A single line in the chat scrollback.

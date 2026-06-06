@@ -104,6 +104,10 @@ pub async fn run_with_backend<B: Backend>(
                     }
                     AppEvent::Append(line) => app.push_line(line),
                     AppEvent::SetInput(s) => app.input = s,
+                    AppEvent::CancelInFlight => {
+                        app.mode = AppMode::Cancelling;
+                        cancel.cancel();
+                    }
                 }
             }
         }
@@ -168,6 +172,10 @@ pub async fn run_with_backend_and_capture(
                     }
                     AppEvent::Append(line) => app.push_line(line),
                     AppEvent::SetInput(s) => app.input = s,
+                    AppEvent::CancelInFlight => {
+                        app.mode = AppMode::Cancelling;
+                        cancel.cancel();
+                    }
                 }
             }
         }

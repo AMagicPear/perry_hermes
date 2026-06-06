@@ -1,12 +1,28 @@
 //! KeyEvent -> AppEvent mapping, plus input-buffer editing.
 
 use crate::tui::app::App;
-use crate::tui::event::{AppEvent, RenderedLine};
+use crate::tui::event::{AppEvent, AppMode, RenderedLine};
 use crossterm::event::{KeyCode, KeyEvent};
 
 /// Apply a key event to the App's input buffer. Returns the AppEvent that
 /// the main loop should process.
 pub fn handle_key(app: &mut App, key: KeyEvent) -> AppEvent {
+    use crossterm::event::KeyModifiers;
+    // Ctrl-C: cancellation. First press while AwaitingModel -> CancelInFlight;
+    // second press (in any mode) -> Quit.
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match app.mode {
+            AppMode::AwaitingModel | AppMode::Idle => AppEvent::CancelInFlight,
+            AppMode::Cancelling => AppEvent::Quit,
+        };
+    }
+    // Ctrl-D: only quits from Idle.
+    if key.code == KeyCode::Char('d') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return match app.mode {
+            AppMode::Idle => AppEvent::Quit,
+            _ => AppEvent::Tick,
+        };
+    }
     match key.code {
         KeyCode::Char(c) => {
             app.input.push(c);
