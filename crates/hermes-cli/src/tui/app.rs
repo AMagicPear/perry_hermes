@@ -44,9 +44,8 @@ pub struct App {
     /// Total context window in tokens, if configured. When `None`, the status
     /// bar hides the context segment entirely.
     pub context_window_size: Option<u64>,
-    /// Current context usage in tokens as reported by the agent loop. Estimated
-    /// before the request and replaced by provider-reported usage after it
-    /// arrives.
+    /// Current context usage in tokens as reported by the provider after a
+    /// completed response. `None` means the status bar has no real usage yet.
     pub context_used_tokens: Option<u64>,
     /// Per-turn cancellation handle. Recreated for each submit so a cancelled
     /// turn does not poison future turns.

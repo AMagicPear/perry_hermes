@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use hermes_cli::tui::app::App;
-use hermes_cli::tui::event::{AppEvent, RenderedLine};
+use hermes_cli::tui::event::{AppEvent, AppMode, RenderedLine};
 use hermes_cli::tui::input::handle_key;
 
 fn key(code: KeyCode) -> KeyEvent {
@@ -36,6 +36,19 @@ fn enter_submits_input() {
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     assert!(matches!(ev, AppEvent::Submit(text) if text == "hi there"));
     assert_eq!(app.input, "");
+}
+
+#[test]
+fn enter_in_awaiting_model_does_not_submit_parallel_turn() {
+    let mut app = App::new_for_test();
+    app.mode = AppMode::AwaitingModel;
+    app.input.push_str("queued thought");
+    app.cursor = app.input.len();
+
+    let ev = handle_key(&mut app, key(KeyCode::Enter));
+
+    assert!(matches!(ev, AppEvent::Tick));
+    assert_eq!(app.input, "queued thought");
 }
 
 #[test]

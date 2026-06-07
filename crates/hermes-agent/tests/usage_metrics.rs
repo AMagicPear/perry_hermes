@@ -62,6 +62,7 @@ async fn loop_keeps_reading_after_finish_reason_to_capture_usage() {
                 working_dir: std::env::current_dir().unwrap_or_default(),
                 permissions: Default::default(),
             },
+            Arc::new(hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )
@@ -136,6 +137,7 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
                 working_dir: std::env::current_dir().unwrap_or_default(),
                 permissions: hermes_core::tool::ToolPermissions { subprocess: true },
             },
+            Arc::new(hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |ev| {
                 if let LoopEvent::ContextUsageUpdated { used_tokens } = ev {
@@ -204,6 +206,7 @@ async fn loop_emits_context_usage_only_from_normalized_real_usage() {
                 working_dir: std::env::current_dir().unwrap_or_default(),
                 permissions: Default::default(),
             },
+            Arc::new(hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |ev| {
                 if let LoopEvent::ContextUsageUpdated { used_tokens } = ev {

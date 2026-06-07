@@ -1,13 +1,22 @@
 //! Context compression engine trait and supporting types.
 //!
 //! When a conversation approaches the model's context limit, a
-//! [`ContextEngine`] implementation compresses the middle turns via an
-//! LLM-generated summary while preserving the head (system prompt +
-//! earliest messages) and the tail (most recent messages).
+//! [`ContextEngine`] implementation rewrites the session history into a
+//! shorter prompt plus an LLM-generated summary.
 
 use async_trait::async_trait;
 
 use crate::message::Message;
+use crate::Usage;
+
+/// Result of one compression pass.
+#[derive(Debug, Clone)]
+pub struct CompressionResult {
+    pub messages: Vec<Message>,
+    /// Usage reported by the summary LLM call. This lets the loop compute a
+    /// post-compact context signal from real provider token counts.
+    pub summary_usage: Usage,
+}
 
 /// Trait for context compression engines.
 ///
@@ -24,25 +33,21 @@ pub trait ContextEngine: Send + Sync {
     /// response crosses the configured context threshold.
     ///
     /// This is policy/backoff only. Token threshold checks live in the agent
-    /// loop because only the loop sees provider-reported [`Usage`](crate::Usage).
+    /// loop because only the loop sees provider-reported [`Usage`].
     fn can_compress_automatically(&self) -> bool {
         true
     }
 
-    /// Heavy entry point. Returns the new (possibly shorter) message list.
+    /// Heavy entry point. Returns the new (shorter) message list and the
+    /// summary call usage reported by the provider.
     ///
-    /// Implementations must preserve:
-    ///   - system prompt (always)
-    ///   - first `protect_first_n` non-system messages (head)
-    ///   - last `protect_last_n` messages (tail)
-    ///
-    /// `focus_topic` is `Some(_)` for `/compress <focus>`, `None` otherwise.
+    /// `focus_topic` is `Some(_)` for `/compact <focus>`, `None` otherwise.
     async fn compress(
         &mut self,
         messages: Vec<Message>,
         focus_topic: Option<&str>,
         force: bool,
-    ) -> Result<Vec<Message>, CompressError>;
+    ) -> Result<CompressionResult, CompressError>;
 
     /// Called when `/new` or `/reset` is invoked. Reset per-session state.
     fn on_session_reset(&mut self);

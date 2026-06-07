@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use hermes_agent::{AIAgent, AgentRunError, HermesConfig, LoopEvent, SessionContext};
+use hermes_agent::{AIAgent, AgentRunError, AgentSession, HermesConfig, LoopEvent};
 use hermes_core::message::Content;
 use hermes_core::LoopError;
 use hermes_providers::OpenAiProvider;
@@ -22,13 +22,13 @@ async fn main() {
 
     let provider = OpenAiProvider::new(&api_key, &model).with_base_url(&base_url);
     let agent = AIAgent::new(provider, HermesConfig::default());
-    let session = SessionContext::current_shell();
+    let session = AgentSession::current_shell();
     let cancel = CancellationToken::new();
 
     let started = std::time::Instant::now();
     let result = tokio::time::timeout(
         Duration::from_secs(180),
-        agent.run_turn(&user_text, &session, cancel, |event| match event {
+        agent.run_session_turn(&user_text, &session, cancel, |event| match event {
             LoopEvent::Thinking => {}
             LoopEvent::AssistantMessage(_) => {}
             LoopEvent::ToolCallStarted { call, .. } => {

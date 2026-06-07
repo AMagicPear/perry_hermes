@@ -67,6 +67,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
                 tool_calls: None,
             }],
             ctx,
+            Arc::new(hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )

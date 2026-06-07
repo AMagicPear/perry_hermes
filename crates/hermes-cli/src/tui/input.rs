@@ -97,6 +97,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> AppEvent {
             AppEvent::Tick
         }
         KeyCode::Enter => {
+            if app.mode != AppMode::Idle {
+                return AppEvent::Tick;
+            }
             let text = std::mem::take(&mut app.input);
             app.cursor = 0;
             parse_slash_or_submit(text)
@@ -259,6 +262,19 @@ mod tests {
         assert!(matches!(ev, AppEvent::Submit(text) if text == "hi there"));
         assert_eq!(app.input, "");
         assert_eq!(app.cursor, 0);
+    }
+
+    #[test]
+    fn enter_in_awaiting_model_does_not_submit_parallel_turn() {
+        let mut app = App::new_for_test();
+        app.mode = AppMode::AwaitingModel;
+        app.input = "queued thought".to_string();
+        app.cursor = app.input.len();
+
+        let ev = handle_key(&mut app, key(KeyCode::Enter));
+
+        assert!(matches!(ev, AppEvent::Tick));
+        assert_eq!(app.input, "queued thought");
     }
 
     #[test]

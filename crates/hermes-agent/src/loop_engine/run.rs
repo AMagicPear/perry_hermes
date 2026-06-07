@@ -10,8 +10,8 @@
 //! - `handle_finish_reason` — react to `Stop` / `Length` / `ToolUse` / etc.
 //! - `dispatch_tool_calls` — run the tool calls in order, push tool
 //!   results back into history.
-//! - `pre_turn_compression_check` / `post_turn_compression_check` —
-//!   `ContextEngine` triggers that fire at iteration boundaries.
+//! - `auto_compress_after_response` — checks provider-reported prompt usage
+//!   and compresses only after a real response crosses the threshold.
 //! - `build_failed_turn` — turn a partial `Completion` + provider error
 //!   into a `FailedTurn` for history preservation.
 
@@ -29,11 +29,13 @@ use hermes_core::tool::ToolContext;
 use super::compressor::{try_compress, CompactOutcome};
 use super::metrics::{prompt_context_tokens_from_usage, validate_args};
 use super::{AgentLoop, AgentRunError, FailedTurn, LoopEvent, LoopMetrics, RunResult};
+use crate::session::SessionState;
 
 pub(crate) async fn run(
     engine: &AgentLoop,
     initial_messages: Vec<Message>,
     ctx: ToolContext,
+    session_state: std::sync::Arc<SessionState>,
     cancel: CancellationToken,
     mut on_event: impl FnMut(LoopEvent) + Send,
 ) -> Result<RunResult, AgentRunError> {
@@ -77,6 +79,9 @@ pub(crate) async fn run(
         metrics.output_tokens += completion.usage.output_tokens;
         let prompt_context_tokens = prompt_context_tokens_from_usage(completion.usage);
         if prompt_context_tokens > 0 {
+            session_state
+                .remember_first_prompt_context_tokens(prompt_context_tokens)
+                .await;
             on_event(LoopEvent::ContextUsageUpdated {
                 used_tokens: prompt_context_tokens,
             });
@@ -95,6 +100,7 @@ pub(crate) async fn run(
                 &mut messages,
                 &mut metrics,
                 prompt_context_tokens,
+                &session_state,
                 &mut on_event,
             )
             .await;
@@ -291,6 +297,7 @@ async fn auto_compress_after_response(
     messages: &mut Vec<Message>,
     metrics: &mut LoopMetrics,
     prompt_context_tokens: u64,
+    session_state: &SessionState,
     on_event: &mut impl FnMut(LoopEvent),
 ) {
     let Some(engine_arc) = &engine.config.context_engine else {
@@ -311,8 +318,18 @@ async fn auto_compress_after_response(
     }
     if let Some(outcome) = try_compress(engine_arc, messages, None, None, false).await {
         let event = match outcome {
-            CompactOutcome::Compressed { duration } => {
+            CompactOutcome::Compressed {
+                duration,
+                summary_output_tokens,
+            } => {
                 metrics.compressions += 1;
+                if let Some(compacted_tokens) =
+                    compacted_context_tokens(session_state, summary_output_tokens).await
+                {
+                    on_event(LoopEvent::ContextUsageUpdated {
+                        used_tokens: compacted_tokens,
+                    });
+                }
                 LoopEvent::CompressionCompleted {
                     trigger: CompressionTrigger::PostTurn,
                     context_tokens: Some(prompt_context_tokens),
@@ -327,6 +344,14 @@ async fn auto_compress_after_response(
         };
         on_event(event);
     }
+}
+
+async fn compacted_context_tokens(
+    session_state: &SessionState,
+    summary_output_tokens: u64,
+) -> Option<u64> {
+    let baseline = session_state.first_prompt_context_tokens().await?;
+    Some(baseline.saturating_add(summary_output_tokens))
 }
 
 /// Build an `AgentRunError::FailedTurn` (or a plain `LoopError::Provider`

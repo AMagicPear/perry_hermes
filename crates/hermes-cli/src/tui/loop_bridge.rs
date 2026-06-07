@@ -3,6 +3,7 @@
 use crate::tui::app::App;
 use crate::tui::event::{AppEvent, AppMode, RenderedLine};
 use hermes_agent::LoopEvent;
+use hermes_core::context_engine::CompressionSkipReason;
 use serde_json::Value;
 
 /// Apply a `LoopEvent` to the `App`, returning the `AppEvent` the main loop
@@ -85,8 +86,8 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
                 Some(format!("Compressed{trigger} in {}ms", duration.as_millis()));
             AppEvent::Tick
         }
-        LoopEvent::CompressionSkipped { reason: _ } => {
-            // Could log or display but no strong signal for the user
+        LoopEvent::CompressionSkipped { reason } => {
+            app.compression_hint = Some(compression_skip_hint(reason).to_string());
             AppEvent::Tick
         }
         LoopEvent::CompressionFailed { error, .. } => {
@@ -101,6 +102,16 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
             // Terminal event — could set a hint but keep it minimal
             AppEvent::Tick
         }
+    }
+}
+
+fn compression_skip_hint(reason: CompressionSkipReason) -> &'static str {
+    match reason {
+        CompressionSkipReason::Ineffective => {
+            "Compression skipped: recent compactions saved too little"
+        }
+        CompressionSkipReason::NothingToCompress => "Nothing to compact",
+        CompressionSkipReason::Disabled => "Compression is disabled",
     }
 }
 

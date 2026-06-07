@@ -19,6 +19,8 @@ use hermes_core::provider::{Provider, ToolCallDelta};
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::{ToolContext, ToolOutput};
 
+use crate::session::SessionState;
+
 mod compressor;
 mod metrics;
 mod run;
@@ -189,6 +191,7 @@ impl AgentLoop {
         &self,
         mut messages: Vec<Message>,
         focus_topic: Option<&str>,
+        _session_state: Arc<SessionState>,
     ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
         let Some(engine) = &self.config.context_engine else {
             return Ok((
@@ -210,7 +213,7 @@ impl AgentLoop {
             error: "compression failed".into(),
         });
         let event = match outcome {
-            compressor::CompactOutcome::Compressed { duration } => {
+            compressor::CompactOutcome::Compressed { duration, .. } => {
                 LoopEvent::CompressionCompleted {
                     trigger: CompressionTrigger::Manual,
                     context_tokens: None,
@@ -230,9 +233,10 @@ impl AgentLoop {
         &self,
         initial_messages: Vec<Message>,
         ctx: ToolContext,
+        session_state: Arc<SessionState>,
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
-        run::run(self, initial_messages, ctx, cancel, on_event).await
+        run::run(self, initial_messages, ctx, session_state, cancel, on_event).await
     }
 }

@@ -86,6 +86,7 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
         .run(
             vec![user_message("please run something")],
             ctx,
+            Arc::new(hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |e| {
                 events_for_cb.lock().unwrap().push(format!("{e:?}"));
@@ -167,6 +168,7 @@ async fn loop_routes_read_file_tool_call() {
         .run(
             vec![user_message("read it")],
             ctx,
+            Arc::new(hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )
@@ -223,6 +225,7 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
         .run(
             vec![user_message("please run something")],
             ctx,
+            Arc::new(hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )
@@ -293,6 +296,7 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
         .run(
             vec![user_message("say something")],
             ctx,
+            Arc::new(hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )

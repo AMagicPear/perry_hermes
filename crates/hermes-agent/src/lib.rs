@@ -15,4 +15,4 @@ pub use loop_engine::{
     LoopConfig, LoopEvent, LoopMetrics, RunResult,
 };
 pub use runtime_agent::AIAgent;
-pub use session::SessionContext;
+pub use session::{AgentSession, SessionContext, SessionState};

@@ -13,7 +13,7 @@ use crate::prompting::{
     resolve_skills_dir,
 };
 use crate::provider_factory::build_provider;
-use crate::session::SessionContext;
+use crate::session::{AgentSession, SessionContext};
 use crate::tool_catalog::build_registry;
 use crate::{
     AgentLoop, AgentRunError, CompressorConfig, ContextCompressor, ContextWindow, LoopConfig,
@@ -64,6 +64,14 @@ impl AIAgent {
         }
     }
 
+    pub fn from_loop(loop_: AgentLoop) -> Self {
+        Self {
+            loop_,
+            base_system_prompt: None,
+            provider_name: None,
+        }
+    }
+
     pub async fn run_turn(
         &self,
         user_text: &str,
@@ -71,7 +79,19 @@ impl AIAgent {
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
-        self.run_messages(vec![Message::user(user_text)], session, cancel, on_event)
+        let session = AgentSession::new(session.clone());
+        self.run_session_turn(user_text, &session, cancel, on_event)
+            .await
+    }
+
+    pub async fn run_session_turn(
+        &self,
+        user_text: &str,
+        session: &AgentSession,
+        cancel: CancellationToken,
+        on_event: impl FnMut(LoopEvent) + Send,
+    ) -> Result<RunResult, AgentRunError> {
+        self.run_session_messages(vec![Message::user(user_text)], session, cancel, on_event)
             .await
     }
 
@@ -82,18 +102,32 @@ impl AIAgent {
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
+        let session = AgentSession::new(session.clone());
+        self.run_session_messages(messages, &session, cancel, on_event)
+            .await
+    }
+
+    pub async fn run_session_messages(
+        &self,
+        messages: Vec<Message>,
+        session: &AgentSession,
+        cancel: CancellationToken,
+        on_event: impl FnMut(LoopEvent) + Send,
+    ) -> Result<RunResult, AgentRunError> {
         let ctx = ToolContext {
-            session_id: session.session_id.clone(),
-            working_dir: session.working_dir.clone(),
+            session_id: session.context.session_id.clone(),
+            working_dir: session.context.working_dir.clone(),
             permissions: ToolPermissions { subprocess: true },
         };
         let messages = inject_system_prompt(
             messages,
             self.base_system_prompt.as_deref().map(|base| {
-                build_runtime_system_prompt(base, session, self.provider_name.as_deref())
+                build_runtime_system_prompt(base, &session.context, self.provider_name.as_deref())
             }),
         );
-        self.loop_.run(messages, ctx, cancel, on_event).await
+        self.loop_
+            .run(messages, ctx, Arc::clone(&session.state), cancel, on_event)
+            .await
     }
 
     pub async fn run_compact(
@@ -102,13 +136,26 @@ impl AIAgent {
         focus_topic: Option<&str>,
         session: &SessionContext,
     ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
+        let session = AgentSession::new(session.clone());
+        self.run_session_compact(messages, focus_topic, &session)
+            .await
+    }
+
+    pub async fn run_session_compact(
+        &self,
+        messages: Vec<Message>,
+        focus_topic: Option<&str>,
+        session: &AgentSession,
+    ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
         let messages = inject_system_prompt(
             messages,
             self.base_system_prompt.as_deref().map(|base| {
-                build_runtime_system_prompt(base, session, self.provider_name.as_deref())
+                build_runtime_system_prompt(base, &session.context, self.provider_name.as_deref())
             }),
         );
-        self.loop_.compact_messages(messages, focus_topic).await
+        self.loop_
+            .compact_messages(messages, focus_topic, Arc::clone(&session.state))
+            .await
     }
 
     #[cfg(test)]

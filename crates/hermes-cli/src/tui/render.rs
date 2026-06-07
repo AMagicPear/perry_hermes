@@ -308,6 +308,11 @@ fn build_status_line_1(app: &App) -> Line<'static> {
         spans.push(Span::raw(elapsed));
     }
 
+    if let Some(hint) = &app.compression_hint {
+        spans.push(Span::raw(" · "));
+        spans.push(Span::raw(hint.clone()));
+    }
+
     Line::from(spans)
 }
 
@@ -577,5 +582,19 @@ mod tests {
 
         assert!(s.contains("1.0K"), "expected 1.0K in status; got {s:?}");
         assert!(s.contains("<1%"), "expected <1% in status; got {s:?}");
+    }
+
+    #[test]
+    fn status_line_shows_compression_hint() {
+        let mut app = App::new_for_test();
+        app.compression_hint = Some("Compressed in 1200ms".to_string());
+
+        let line = build_status_line_1(&app);
+        let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+        assert!(
+            s.contains("Compressed in 1200ms"),
+            "expected compression hint in status; got {s:?}"
+        );
     }
 }

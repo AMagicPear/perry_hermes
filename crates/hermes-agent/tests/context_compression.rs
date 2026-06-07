@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use hermes_agent::{
     AIAgent, AgentLoop, CompressorConfig, ContextCompressor, ContextWindow, HermesConfig,
-    LoopConfig, ModelConfig, ProviderConfig, ProviderKind, SessionContext,
+    LoopConfig, ModelConfig, ProviderConfig, ProviderKind, SessionContext, SessionState,
 };
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason};
@@ -92,6 +92,10 @@ fn test_session() -> SessionContext {
     }
 }
 
+fn test_session_state() -> Arc<SessionState> {
+    Arc::new(SessionState::default())
+}
+
 #[tokio::test]
 async fn loop_emits_post_turn_compression_before_tool_dispatch() {
     let first = Completion {
@@ -159,6 +163,7 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
                 user_message("latest question"),
             ],
             test_ctx(),
+            test_session_state(),
             CancellationToken::new(),
             |event| events_for_cb.lock().unwrap().push(format!("{event:?}")),
         )
@@ -223,6 +228,7 @@ async fn loop_does_not_compress_until_real_context_usage_reaches_threshold() {
                 user_message("latest question"),
             ],
             test_ctx(),
+            test_session_state(),
             CancellationToken::new(),
             |event| events.push(event),
         )
@@ -283,6 +289,7 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
                 user_message("latest question"),
             ],
             test_ctx(),
+            test_session_state(),
             CancellationToken::new(),
             |event| events.push(event),
         )
@@ -306,8 +313,91 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
         result
             .messages
             .iter()
-            .any(|m| matches!(&m.content, Content::Text(t) if t.contains("[CONTEXT SUMMARY"))),
-        "compressed history should contain the generated summary"
+            .filter(|m| m.role == Role::User)
+            .count()
+            == 2,
+        "compressed history should keep first user plus one summary: {:?}",
+        result.messages
+    );
+    assert!(
+        matches!(
+            result.messages.as_slice(),
+            [
+                Message { role: Role::System, .. },
+                Message { role: Role::User, content: Content::Text(first), .. },
+                Message { role: Role::User, content: Content::Text(summary), .. },
+            ] if first == "first request" && summary.contains("[CONTEXT SUMMARY")
+        ),
+        "compressed history should be system + first user + summary, got {:?}",
+        result.messages
+    );
+}
+
+#[tokio::test]
+async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
+    let first = Completion {
+        message: assistant_text("large turn"),
+        usage: Usage {
+            input_tokens: 64_000,
+            output_tokens: 10,
+            cached_input_tokens: 0,
+        },
+        finish_reason: FinishReason::Stop,
+    };
+
+    let summary_provider = Arc::new(ScriptedProvider::new(vec![Completion {
+        message: assistant_text("summary text"),
+        usage: Usage {
+            input_tokens: 9_000,
+            output_tokens: 1_200,
+            cached_input_tokens: 0,
+        },
+        finish_reason: FinishReason::Stop,
+    }]));
+
+    let compressor =
+        ContextCompressor::new(CompressorConfig::default()).with_summary_provider(summary_provider);
+
+    let loop_ = AgentLoop::new(
+        ScriptedProvider::new(vec![first]),
+        Arc::new(InMemoryRegistry::new()),
+        LoopConfig {
+            max_iterations: 5,
+            context_engine: Some(Arc::new(TokioMutex::new(compressor))),
+            context_window: Some(ContextWindow {
+                max_tokens: 128_000,
+                compression_threshold_ratio: 0.50,
+            }),
+            ..Default::default()
+        },
+    );
+
+    let mut usage_events = Vec::new();
+    loop_
+        .run(
+            vec![
+                system_message("system"),
+                user_message("first request"),
+                assistant_text("first answer"),
+                user_message(&"A".repeat(200_000)),
+                user_message("latest question"),
+            ],
+            test_ctx(),
+            test_session_state(),
+            CancellationToken::new(),
+            |event| {
+                if let hermes_agent::LoopEvent::ContextUsageUpdated { used_tokens } = event {
+                    usage_events.push(used_tokens);
+                }
+            },
+        )
+        .await
+        .expect("loop should succeed");
+
+    assert_eq!(
+        usage_events,
+        vec![64_000, 65_200],
+        "post-compact usage should be first prompt baseline plus summary output"
     );
 }
 
@@ -345,10 +435,15 @@ async fn manual_compact_rewrites_history_with_summary_message() {
     }
 
     assert!(
-        result
-            .iter()
-            .any(|m| matches!(&m.content, Content::Text(t) if t.contains("[CONTEXT SUMMARY"))),
-        "manual compaction should inject a summary message"
+        matches!(
+            result.as_slice(),
+            [
+                Message { role: Role::System, .. },
+                Message { role: Role::User, content: Content::Text(first), .. },
+                Message { role: Role::User, content: Content::Text(summary), .. },
+            ] if first == "first request" && summary.contains("[CONTEXT SUMMARY")
+        ),
+        "manual compaction should keep only system + first user + summary, got {result:?}"
     );
 }
 
