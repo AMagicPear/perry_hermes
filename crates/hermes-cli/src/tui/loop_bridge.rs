@@ -69,6 +69,10 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
             app.mode = AppMode::Idle;
             AppEvent::Tick
         }
+        LoopEvent::ContextUsageUpdated { used_tokens } => {
+            app.context_used_tokens = Some(used_tokens);
+            AppEvent::Tick
+        }
         LoopEvent::CompressionCompleted {
             tokens_before,
             tokens_after,

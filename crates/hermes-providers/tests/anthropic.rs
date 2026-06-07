@@ -182,6 +182,34 @@ async fn anthropic_provider_streams_tool_use_deltas() {
 }
 
 #[tokio::test]
+async fn anthropic_provider_counts_cached_input_as_context_usage() {
+    let server = MockServer::start_async().await;
+    let _mock = server
+        .mock_async(|when, then| {
+            when.method(POST).path("/v1/messages");
+            then.status(200)
+                .header("content-type", "text/event-stream")
+                .body("event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":20,\"cache_read_input_tokens\":7000,\"cache_creation_input_tokens\":300,\"output_tokens\":0}}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\nevent: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":2}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n");
+        })
+        .await;
+
+    let provider =
+        AnthropicProvider::new("test-key", "claude-sonnet-4-5").with_base_url(server.url("/v1"));
+    let completion = provider
+        .complete(
+            &[message(Role::User, "short follow-up")],
+            &[],
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(completion.usage.input_tokens, 20);
+    assert_eq!(completion.usage.cached_input_tokens, 7_300);
+    assert_eq!(completion.usage.output_tokens, 2);
+}
+
+#[tokio::test]
 async fn anthropic_provider_serializes_prior_tool_results_as_user_tool_result_blocks() {
     let server = MockServer::start_async().await;
     let mock = server

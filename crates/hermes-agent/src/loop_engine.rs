@@ -16,6 +16,7 @@ use hermes_core::message::{Message, Role, ToolCall};
 use hermes_core::provider::{FinishReason, Provider, ToolCallDelta};
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::{ToolContext, ToolOutput};
+use hermes_core::Usage;
 
 pub struct AgentLoop {
     provider: Arc<dyn Provider>,
@@ -63,6 +64,7 @@ pub struct LoopMetrics {
     pub iterations: u32,
     pub tool_calls: u32,
     pub input_tokens: u64,
+    pub cached_input_tokens: u64,
     pub output_tokens: u64,
     pub duration: Duration,
     pub compressions: u32,
@@ -111,6 +113,9 @@ pub enum LoopEvent {
     LengthLimit,
     IterationsExhausted,
     Cancelled,
+    ContextUsageUpdated {
+        used_tokens: u64,
+    },
     CompressionCompleted {
         trigger: CompressionTrigger,
         tokens_before: u64,
@@ -241,6 +246,10 @@ impl AgentLoop {
             }
 
             let tools = self.registry.schemas();
+            let estimated_context_tokens = estimate_request_context_tokens(&messages, &tools, 4.0);
+            on_event(LoopEvent::ContextUsageUpdated {
+                used_tokens: estimated_context_tokens,
+            });
 
             on_event(LoopEvent::Thinking);
             let mut stream = match self
@@ -300,7 +309,14 @@ impl AgentLoop {
             };
             metrics.iterations += 1;
             metrics.input_tokens += completion.usage.input_tokens;
+            metrics.cached_input_tokens += completion.usage.cached_input_tokens;
             metrics.output_tokens += completion.usage.output_tokens;
+            let prompt_context_tokens = prompt_context_tokens_from_usage(completion.usage);
+            if prompt_context_tokens > 0 {
+                on_event(LoopEvent::ContextUsageUpdated {
+                    used_tokens: prompt_context_tokens,
+                });
+            }
 
             let assistant_msg = completion.message.clone();
             messages.push(assistant_msg.clone());
@@ -343,11 +359,11 @@ impl AgentLoop {
                     }
 
                     if let Some(engine) = &self.config.context_engine {
-                        if completion.usage.input_tokens > 0 {
+                        if prompt_context_tokens > 0 {
                             let should = {
                                 let guard = engine.lock().await;
                                 guard.should_compress()
-                                    && completion.usage.input_tokens >= guard.threshold_tokens()
+                                    && prompt_context_tokens >= guard.threshold_tokens()
                             };
                             if should {
                                 if let Some(event) = self
@@ -509,6 +525,24 @@ impl AgentLoop {
 pub fn estimate_tokens_for_messages(messages: &[Message], chars_per_token: f64) -> u64 {
     let total_chars: usize = messages.iter().map(Message::char_len).sum();
     (total_chars as f64 / chars_per_token) as u64
+}
+
+fn prompt_context_tokens_from_usage(usage: Usage) -> u64 {
+    usage.input_tokens.saturating_add(usage.cached_input_tokens)
+}
+
+fn estimate_request_context_tokens(
+    messages: &[Message],
+    tools: &[hermes_core::registry::ToolSchema],
+    chars_per_token: f64,
+) -> u64 {
+    let message_chars: usize = messages.iter().map(Message::char_len).sum();
+    let tool_chars: usize = tools
+        .iter()
+        .filter_map(|tool| serde_json::to_string(tool).ok())
+        .map(|s| s.len())
+        .sum();
+    ((message_chars + tool_chars) as f64 / chars_per_token) as u64
 }
 
 fn validate_args(

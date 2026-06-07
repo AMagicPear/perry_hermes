@@ -22,10 +22,6 @@ pub struct App {
     pub provider_name: Option<String>,
     /// Model name for the status bar.
     pub model_name: Option<String>,
-    /// Latest input-token count from the most recent usage event.
-    pub last_input_tokens: Option<u64>,
-    /// Latest output-token count from the most recent usage event.
-    pub last_output_tokens: Option<u64>,
     /// Current iteration number (0 = none yet).
     pub iteration: u32,
     /// Configured max iterations.
@@ -45,6 +41,10 @@ pub struct App {
     /// Total context window in tokens, if configured. When `None`, the status
     /// bar hides the context segment entirely.
     pub context_window_size: Option<u64>,
+    /// Current context usage in tokens as reported by the agent loop. Estimated
+    /// before the request and replaced by provider-reported usage after it
+    /// arrives.
+    pub context_used_tokens: Option<u64>,
     /// Per-turn cancellation handle. Recreated for each submit so a cancelled
     /// turn does not poison future turns.
     pub active_turn_cancel: Option<CancellationToken>,
@@ -68,8 +68,6 @@ impl App {
             mode: AppMode::Idle,
             provider_name: None,
             model_name: None,
-            last_input_tokens: None,
-            last_output_tokens: None,
             iteration: 0,
             max_iterations: 0,
             compression_hint: None,
@@ -77,6 +75,7 @@ impl App {
             turn_started_at: None,
             chat_scroll: 0,
             context_window_size: None,
+            context_used_tokens: None,
             active_turn_cancel: None,
             scrollback_revision: 0,
             cached_chat_lines: Vec::new(),

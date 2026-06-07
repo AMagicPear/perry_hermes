@@ -256,15 +256,17 @@ fn build_status_line_1(app: &App) -> Line<'static> {
     ];
 
     if let Some(total) = app.context_window_size {
-        let in_tok = app.last_input_tokens.unwrap_or(0);
-        let pct = ((in_tok as f64 / total as f64) * 100.0).clamp(0.0, 100.0) as u64;
+        let in_tok = app.context_used_tokens.unwrap_or(0);
         spans.push(Span::raw(" · "));
         spans.push(Span::raw(format!(
             "{} / {}",
             format_tokens(in_tok),
             format_tokens(total)
         )));
-        spans.push(Span::raw(format!(" {pct}%")));
+        spans.push(Span::raw(format!(
+            " {}",
+            format_context_percent(in_tok, total)
+        )));
     }
 
     if let Some(elapsed) = elapsed {
@@ -348,6 +350,18 @@ fn format_tokens(n: u64) -> String {
     }
 }
 
+fn format_context_percent(used: u64, total: u64) -> String {
+    if total == 0 {
+        return "0%".to_string();
+    }
+    let pct = ((used as f64 / total as f64) * 100.0).clamp(0.0, 100.0);
+    if used > 0 && pct < 1.0 {
+        "<1%".to_string()
+    } else {
+        format!("{pct:.0}%")
+    }
+}
+
 fn visible_width(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
@@ -405,9 +419,21 @@ mod tests {
     fn status_line_includes_context_percent_when_set() {
         let mut app = App::new_for_test();
         app.context_window_size = Some(1_000_000);
-        app.last_input_tokens = Some(200_000);
+        app.context_used_tokens = Some(200_000);
         let line = build_status_line_1(&app);
         let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(s.contains("20%"), "expected 20% in status; got {s:?}");
+    }
+
+    #[test]
+    fn status_line_uses_reported_context_usage() {
+        let mut app = App::new_for_test();
+        app.context_window_size = Some(1_000_000);
+        app.context_used_tokens = Some(1_000);
+        let line = build_status_line_1(&app);
+        let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+        assert!(s.contains("1.0K"), "expected 1.0K in status; got {s:?}");
+        assert!(s.contains("<1%"), "expected <1% in status; got {s:?}");
     }
 }

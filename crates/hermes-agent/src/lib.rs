@@ -13,7 +13,8 @@ pub mod tools;
 pub use config::{AgentConfig, HermesConfig, ProviderConfig, ProviderKind};
 pub use context::{CompressorConfig, ContextCompressor};
 pub use loop_engine::{
-    AgentLoop, AgentRunError, FailedTurn, LoopConfig, LoopEvent, LoopMetrics, RunResult,
+    estimate_tokens_for_messages, AgentLoop, AgentRunError, FailedTurn, LoopConfig, LoopEvent,
+    LoopMetrics, RunResult,
 };
 pub use prompting::DEFAULT_SYSTEM_PROMPT;
 pub use runtime_agent::AIAgent;

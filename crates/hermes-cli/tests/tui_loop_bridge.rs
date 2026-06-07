@@ -127,6 +127,19 @@ fn compression_completed_sets_hint() {
 }
 
 #[test]
+fn context_usage_event_updates_status_value() {
+    let mut app = app_with_mode(AppMode::AwaitingModel);
+    let ev = LoopEvent::ContextUsageUpdated {
+        used_tokens: 42_000,
+    };
+
+    let next = apply_loop_event(&mut app, ev);
+
+    assert!(matches!(next, AppEvent::Tick));
+    assert_eq!(app.context_used_tokens, Some(42_000));
+}
+
+#[test]
 fn iterations_exhausted_transitions_to_idle() {
     let mut app = app_with_mode(AppMode::AwaitingModel);
     let ev = LoopEvent::IterationsExhausted;

@@ -416,6 +416,7 @@ fn parse_sse_data_payload(
                     .get("output_tokens")
                     .and_then(|v| v.as_u64())
                     .unwrap_or_default();
+                state.usage.cached_input_tokens = cached_input_tokens_from_anthropic_usage(usage);
             }
             Ok(Some(usage_delta(state.usage)))
         }
@@ -429,6 +430,10 @@ fn parse_sse_data_payload(
                 }
                 if let Some(output) = usage.get("output_tokens").and_then(|v| v.as_u64()) {
                     state.usage.output_tokens = output;
+                }
+                let cached = cached_input_tokens_from_anthropic_usage(usage);
+                if cached > 0 {
+                    state.usage.cached_input_tokens = cached;
                 }
             }
             let finish_reason = value
@@ -559,6 +564,18 @@ fn usage_delta(usage: Usage) -> CompletionDelta {
         usage: Some(usage),
         finish_reason: None,
     }
+}
+
+fn cached_input_tokens_from_anthropic_usage(usage: &serde_json::Value) -> u64 {
+    let cache_read = usage
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_default();
+    let cache_creation = usage
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_u64())
+        .unwrap_or_default();
+    cache_read + cache_creation
 }
 
 fn anthropic_finish_reason(s: &str) -> FinishReason {

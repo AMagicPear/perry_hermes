@@ -14,8 +14,8 @@ pub struct Usage {
     pub input_tokens: u64,
     #[serde(rename = "completion_tokens")]
     pub output_tokens: u64,
-    /// Cached input tokens (Anthropic prompt caching, OpenAI cached). For
-    /// cost reporting.
+    /// Cached input tokens (Anthropic prompt caching, OpenAI cached). These
+    /// are part of prompt/context occupancy even when billed separately.
     #[serde(default, rename = "cached_tokens")]
     pub cached_input_tokens: u64,
 }
