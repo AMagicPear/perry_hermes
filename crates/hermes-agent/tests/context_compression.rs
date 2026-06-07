@@ -1,14 +1,13 @@
 use std::sync::{Arc, Mutex};
 
 use hermes_agent::{
-    AIAgent, AgentLoop, CompressorConfig, ContextCompressor, HermesConfig, LoopConfig, ModelConfig,
-    ProviderConfig, ProviderKind, SessionContext,
+    AIAgent, AgentLoop, CompressorConfig, ContextCompressor, ContextWindow, HermesConfig,
+    LoopConfig, ModelConfig, ProviderConfig, ProviderKind, SessionContext,
 };
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason};
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::ToolContext;
-use hermes_core::ContextEngine;
 use hermes_core::ProviderError;
 use hermes_core::Usage;
 use tokio::sync::Mutex as TokioMutex;
@@ -126,8 +125,8 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
         finish_reason: FinishReason::Stop,
     }]));
 
-    let compressor = ContextCompressor::new(CompressorConfig::default(), "test".into(), None)
-        .with_summary_provider(summary_provider);
+    let compressor =
+        ContextCompressor::new(CompressorConfig::default()).with_summary_provider(summary_provider);
 
     let loop_ = AgentLoop::new(
         ScriptedProvider::new(vec![first, second]),
@@ -135,6 +134,10 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
         LoopConfig {
             max_iterations: 5,
             context_engine: Some(Arc::new(TokioMutex::new(compressor))),
+            context_window: Some(ContextWindow {
+                max_tokens: 128_000,
+                compression_threshold_ratio: 0.50,
+            }),
             ..Default::default()
         },
     );
@@ -146,6 +149,12 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
         .run(
             vec![
                 system_message("system"),
+                user_message("first request"),
+                assistant_text("first answer"),
+                user_message("second request"),
+                assistant_text("second answer"),
+                user_message("third request"),
+                assistant_text("third answer"),
                 user_message(&"A".repeat(160_000)),
                 user_message("latest question"),
             ],
@@ -167,6 +176,138 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
     assert!(
         compression_idx < tool_idx,
         "compression should happen before tool dispatch, got events: {events:?}"
+    );
+}
+
+#[tokio::test]
+async fn loop_does_not_compress_until_real_context_usage_reaches_threshold() {
+    let first = Completion {
+        message: assistant_text("small turn"),
+        usage: Usage {
+            input_tokens: 63_999,
+            output_tokens: 10,
+            cached_input_tokens: 0,
+        },
+        finish_reason: FinishReason::Stop,
+    };
+
+    let summary_provider = Arc::new(ScriptedProvider::new(vec![Completion {
+        message: assistant_text("summary text"),
+        usage: Usage::default(),
+        finish_reason: FinishReason::Stop,
+    }]));
+
+    let compressor =
+        ContextCompressor::new(CompressorConfig::default()).with_summary_provider(summary_provider);
+
+    let loop_ = AgentLoop::new(
+        ScriptedProvider::new(vec![first]),
+        Arc::new(InMemoryRegistry::new()),
+        LoopConfig {
+            max_iterations: 5,
+            context_engine: Some(Arc::new(TokioMutex::new(compressor))),
+            context_window: Some(ContextWindow {
+                max_tokens: 128_000,
+                compression_threshold_ratio: 0.50,
+            }),
+            ..Default::default()
+        },
+    );
+
+    let mut events = Vec::new();
+    loop_
+        .run(
+            vec![
+                system_message("system"),
+                user_message(&"A".repeat(200_000)),
+                user_message("latest question"),
+            ],
+            test_ctx(),
+            CancellationToken::new(),
+            |event| events.push(event),
+        )
+        .await
+        .expect("loop should succeed");
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, hermes_agent::LoopEvent::CompressionCompleted { .. })),
+        "compression must wait for real provider usage to reach threshold"
+    );
+}
+
+#[tokio::test]
+async fn loop_compresses_after_real_context_usage_reaches_threshold() {
+    let first = Completion {
+        message: assistant_text("large turn"),
+        usage: Usage {
+            input_tokens: 64_000,
+            output_tokens: 10,
+            cached_input_tokens: 0,
+        },
+        finish_reason: FinishReason::Stop,
+    };
+
+    let summary_provider = Arc::new(ScriptedProvider::new(vec![Completion {
+        message: assistant_text("summary text"),
+        usage: Usage::default(),
+        finish_reason: FinishReason::Stop,
+    }]));
+
+    let compressor =
+        ContextCompressor::new(CompressorConfig::default()).with_summary_provider(summary_provider);
+
+    let loop_ = AgentLoop::new(
+        ScriptedProvider::new(vec![first]),
+        Arc::new(InMemoryRegistry::new()),
+        LoopConfig {
+            max_iterations: 5,
+            context_engine: Some(Arc::new(TokioMutex::new(compressor))),
+            context_window: Some(ContextWindow {
+                max_tokens: 128_000,
+                compression_threshold_ratio: 0.50,
+            }),
+            ..Default::default()
+        },
+    );
+
+    let mut events = Vec::new();
+    let result = loop_
+        .run(
+            vec![
+                system_message("system"),
+                user_message("first request"),
+                assistant_text("first answer"),
+                user_message(&"A".repeat(200_000)),
+                user_message("latest question"),
+            ],
+            test_ctx(),
+            CancellationToken::new(),
+            |event| events.push(event),
+        )
+        .await
+        .expect("loop should succeed");
+
+    assert!(
+        events.iter().any(|event| {
+            matches!(
+                event,
+                hermes_agent::LoopEvent::CompressionCompleted {
+                    trigger: hermes_core::context_engine::CompressionTrigger::PostTurn,
+                    context_tokens: Some(64_000),
+                    ..
+                }
+            )
+        }),
+        "expected post-response compression after real provider usage hit threshold: {events:?}"
+    );
+    assert!(
+        result
+            .messages
+            .iter()
+            .any(|m| matches!(&m.content, Content::Text(t) if t.contains("[CONTEXT SUMMARY"))),
+        "compressed history should contain the generated summary"
     );
 }
 
@@ -296,34 +437,26 @@ async fn manual_compact_compresses_medium_history_instead_of_skipping() {
 
 #[test]
 fn threshold_tokens_scales_with_context_window_size() {
-    // With a 200K window and 50% threshold, compression triggers at 100K.
-    let config = hermes_agent::CompressorConfig {
-        threshold_percent: 0.50,
-        ..Default::default()
+    let window = ContextWindow {
+        max_tokens: 200_000,
+        compression_threshold_ratio: 0.50,
     };
-    assert_eq!(config.threshold_tokens(200_000), 100_000);
-    // 128K window at 60% → 76800, well above the 8K floor.
-    let config = hermes_agent::CompressorConfig {
-        threshold_percent: 0.60,
-        ..Default::default()
+    assert_eq!(window.threshold_tokens(), 100_000);
+
+    let window = ContextWindow {
+        max_tokens: 128_000,
+        compression_threshold_ratio: 0.60,
     };
-    assert_eq!(config.threshold_tokens(128_000), 76_800);
-    // Tiny windows still respect the 8K floor.
-    assert_eq!(config.threshold_tokens(4_000), 8_000);
+    assert_eq!(window.threshold_tokens(), 76_800);
 }
 
-#[tokio::test]
-async fn context_compressor_new_uses_provided_context_length() {
-    use hermes_agent::{CompressorConfig, ContextCompressor};
-
-    let config = CompressorConfig {
-        threshold_percent: 0.50,
-        ..Default::default()
+#[test]
+fn context_window_uses_real_usage_threshold() {
+    let window = ContextWindow {
+        max_tokens: 128_000,
+        compression_threshold_ratio: 0.50,
     };
-    let compressor = ContextCompressor::new(config, "test".into(), Some(200_000));
-    assert_eq!(compressor.threshold_tokens(), 100_000);
 
-    // None falls back to 128K.
-    let compressor = ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
-    assert_eq!(compressor.threshold_tokens(), 64_000); // 128K * 0.50
+    assert!(!window.should_compress(63_999));
+    assert!(window.should_compress(64_000));
 }

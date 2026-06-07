@@ -158,7 +158,7 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
 }
 
 #[tokio::test]
-async fn loop_emits_context_usage_from_preflight_and_normalized_real_usage() {
+async fn loop_emits_context_usage_only_from_normalized_real_usage() {
     let provider = ScriptedProvider::from_deltas(vec![vec![
         CompletionDelta {
             content_delta: Some("done".into()),
@@ -215,13 +215,10 @@ async fn loop_emits_context_usage_from_preflight_and_normalized_real_usage() {
         .expect("loop should succeed");
 
     assert_eq!(result.metrics.input_tokens, 42);
-    assert!(
-        usage_events.iter().any(|used| *used > 0),
-        "expected a preflight context usage estimate, got {usage_events:?}"
-    );
-    assert!(
-        usage_events.contains(&1_042),
-        "expected provider context usage to include cached input tokens, got {usage_events:?}"
+    assert_eq!(
+        usage_events,
+        vec![1_042],
+        "context usage must come only from provider-reported prompt tokens"
     );
     assert!(
         !usage_events.contains(&42),

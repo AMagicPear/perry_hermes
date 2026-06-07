@@ -3,17 +3,70 @@
 //! Algorithm (from the Python `ContextCompressor`):
 //! 1. Cheap pre-pass — replace old tool result contents with one-line summaries.
 //! 2. Head protection — find the boundary after the first N non-system messages.
-//! 3. Tail protection — walk backwards, accumulating tokens up to the tail budget.
+//! 3. Tail protection — preserve the last N messages.
 //! 4. LLM summary of the middle slice (with iterative update if previous summary exists).
 //! 5. Assemble — head + summary message + tail.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use hermes_core::context_engine::CompressionSkipReason;
 use hermes_core::message::{Message, Role};
 use hermes_core::{CompressError, ContextEngine, Provider, ProviderError};
+use tokio::sync::Mutex as TokioMutex;
 
 use tokio_util::sync::CancellationToken;
+
+/// Outcome of one compression attempt. The loop maps this to `LoopEvent`.
+pub(crate) enum CompactOutcome {
+    Skipped(CompressionSkipReason),
+    Compressed {
+        /// Total duration of the compression call.
+        duration: Duration,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+/// Attempt one compression pass. Holds the engine lock for the full
+/// `compress()` call and replaces `messages` in place on success.
+pub(crate) async fn try_compress(
+    engine: &Arc<TokioMutex<dyn ContextEngine>>,
+    messages: &mut Vec<Message>,
+    focus_topic: Option<&str>,
+    config_focus: Option<&str>,
+    force: bool,
+) -> Option<CompactOutcome> {
+    let started = Instant::now();
+
+    let mut guard = match engine.try_lock() {
+        Ok(g) => g,
+        Err(_) => {
+            return Some(CompactOutcome::Skipped(
+                CompressionSkipReason::NothingToCompress,
+            ));
+        }
+    };
+    let focus = config_focus.or(focus_topic);
+    let result = guard.compress(messages.clone(), focus, force).await;
+    drop(guard);
+
+    let duration = started.elapsed();
+    match result {
+        Ok(new_messages) => {
+            *messages = new_messages;
+            Some(CompactOutcome::Compressed { duration })
+        }
+        Err(CompressError::NothingToCompress) => Some(CompactOutcome::Skipped(
+            CompressionSkipReason::NothingToCompress,
+        )),
+        Err(e) => Some(CompactOutcome::Failed {
+            error: e.to_string(),
+        }),
+    }
+}
 
 // ============================================================================
 // Configuration
@@ -22,42 +75,21 @@ use tokio_util::sync::CancellationToken;
 /// Configuration for the context compressor.
 #[derive(Debug, Clone)]
 pub struct CompressorConfig {
-    /// Fraction of model context at which compression triggers. Default 0.50.
-    pub threshold_percent: f64,
     /// Number of non-system messages to protect at the head. Default 3.
     pub protect_first_n: usize,
-    /// Token budget for the protected tail. Default 12,000.
-    pub protect_tail_tokens: u64,
-    /// Summary is sized to this fraction of the threshold. Default 0.20.
-    pub summary_target_ratio: f64,
-}
-
-impl CompressorConfig {
-    /// Compute the token threshold at which compression triggers.
-    pub fn threshold_tokens(&self, context_length: u64) -> u64 {
-        let threshold = (context_length as f64 * self.threshold_percent) as u64;
-        // Minimum context length floor: 8,000 tokens
-        const MINIMUM_CONTEXT_LENGTH: u64 = 8_000;
-        threshold.max(MINIMUM_CONTEXT_LENGTH)
-    }
-
-    /// Compute the target summary size in tokens.
-    pub fn summary_target_tokens(&self, context_length: u64) -> u64 {
-        const MIN_SUMMARY_TOKENS: u64 = 2_000;
-        const MAX_SUMMARY_TOKENS: u64 = 12_000;
-        let target =
-            (self.threshold_tokens(context_length) as f64 * self.summary_target_ratio) as u64;
-        target.clamp(MIN_SUMMARY_TOKENS, MAX_SUMMARY_TOKENS)
-    }
+    /// Number of latest messages to preserve exactly. Default 6.
+    pub protect_last_n: usize,
+    /// Instructional target for generated summaries. This is not used for
+    /// context-window accounting; it only constrains the summary prompt.
+    pub max_summary_tokens: u64,
 }
 
 impl Default for CompressorConfig {
     fn default() -> Self {
         Self {
-            threshold_percent: 0.50,
             protect_first_n: 3,
-            protect_tail_tokens: 12_000,
-            summary_target_ratio: 0.20,
+            protect_last_n: 6,
+            max_summary_tokens: 8_000,
         }
     }
 }
@@ -68,9 +100,8 @@ impl Default for CompressorConfig {
 
 /// Replace old tool-result contents with one-line summaries.
 ///
-/// Walks messages oldest → newest in a single pass: the tail is the suffix
-/// of messages whose chars fit in `protect_tail_tokens`; any tool-result
-/// message earlier than the tail becomes
+/// Walks messages oldest → newest in a single pass: the tail is the last
+/// `protect_last_n` messages; any tool-result message earlier than the tail becomes
 /// `"[Old tool output cleared, {tool_name} returned {N} bytes]"`. Non-tool
 /// messages outside the tail are kept as-is.
 ///
@@ -83,27 +114,15 @@ pub fn prune_old_tool_results(
         return (messages.to_vec(), 0);
     }
 
-    // One pass: walk backwards, building the result in reverse. We stay
-    // "in the tail" until we've consumed the full budget; once the budget
-    // is exhausted, every older tool message gets pruned.
-    let tail_budget = (config.protect_tail_tokens as f64 * 4.0) as i64;
-    let mut tail_chars_remaining = tail_budget;
+    let tail_start = messages.len().saturating_sub(config.protect_last_n);
     let mut result_rev: Vec<Message> = Vec::with_capacity(messages.len());
     let mut total_pruned = 0usize;
-    let mut in_tail = true;
 
-    for msg in messages.iter().rev() {
+    for (idx, msg) in messages.iter().enumerate().rev() {
         let original_chars = msg.char_len();
-        let msg_chars = original_chars as i64;
 
-        if in_tail {
-            // Still inside the protected tail — keep as-is, and see if
-            // including this message exhausted the budget.
-            tail_chars_remaining -= msg_chars;
+        if idx >= tail_start {
             result_rev.push(msg.clone());
-            if tail_chars_remaining <= 0 {
-                in_tail = false;
-            }
             continue;
         }
 
@@ -147,14 +166,12 @@ pub fn find_head_boundary(messages: &[Message], protect_first_n: usize) -> usize
     messages.len()
 }
 
-/// Walk backwards from the end, accumulating tokens up to
-/// `protect_tail_tokens`. Returns the index of the first message in the
-/// protected tail.
+/// Return the index of the first message in the protected tail.
 ///
 /// Keeps at least a small recent tail intact and, if the budget would
 /// otherwise protect the entire post-head transcript, still forces a
 /// non-empty middle region so manual compaction can do useful work.
-pub fn find_tail_cut_by_tokens(
+pub fn find_tail_cut_by_messages(
     messages: &[Message],
     head_end: usize,
     config: &CompressorConfig,
@@ -164,36 +181,14 @@ pub fn find_tail_cut_by_tokens(
         return head_end;
     }
 
-    let min_tail = (post_head - 1).min(3);
-    let fallback_cut = messages.len() - min_tail;
-    let tail_budget_chars = (config.protect_tail_tokens as f64 * 4.0) as usize;
-    let mut remaining = tail_budget_chars;
-    let mut tail_start = messages.len();
+    let protected_tail = config.protect_last_n.min(post_head - 1).max(1);
+    let mut tail_start = messages.len() - protected_tail;
 
-    for i in (head_end..messages.len()).rev() {
-        let msg_chars = messages[i].char_len();
-        if msg_chars > remaining {
-            // This message doesn't fit entirely — it becomes the boundary.
-            // We include it in the tail but note that truncation may be needed.
-            tail_start = i;
-            break;
-        }
-        remaining -= msg_chars;
-        tail_start = i;
-    }
-
-    tail_start = tail_start.min(fallback_cut);
     if tail_start <= head_end {
-        tail_start = fallback_cut.max(head_end + 1);
+        tail_start = head_end + 1;
     }
 
     tail_start
-}
-
-/// Estimate total tokens for a slice of messages.
-pub fn estimate_tokens(messages: &[Message], chars_per_token: f64) -> u64 {
-    let total_chars: usize = messages.iter().map(Message::char_len).sum();
-    (total_chars as f64 / chars_per_token) as u64
 }
 
 // ============================================================================
@@ -283,29 +278,21 @@ pub fn messages_to_transcript(messages: &[Message]) -> String {
 /// The default `ContextEngine` — a 5-step compressor.
 pub struct ContextCompressor {
     config: CompressorConfig,
-    model: String,
-    threshold_tok: u64,
     /// Last LLM-generated summary; reused as the seed for the next compression.
     previous_summary: Option<String>,
     /// Count of consecutive compressions that saved < ineffective_threshold.
     ineffective_count: u32,
     /// Aux provider for summary calls. None → fall back to the main provider.
     summary_provider: Option<Arc<dyn Provider>>,
-    context_length: u64,
 }
 
 impl ContextCompressor {
-    pub fn new(config: CompressorConfig, model: String, context_length: Option<u64>) -> Self {
-        let context_length = context_length.unwrap_or(128_000);
-        let threshold_tok = config.threshold_tokens(context_length);
+    pub fn new(config: CompressorConfig) -> Self {
         Self {
             config,
-            model,
-            threshold_tok,
             previous_summary: None,
             ineffective_count: 0,
             summary_provider: None,
-            context_length,
         }
     }
 
@@ -319,24 +306,17 @@ impl ContextCompressor {
     async fn compress_inner(
         &mut self,
         messages: Vec<Message>,
-        _current_tokens: Option<u64>,
         focus_topic: Option<&str>,
-        force: bool,
+        _force: bool,
     ) -> Result<Vec<Message>, CompressError> {
         // Step 1: cheap pre-pass — replace old tool result contents.
         let (messages, _pruned_chars) = prune_old_tool_results(&messages, &self.config);
-
-        // Re-estimate. If we're under threshold, no LLM call needed.
-        let est = estimate_tokens(&messages, 4.0);
-        if !force && est < self.threshold_tok {
-            return Ok(messages);
-        }
 
         // Step 2: head protection.
         let head_end = find_head_boundary(&messages, self.config.protect_first_n);
 
         // Step 3: tail protection.
-        let tail_start = find_tail_cut_by_tokens(&messages, head_end, &self.config);
+        let tail_start = find_tail_cut_by_messages(&messages, head_end, &self.config);
 
         // Check: nothing to compress?
         if head_end >= tail_start {
@@ -406,7 +386,7 @@ impl ContextCompressor {
             &middle_text,
             self.previous_summary.as_deref(),
             focus_topic,
-            self.config.summary_target_tokens(self.context_length),
+            self.config.max_summary_tokens,
         );
         self.call_summary_llm(&prompt)
             .await
@@ -432,36 +412,24 @@ impl ContextCompressor {
 
 #[async_trait]
 impl ContextEngine for ContextCompressor {
-    fn should_compress(&self) -> bool {
-        // Only check the ineffective backoff. The actual token threshold
-        // comparison is done by the loop using estimated_tokens vs threshold.
+    fn can_compress_automatically(&self) -> bool {
+        // Only check the ineffective backoff. The real token threshold
+        // comparison is done by the loop using provider-reported Usage.
         self.ineffective_count < 2
     }
 
     async fn compress(
         &mut self,
         messages: Vec<Message>,
-        current_tokens: Option<u64>,
         focus_topic: Option<&str>,
         force: bool,
     ) -> Result<Vec<Message>, CompressError> {
-        self.compress_inner(messages, current_tokens, focus_topic, force)
-            .await
+        self.compress_inner(messages, focus_topic, force).await
     }
 
     fn on_session_reset(&mut self) {
         self.previous_summary = None;
         self.ineffective_count = 0;
-    }
-
-    fn update_model(&mut self, model: &str, context_length: u64) {
-        self.model = model.to_string();
-        self.context_length = context_length;
-        self.threshold_tok = self.config.threshold_tokens(context_length);
-    }
-
-    fn threshold_tokens(&self) -> u64 {
-        self.threshold_tok
     }
 }
 
@@ -494,35 +462,17 @@ mod tests {
         CompressorConfig::default()
     }
 
-    // ----- Config -----
-
     #[test]
-    fn config_default_threshold_tokens() {
+    fn default_summary_target_is_prompt_instruction_only() {
         let config = CompressorConfig::default();
-        assert_eq!(config.threshold_tokens(128_000), 64_000); // 128_000 * 0.50
-    }
-
-    #[test]
-    fn config_minimum_context_floor() {
-        let config = CompressorConfig::default();
-        // 1000 * 0.50 = 500, but min is 8000
-        assert_eq!(config.threshold_tokens(1_000), 8_000);
-    }
-
-    #[test]
-    fn config_summary_target_tokens() {
-        let config = CompressorConfig::default();
-        let target = config.summary_target_tokens(128_000);
-        assert!(target >= 2_000);
-        assert!(target <= 12_000);
+        assert_eq!(config.max_summary_tokens, 8_000);
     }
 
     // ----- Compressor lifecycle -----
 
     #[test]
     fn on_session_reset_clears_state() {
-        let mut compressor =
-            ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
+        let mut compressor = ContextCompressor::new(CompressorConfig::default());
         compressor.previous_summary = Some("old summary".into());
         compressor.ineffective_count = 5;
 
@@ -533,50 +483,29 @@ mod tests {
     }
 
     #[test]
-    fn update_model_changes_threshold() {
-        let mut compressor =
-            ContextCompressor::new(CompressorConfig::default(), "old-model".into(), None);
-        let old_threshold = compressor.threshold_tokens();
-
-        compressor.update_model("new-model", 256_000);
-
-        assert_ne!(compressor.threshold_tokens(), old_threshold);
-        assert_eq!(compressor.threshold_tokens(), 128_000); // 256K * 0.5
-    }
-
-    #[test]
     fn should_compress_returns_false_after_two_ineffective() {
-        let mut compressor =
-            ContextCompressor::new(CompressorConfig::default(), "test".into(), None);
-        assert!(compressor.should_compress());
+        let mut compressor = ContextCompressor::new(CompressorConfig::default());
+        assert!(compressor.can_compress_automatically());
 
         compressor.ineffective_count = 1;
-        assert!(compressor.should_compress());
+        assert!(compressor.can_compress_automatically());
 
         compressor.ineffective_count = 2;
-        assert!(!compressor.should_compress());
+        assert!(!compressor.can_compress_automatically());
     }
 
     #[tokio::test]
     async fn nothing_to_compress_when_head_meets_tail() {
-        // Messages too short to exceed threshold — compressor returns early
-        // with Ok (below-threshold early exit), never reaching head/tail check.
         let config = CompressorConfig {
             protect_first_n: 100, // protect all messages
             ..CompressorConfig::default()
         };
-        let mut compressor = ContextCompressor::new(config, "test".into(), None);
+        let mut compressor = ContextCompressor::new(config);
 
         let messages = vec![system_msg("sys"), user_msg("hello"), assistant_msg("hi")];
 
-        // Messages are far below the threshold (min 8000 tokens), so
-        // the compressor returns Ok(messages) in the early-exit path.
-        let result = compressor
-            .compress(messages.clone(), None, None, false)
-            .await;
-        assert!(result.is_ok());
-        let out = result.unwrap();
-        assert_eq!(out.len(), messages.len());
+        let result = compressor.compress(messages, None, false).await;
+        assert!(matches!(result, Err(CompressError::NothingToCompress)));
     }
 
     // ----- Pruning -----
@@ -607,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn find_tail_cut_forces_middle_when_budget_covers_everything() {
+    fn find_tail_cut_forces_middle_when_tail_would_cover_everything() {
         let msgs = vec![
             system_msg("sys"),
             user_msg("u1"),
@@ -618,13 +547,13 @@ mod tests {
             assistant_msg("a3"),
         ];
         let config = CompressorConfig {
-            protect_tail_tokens: 12_000,
+            protect_last_n: 99,
             ..test_config()
         };
 
-        let tail_start = find_tail_cut_by_tokens(&msgs, 2, &config);
+        let tail_start = find_tail_cut_by_messages(&msgs, 2, &config);
 
-        assert_eq!(tail_start, 4);
+        assert_eq!(tail_start, 3);
     }
 
     #[test]
@@ -652,7 +581,7 @@ mod tests {
             assistant_msg("reply"),
         ];
         let tiny_config = CompressorConfig {
-            protect_tail_tokens: 5, // protect only ~20 chars of tail
+            protect_last_n: 1,
             ..test_config()
         };
         let (pruned, _chars_saved) = prune_old_tool_results(&msgs2, &tiny_config);
@@ -665,13 +594,6 @@ mod tests {
             "expected pruned text, got: {:?}",
             pruned[2].content.as_text()
         );
-    }
-
-    #[test]
-    fn estimate_tokens_basic() {
-        let msgs = vec![user_msg("hello world")]; // 11 chars
-        let tokens = estimate_tokens(&msgs, 4.0);
-        assert_eq!(tokens, 2); // 11 / 4 = 2.75 → 2
     }
 
     // ----- Summary -----

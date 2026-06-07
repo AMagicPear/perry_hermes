@@ -26,11 +26,8 @@ use hermes_core::message::{Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason, StreamAccumulator};
 use hermes_core::tool::ToolContext;
 
-use super::compress::{self, CompactOutcome};
-use super::metrics::{
-    estimate_request_context_tokens, estimate_tokens_for_messages,
-    prompt_context_tokens_from_usage, validate_args,
-};
+use super::compressor::{try_compress, CompactOutcome};
+use super::metrics::{prompt_context_tokens_from_usage, validate_args};
 use super::{AgentLoop, AgentRunError, FailedTurn, LoopEvent, LoopMetrics, RunResult};
 
 pub(crate) async fn run(
@@ -51,8 +48,6 @@ pub(crate) async fn run(
         }
     }
 
-    pre_turn_compression_check(engine, &mut messages, &cancel, &mut on_event).await;
-
     loop {
         if cancel.is_cancelled() {
             on_event(LoopEvent::Cancelled);
@@ -69,11 +64,6 @@ pub(crate) async fn run(
         }
 
         let tools = engine.registry.schemas();
-        let estimated_context_tokens =
-            estimate_request_context_tokens(&messages, &tools, 4.0);
-        on_event(LoopEvent::ContextUsageUpdated {
-            used_tokens: estimated_context_tokens,
-        });
 
         let completion =
             match drive_turn(engine, &messages, &tools, &cancel, &mut on_event, started).await {
@@ -95,6 +85,20 @@ pub(crate) async fn run(
         let assistant_msg = completion.message.clone();
         messages.push(assistant_msg.clone());
         on_event(LoopEvent::AssistantMessage(assistant_msg.clone()));
+
+        if matches!(
+            completion.finish_reason,
+            FinishReason::Stop | FinishReason::Length | FinishReason::ToolUse
+        ) {
+            auto_compress_after_response(
+                engine,
+                &mut messages,
+                &mut metrics,
+                prompt_context_tokens,
+                &mut on_event,
+            )
+            .await;
+        }
 
         match handle_finish_reason(
             completion,
@@ -133,7 +137,10 @@ pub(crate) async fn drive_turn(
         .provider
         .stream(messages, tools, cancel.clone())
         .await
-        .map_err(|e| DriveError { error: e, partial: None })?;
+        .map_err(|e| DriveError {
+            error: e,
+            partial: None,
+        })?;
 
     let mut acc = StreamAccumulator::new();
     let completion = loop {
@@ -193,9 +200,7 @@ async fn handle_finish_reason(
             on_event(LoopEvent::LengthLimit);
             Ok(Some(finalize(messages, completion.message, metrics)))
         }
-        FinishReason::ContentFilter => {
-            Err(AgentRunError::Loop(LoopError::ContentFilter))
-        }
+        FinishReason::ContentFilter => Err(AgentRunError::Loop(LoopError::ContentFilter)),
         FinishReason::Error => Err(AgentRunError::Loop(LoopError::Provider(
             ProviderError::Other("provider returned finish_reason=error".into()),
         ))),
@@ -216,20 +221,12 @@ async fn dispatch_tool_calls(
     metrics: &mut LoopMetrics,
     on_event: &mut impl FnMut(LoopEvent),
 ) -> Result<(), AgentRunError> {
-    let calls = completion
-        .message
-        .tool_calls
-        .clone()
-        .unwrap_or_default();
+    let calls = completion.message.tool_calls.clone().unwrap_or_default();
     if calls.is_empty() {
         return Err(AgentRunError::Loop(LoopError::Provider(
-            ProviderError::InvalidResponse(
-                "finish_reason=tool_use but no tool_calls".into(),
-            ),
+            ProviderError::InvalidResponse("finish_reason=tool_use but no tool_calls".into()),
         )));
     }
-
-    post_turn_compression_check(engine, messages, metrics, on_event).await;
 
     for call in calls {
         if cancel.is_cancelled() {
@@ -289,92 +286,36 @@ fn finalize(messages: &[Message], final_msg: Message, metrics: &mut LoopMetrics)
     }
 }
 
-async fn pre_turn_compression_check(
-    engine: &AgentLoop,
-    messages: &mut Vec<Message>,
-    _cancel: &CancellationToken,
-    on_event: &mut impl FnMut(LoopEvent),
-) {
-    let Some(engine_arc) = &engine.config.context_engine else {
-        return;
-    };
-    let estimated = estimate_tokens_for_messages(messages, 4.0);
-    let should = {
-        let guard = engine_arc.lock().await;
-        guard.should_compress() && estimated >= guard.threshold_tokens()
-    };
-    if !should {
-        return;
-    }
-    if let Some(outcome) =
-        compress::try_compress(engine_arc, messages, CompressionTrigger::PreTurn, None, None, false).await
-    {
-        let event = match outcome {
-            CompactOutcome::Compressed {
-                tokens_before,
-                tokens_after,
-                summary_chars,
-                duration,
-            } => LoopEvent::CompressionCompleted {
-                trigger: CompressionTrigger::PreTurn,
-                tokens_before,
-                tokens_after,
-                summary_chars,
-                duration,
-            },
-            CompactOutcome::Skipped(reason) => LoopEvent::CompressionSkipped { reason },
-            CompactOutcome::Failed { error } => LoopEvent::CompressionFailed {
-                trigger: CompressionTrigger::PreTurn,
-                error,
-            },
-        };
-        on_event(event);
-    }
-}
-
-async fn post_turn_compression_check(
+async fn auto_compress_after_response(
     engine: &AgentLoop,
     messages: &mut Vec<Message>,
     metrics: &mut LoopMetrics,
+    prompt_context_tokens: u64,
     on_event: &mut impl FnMut(LoopEvent),
 ) {
     let Some(engine_arc) = &engine.config.context_engine else {
         return;
     };
+    let Some(context_window) = engine.config.context_window else {
+        return;
+    };
+    if !context_window.should_compress(prompt_context_tokens) {
+        return;
+    }
     let should = {
         let guard = engine_arc.lock().await;
-        guard.should_compress()
-        // The caller (drive_turn) only invokes the post-turn check
-        // when a real provider response arrived, so threshold_tokens
-        // would be a duplicate read; the PreTurn check already covered
-        // the same predicate. We just need a "should we even try?" gate.
+        guard.can_compress_automatically()
     };
     if !should {
         return;
     }
-    if let Some(outcome) = compress::try_compress(
-        engine_arc,
-        messages,
-        CompressionTrigger::PostTurn,
-        None,
-        None,
-        false,
-    )
-    .await
-    {
+    if let Some(outcome) = try_compress(engine_arc, messages, None, None, false).await {
         let event = match outcome {
-            CompactOutcome::Compressed {
-                tokens_before,
-                tokens_after,
-                summary_chars,
-                duration,
-            } => {
+            CompactOutcome::Compressed { duration } => {
                 metrics.compressions += 1;
                 LoopEvent::CompressionCompleted {
                     trigger: CompressionTrigger::PostTurn,
-                    tokens_before,
-                    tokens_after,
-                    summary_chars,
+                    context_tokens: Some(prompt_context_tokens),
                     duration,
                 }
             }

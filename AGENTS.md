@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
@@ -41,13 +41,13 @@ direnv auto-loads `.envrc` on `cd` — no manual env var exports needed once set
 
 ## Project-Specific Rules
 
-- This project is experimental and has no users. When changing behavior or config shape, do **not** preserve old compatibility unless explicitly requested in the current task.
+- This project is experimental and has no users. When changing behavior or config shape, do **not** preserve old compatibility unless explicitly requested in the current task. 记住更改的时候不要考虑最小更改也不要考虑兼容性，完全用整体架构最优的思维去做更改。
 - Current config format is `[[providers]]` plus `[[providers.models]]`; do not reintroduce the old single `[provider]` format.
 - Provider selection lives in `[agent].default_provider` and `[agent].default_model`. CLI startup can override these for one run with `--provider <name>` and `--model <name>`.
 - `context_window_size` belongs on each model entry under `[[providers.models]]`, not on `[agent]`.
 - When real-provider testing is useful, use `/Users/amagicpear/.perry_hermes/config.toml` as the local config and load environment variables from `~/projects/perry_hermes/.envrc`.
 - Real-provider checks should stay manual or in examples such as `crates/hermes-agent/examples/live_context_usage.rs`; do not put live provider calls into automated test scripts.
-- Keep `CLAUDE.md`, `README.md`, `examples/config/hermes.toml`, and `/Users/amagicpear/.perry_hermes/config.toml` aligned with the current config format.
+- Keep `AGENTS.md`, `README.md`, `examples/config/hermes.toml`, and `/Users/amagicpear/.perry_hermes/config.toml` aligned with the current config format.
 
 ## Architecture
 

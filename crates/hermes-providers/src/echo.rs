@@ -1,4 +1,4 @@
-//! Echo provider — yields a single "echo: <text>" delta and stops.
+//! Echo provider — yields a single `echo: text` delta and stops.
 //! Useful for offline smoke tests of the agent loop without an API key.
 
 use async_trait::async_trait;

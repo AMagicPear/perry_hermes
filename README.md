@@ -278,7 +278,7 @@ Current integration tests focus on core behavior and module boundaries rather th
 | [docs/superpowers/specs/2026-06-06-builtin-tools-expansion-design.md](/Users/amagicpear/projects/perry_hermes/docs/superpowers/specs/2026-06-06-builtin-tools-expansion-design.md) | Built-in tools expansion design |
 | [docs/superpowers/specs/2026-06-06-architecture-cohesion-refactor-design.md](/Users/amagicpear/projects/perry_hermes/docs/superpowers/specs/2026-06-06-architecture-cohesion-refactor-design.md) | Architecture cleanup and cohesion refactor |
 | [docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md](/Users/amagicpear/projects/perry_hermes/docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md) | Phase 10: rename `hermes-skills` → `hermes-skill-loader` + replace `hermes-cli` REPL with `ratatui` TUI |
-| [CLAUDE.md](/Users/amagicpear/projects/perry_hermes/CLAUDE.md) | Development guidance for in-repo agent workflows |
+| [AGENTS.md](/Users/amagicpear/projects/perry_hermes/AGENTS.md) | Development guidance for in-repo agent workflows |
 
 ## Roadmap
 

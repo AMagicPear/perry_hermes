@@ -74,17 +74,15 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
             AppEvent::Tick
         }
         LoopEvent::CompressionCompleted {
-            tokens_before,
-            tokens_after,
+            context_tokens,
             duration,
             ..
         } => {
-            app.compression_hint = Some(format!(
-                "Compressed: {} → {} tokens in {}ms",
-                tokens_before,
-                tokens_after,
-                duration.as_millis()
-            ));
+            let trigger = context_tokens
+                .map(|tokens| format!(" at {} tokens", format_tokens(tokens)))
+                .unwrap_or_default();
+            app.compression_hint =
+                Some(format!("Compressed{trigger} in {}ms", duration.as_millis()));
             AppEvent::Tick
         }
         LoopEvent::CompressionSkipped { reason: _ } => {
@@ -164,4 +162,14 @@ fn summarize_generic_output(raw: &str) -> String {
         preview.push_str("\n…");
     }
     preview
+}
+
+fn format_tokens(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
+    }
 }

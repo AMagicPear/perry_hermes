@@ -16,7 +16,8 @@ use crate::provider_factory::build_provider;
 use crate::session::SessionContext;
 use crate::tool_catalog::build_registry;
 use crate::{
-    AgentLoop, AgentRunError, CompressorConfig, ContextCompressor, LoopConfig, LoopEvent, RunResult,
+    AgentLoop, AgentRunError, CompressorConfig, ContextCompressor, ContextWindow, LoopConfig,
+    LoopEvent, RunResult,
 };
 
 pub struct AIAgent {
@@ -137,22 +138,21 @@ fn build_loop_for_custom_provider(
     });
     let registry = Arc::new(build_registry(&config.agent.disabled_toolsets, &skills_dir));
     let context_engine = if config.agent.context_compression_enabled {
-        let mut compressor_config = CompressorConfig::default();
-        if let Some(threshold_percent) = config.agent.context_compression_threshold_percent {
-            compressor_config.threshold_percent = threshold_percent;
-        }
-        let model_name = selected_provider
-            .map(|provider| provider.model.clone())
-            .unwrap_or_else(|| "custom".to_string());
-        let context_window_size = selected_provider.map(|provider| provider.context_window_size);
+        let compressor_config = CompressorConfig::default();
         Some(Arc::new(TokioMutex::new(
-            ContextCompressor::new(compressor_config, model_name, context_window_size)
-                .with_summary_provider(Arc::clone(&provider)),
+            ContextCompressor::new(compressor_config).with_summary_provider(Arc::clone(&provider)),
         ))
             as Arc<TokioMutex<dyn hermes_core::ContextEngine>>)
     } else {
         None
     };
+    let context_window = selected_provider.map(|provider| ContextWindow {
+        max_tokens: provider.context_window_size,
+        compression_threshold_ratio: config
+            .agent
+            .context_compression_threshold_percent
+            .unwrap_or(0.50),
+    });
     AgentLoop::from_provider(
         provider,
         registry,
@@ -160,6 +160,7 @@ fn build_loop_for_custom_provider(
             max_iterations: config.agent.max_iterations.unwrap_or(10),
             system_prompt: None,
             context_engine,
+            context_window,
             ..Default::default()
         },
     )

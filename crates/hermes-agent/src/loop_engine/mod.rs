@@ -2,8 +2,8 @@
 //! tools, returns a `RunResult`.
 //!
 //! Sub-modules:
-//! - `metrics` — token-counting helpers + `validate_args`
-//! - `compress` — single-lock compression orchestrator
+//! - `metrics` — provider usage helpers + `validate_args`
+//! - `compressor` — compression orchestration and message rewriting strategy
 //! - `run` — the state machine (`run`, `drive_turn`, `handle_finish_reason`, `dispatch_tool_calls`)
 
 use std::sync::Arc;
@@ -12,22 +12,18 @@ use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::context_engine::{
-    CompressionSkipReason, CompressionTrigger, ContextEngine,
-};
+use hermes_core::context_engine::{CompressionSkipReason, CompressionTrigger, ContextEngine};
 use hermes_core::error::{LoopError, ProviderError, ToolError};
 use hermes_core::message::{Message, ToolCall};
 use hermes_core::provider::{Provider, ToolCallDelta};
 use hermes_core::registry::InMemoryRegistry;
 use hermes_core::tool::{ToolContext, ToolOutput};
 
-mod compress;
+mod compressor;
 mod metrics;
 mod run;
 
-// Re-export the public surface so `pub use loop_engine::*` keeps the
-// same import path as before the split.
-pub use metrics::estimate_tokens_for_messages;
+pub use compressor::{CompressorConfig, ContextCompressor};
 
 pub struct AgentLoop {
     pub(crate) provider: Arc<dyn Provider>,
@@ -42,8 +38,27 @@ pub struct LoopConfig {
     pub system_prompt: Option<String>,
     /// Optional context compression engine. None = no compression.
     pub context_engine: Option<Arc<TokioMutex<dyn ContextEngine>>>,
+    /// Model context window and compression threshold used with real
+    /// provider usage.
+    pub context_window: Option<ContextWindow>,
     /// Focus topic for manual `/compact [focus]`.
     pub focus_topic: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContextWindow {
+    pub max_tokens: u64,
+    pub compression_threshold_ratio: f64,
+}
+
+impl ContextWindow {
+    pub fn threshold_tokens(self) -> u64 {
+        (self.max_tokens as f64 * self.compression_threshold_ratio) as u64
+    }
+
+    pub fn should_compress(self, used_tokens: u64) -> bool {
+        used_tokens >= self.threshold_tokens()
+    }
 }
 
 impl std::fmt::Debug for LoopConfig {
@@ -53,6 +68,7 @@ impl std::fmt::Debug for LoopConfig {
             .field("max_duration", &self.max_duration)
             .field("system_prompt", &self.system_prompt)
             .field("context_engine", &"<dyn ContextEngine>")
+            .field("context_window", &self.context_window)
             .field("focus_topic", &self.focus_topic)
             .finish()
     }
@@ -65,6 +81,7 @@ impl Default for LoopConfig {
             max_duration: Duration::from_secs(60 * 10),
             system_prompt: None,
             context_engine: None,
+            context_window: None,
             focus_topic: None,
         }
     }
@@ -129,9 +146,9 @@ pub enum LoopEvent {
     },
     CompressionCompleted {
         trigger: CompressionTrigger,
-        tokens_before: u64,
-        tokens_after: u64,
-        summary_chars: usize,
+        /// Provider-reported prompt context tokens that caused automatic
+        /// compression. `None` for manual `/compact`.
+        context_tokens: Option<u64>,
         duration: Duration,
     },
     CompressionSkipped {
@@ -181,27 +198,27 @@ impl AgentLoop {
                 },
             ));
         };
-        let outcome =
-            compress::try_compress(engine, &mut messages, CompressionTrigger::Manual, focus_topic, self.config.focus_topic.as_deref(), true)
-                .await
-                .unwrap_or_else(|| compress::CompactOutcome::Failed {
-                    error: "compression failed".into(),
-                });
+        let outcome = compressor::try_compress(
+            engine,
+            &mut messages,
+            focus_topic,
+            self.config.focus_topic.as_deref(),
+            true,
+        )
+        .await
+        .unwrap_or_else(|| compressor::CompactOutcome::Failed {
+            error: "compression failed".into(),
+        });
         let event = match outcome {
-            compress::CompactOutcome::Compressed {
-                tokens_before,
-                tokens_after,
-                summary_chars,
-                duration,
-            } => LoopEvent::CompressionCompleted {
-                trigger: CompressionTrigger::Manual,
-                tokens_before,
-                tokens_after,
-                summary_chars,
-                duration,
-            },
-            compress::CompactOutcome::Skipped(reason) => LoopEvent::CompressionSkipped { reason },
-            compress::CompactOutcome::Failed { error } => LoopEvent::CompressionFailed {
+            compressor::CompactOutcome::Compressed { duration } => {
+                LoopEvent::CompressionCompleted {
+                    trigger: CompressionTrigger::Manual,
+                    context_tokens: None,
+                    duration,
+                }
+            }
+            compressor::CompactOutcome::Skipped(reason) => LoopEvent::CompressionSkipped { reason },
+            compressor::CompactOutcome::Failed { error } => LoopEvent::CompressionFailed {
                 trigger: CompressionTrigger::Manual,
                 error,
             },

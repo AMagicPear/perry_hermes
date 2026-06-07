@@ -1,6 +1,6 @@
 //! Integration test for OpenAiProvider::stream using a raw TcpListener
 //! to serve canned SSE bytes (httpmock doesn't expose captured bodies
-//! per CLAUDE.md).
+//! per AGENTS.md).
 
 use futures::StreamExt;
 use hermes_core::provider::{FinishReason, Provider};

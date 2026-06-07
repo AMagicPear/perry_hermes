@@ -54,7 +54,9 @@ pub(super) enum AnthropicMessageContent {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub(super) enum AnthropicContentBlock {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     ToolUse {
         id: String,
         name: String,
@@ -137,7 +139,9 @@ fn to_anthropic_tools(tools: &[ToolSchema]) -> Vec<AnthropicTool> {
 /// messages get flushed into the *previous* user message because the
 /// API expects tool results to live inside a user-role turn, not as
 /// their own turn.
-pub(super) fn to_anthropic_messages(messages: &[Message]) -> (Option<String>, Vec<AnthropicMessage>) {
+pub(super) fn to_anthropic_messages(
+    messages: &[Message],
+) -> (Option<String>, Vec<AnthropicMessage>) {
     let mut system = None;
     let mut wire = Vec::new();
     let mut pending_tool_results: Vec<AnthropicContentBlock> = Vec::new();
@@ -195,10 +199,7 @@ pub(super) fn to_anthropic_messages(messages: &[Message]) -> (Option<String>, Ve
 /// Merge pending tool-result blocks into the previous user message
 /// (or push a new user message if there is no previous one). Anthropic
 /// requires tool results to be inside a user-role turn.
-fn flush_tool_results(
-    wire: &mut Vec<AnthropicMessage>,
-    pending: &mut Vec<AnthropicContentBlock>,
-) {
+fn flush_tool_results(wire: &mut Vec<AnthropicMessage>, pending: &mut Vec<AnthropicContentBlock>) {
     if pending.is_empty() {
         return;
     }

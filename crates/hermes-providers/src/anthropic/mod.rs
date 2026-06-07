@@ -116,7 +116,9 @@ impl Provider for AnthropicProvider {
             return Err(ProviderError::Auth(resp.text().await.unwrap_or_default()));
         }
         if resp.status() == 429 {
-            return Err(ProviderError::RateLimited { retry_after_secs: 1 });
+            return Err(ProviderError::RateLimited {
+                retry_after_secs: 1,
+            });
         }
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -253,7 +255,9 @@ mod tests {
             &[],
             &[],
             true,
-            Some(AnthropicThinking::Manual { budget_tokens: 8_000 }),
+            Some(AnthropicThinking::Manual {
+                budget_tokens: 8_000,
+            }),
         );
         let json = serde_json::to_value(body).unwrap();
         assert_eq!(

@@ -117,13 +117,14 @@ fn compression_completed_sets_hint() {
     let mut app = app_with_mode(AppMode::AwaitingModel);
     let ev = LoopEvent::CompressionCompleted {
         trigger: CompressionTrigger::Manual,
-        tokens_before: 142_000,
-        tokens_after: 38_000,
-        summary_chars: 200,
+        context_tokens: None,
         duration: Duration::from_millis(1_200),
     };
     let _ = apply_loop_event(&mut app, ev);
-    assert!(app.compression_hint.is_some());
+    assert_eq!(
+        app.compression_hint.as_deref(),
+        Some("Compressed in 1200ms")
+    );
 }
 
 #[test]

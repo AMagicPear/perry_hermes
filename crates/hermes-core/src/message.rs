@@ -82,7 +82,7 @@ impl Message {
     }
 
     /// Total character count across content, reasoning, and tool-call args.
-    /// Used by the compressor to estimate tokens without a tokenizer.
+    /// Used by compression strategy code when comparing message body sizes.
     /// Allocates a `String` per tool call to format the JSON arguments;
     /// for hot loops, prefer `char_len_into` with a reused buffer.
     pub fn char_len(&self) -> usize {
@@ -186,7 +186,7 @@ pub enum ContentPart {
 impl ContentPart {
     /// Character count contributed by this part. Image URLs count their
     /// string length; future media parts should report a useful proxy
-    /// (e.g. file size, duration) so token estimates stay roughly right.
+    /// (e.g. file size or duration).
     pub fn chars(&self) -> usize {
         match self {
             ContentPart::Text { text } => text.chars().count(),

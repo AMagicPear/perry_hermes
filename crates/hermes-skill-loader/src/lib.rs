@@ -75,7 +75,7 @@ pub fn render_system_prompt_block(skills: &[Skill]) -> String {
 pub struct Skill {
     /// frontmatter.name, must equal the directory's basename.
     pub name: String,
-    /// "<category>.<name>", or just <name> when category is None.
+    /// `category.name`, or just `name` when category is None.
     pub qualified_name: String,
     /// Some("software-engineering") or None.
     pub category: Option<String>,

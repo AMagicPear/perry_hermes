@@ -5,12 +5,6 @@
 //! intended to compile in ~1s and to be trivially mockable from every other
 //! crate in the workspace.
 
-/// The ratio used to convert character counts to estimated token counts
-/// throughout the agent (compressor pre-checks, context-usage events,
-/// tail-protection budget). 4.0 is the conservative English-prose
-/// estimate; no tokenization is performed.
-pub const CHARS_PER_TOKEN_ESTIMATE: f64 = 4.0;
-
 pub mod accumulator;
 pub mod context_engine;
 pub mod error;

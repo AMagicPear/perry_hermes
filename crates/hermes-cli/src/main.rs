@@ -25,10 +25,10 @@ struct Args {
     /// `~/.perry_hermes/config.toml` then `./hermes.toml`.
     #[arg(long)]
     config: Option<PathBuf>,
-    /// Provider name to use for this run, overriding [agent].default_provider.
+    /// Provider name to use for this run, overriding `[agent].default_provider`.
     #[arg(long)]
     provider: Option<String>,
-    /// Model name to use for this run, overriding [agent].default_model.
+    /// Model name to use for this run, overriding `[agent].default_model`.
     #[arg(long)]
     model: Option<String>,
 }

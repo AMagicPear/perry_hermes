@@ -76,7 +76,9 @@ impl Provider for OpenAiProvider {
             return Err(ProviderError::Auth(resp.text().await.unwrap_or_default()));
         }
         if resp.status() == 429 {
-            return Err(ProviderError::RateLimited { retry_after_secs: 1 });
+            return Err(ProviderError::RateLimited {
+                retry_after_secs: 1,
+            });
         }
         if !resp.status().is_success() {
             let body = resp.text().await.unwrap_or_default();

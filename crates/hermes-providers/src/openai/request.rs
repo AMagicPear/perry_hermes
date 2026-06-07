@@ -162,6 +162,8 @@ pub(super) fn build_chat_request<'a>(
         tools: oai_tools,
         tool_choice: if has_tools { Some("auto") } else { None },
         stream: true,
-        stream_options: Some(OpenaiStreamOptions { include_usage: true }),
+        stream_options: Some(OpenaiStreamOptions {
+            include_usage: true,
+        }),
     }
 }

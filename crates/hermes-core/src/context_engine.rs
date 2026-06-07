@@ -11,18 +11,22 @@ use crate::message::Message;
 
 /// Trait for context compression engines.
 ///
-/// A single trait, no ABC factory, no plugin registry. The default
-/// implementation is [`ContextCompressor`](crate::context::ContextCompressor).
+/// A single trait, no ABC factory, no plugin registry. Agent crates can
+/// provide one built-in implementation and keep the loop decoupled from the
+/// message-rewriting details.
 ///
 /// Methods that mutate engine state take `&mut self`. Callers store the
 /// engine behind `Arc<tokio::sync::Mutex<dyn ContextEngine>>` for
 /// interior mutability in the async loop.
 #[async_trait]
 pub trait ContextEngine: Send + Sync {
-    /// Cheap pre-call check. Default impl returns `false` (no preflight).
-    /// The default `ContextCompressor` overrides this with a rough token estimate.
-    fn should_compress(&self) -> bool {
-        false
+    /// Whether the loop may attempt automatic compression after a provider
+    /// response crosses the configured context threshold.
+    ///
+    /// This is policy/backoff only. Token threshold checks live in the agent
+    /// loop because only the loop sees provider-reported [`Usage`](crate::Usage).
+    fn can_compress_automatically(&self) -> bool {
+        true
     }
 
     /// Heavy entry point. Returns the new (possibly shorter) message list.
@@ -30,26 +34,18 @@ pub trait ContextEngine: Send + Sync {
     /// Implementations must preserve:
     ///   - system prompt (always)
     ///   - first `protect_first_n` non-system messages (head)
-    ///   - last `protect_last_n` messages / last 20K tokens of user messages (tail)
+    ///   - last `protect_last_n` messages (tail)
     ///
     /// `focus_topic` is `Some(_)` for `/compress <focus>`, `None` otherwise.
-    /// `current_tokens` is the rough pre-call estimate when known.
     async fn compress(
         &mut self,
         messages: Vec<Message>,
-        current_tokens: Option<u64>,
         focus_topic: Option<&str>,
         force: bool,
     ) -> Result<Vec<Message>, CompressError>;
 
     /// Called when `/new` or `/reset` is invoked. Reset per-session state.
     fn on_session_reset(&mut self);
-
-    /// Called when the model or context length changes.
-    fn update_model(&mut self, model: &str, context_length: u64);
-
-    /// Get the configured threshold in tokens.
-    fn threshold_tokens(&self) -> u64;
 }
 
 /// Errors that can occur during context compression.
@@ -67,8 +63,6 @@ pub enum CompressError {
 /// Where compression was triggered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompressionTrigger {
-    /// Before the next API call (pre-turn check).
-    PreTurn,
     /// After an API response (post-turn check).
     PostTurn,
     /// User invoked `/compact [focus]`.

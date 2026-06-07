@@ -1,6 +1,4 @@
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use hermes_agent::{AIAgent, AgentRunError, HermesConfig, LoopEvent, SessionContext};
@@ -66,24 +64,15 @@ async fn main() {
         messages.push(hermes_core::message::Message::user(*prompt));
         eprintln!("\nturn={} prompt_chars={}", idx + 1, prompt.len());
 
-        let saw_thinking = Arc::new(AtomicBool::new(false));
-        let event_saw_thinking = Arc::clone(&saw_thinking);
         let started = std::time::Instant::now();
         let result =
             tokio::time::timeout(
                 Duration::from_secs(180),
                 agent.run_messages(messages.clone(), &session, cancel.clone(), move |event| {
                     match event {
-                        LoopEvent::Thinking => {
-                            event_saw_thinking.store(true, Ordering::Relaxed);
-                        }
+                        LoopEvent::Thinking => {}
                         LoopEvent::ContextUsageUpdated { used_tokens } => {
-                            let source = if event_saw_thinking.load(Ordering::Relaxed) {
-                                "provider_or_post_stream"
-                            } else {
-                                "preflight_estimate"
-                            };
-                            eprintln!("\ncontext_usage[{source}]={used_tokens}");
+                            eprintln!("\ncontext_usage[provider]={used_tokens}");
                         }
                         LoopEvent::ContentDelta(s) => eprint!("{s}"),
                         LoopEvent::ReasoningDelta(_) => {}

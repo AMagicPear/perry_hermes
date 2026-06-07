@@ -186,7 +186,8 @@ fn split_think_tag_content(
 pub(crate) fn parse_sse_for_test(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
     // stream::iter on a Vec yields a Unpin stream — needed for Box::pin
     // inside `parse_sse_chunks`.
-    let stream = futures::stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::copy_from_slice(input))]);
+    let stream =
+        futures::stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::copy_from_slice(input))]);
     let s = parse_sse_chunks(stream);
     futures::executor::block_on(async move {
         let mut v = Vec::new();
