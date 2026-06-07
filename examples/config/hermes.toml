@@ -7,12 +7,18 @@
 #
 # Copy this file to one of those locations and adjust the provider fields.
 
-[provider]
+[[providers]]
+name = "openai-main"
 kind = "openai"
-model = "gpt-4.1-mini"
 base_url = "https://api.openai.com/v1"
 api_key_env = "OPENAI_API_KEY"
 
+[[providers.models]]
+name = "gpt-4.1-mini"
+context_window_size = 1_047_576
+
 [agent]
+default_provider = "openai-main"
+default_model = "gpt-4.1-mini"
 max_iterations = 10
 disabled_toolsets = []

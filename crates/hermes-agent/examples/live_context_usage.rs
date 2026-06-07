@@ -26,17 +26,24 @@ async fn main() {
             std::process::exit(2);
         }
     };
-    let provider_kind = format!("{:?}", config.provider.kind);
-    let model = config.provider.model.clone().unwrap_or_else(|| "?".into());
-    let base_url = config
-        .provider
+    let selected_provider = match config.resolve_provider() {
+        Ok(provider) => provider,
+        Err(err) => {
+            eprintln!("error: failed to resolve provider: {err}");
+            std::process::exit(2);
+        }
+    };
+    let provider_kind = format!("{:?}", selected_provider.kind);
+    let provider_name = selected_provider.name.clone();
+    let model = selected_provider.model.clone();
+    let base_url = selected_provider
         .base_url
         .clone()
         .unwrap_or_else(|| "?".into());
 
     eprintln!(
-        "provider={provider_kind} model={model} base_url={base_url} context_window={:?}",
-        config.agent.context_window_size
+        "provider={provider_name} kind={provider_kind} model={model} base_url={base_url} context_window={}",
+        selected_provider.context_window_size
     );
 
     let agent = match AIAgent::from_config(config) {

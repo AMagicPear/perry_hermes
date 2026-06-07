@@ -10,7 +10,9 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream;
-use hermes_agent::{AIAgent, HermesConfig, ProviderConfig, ProviderKind, SessionContext};
+use hermes_agent::{
+    AIAgent, HermesConfig, ModelConfig, ProviderConfig, ProviderKind, SessionContext,
+};
 use hermes_core::message::Message;
 use hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
 use tokio::sync::Mutex as AsyncMutex;
@@ -65,11 +67,23 @@ fn skills_dir_for(home: &std::path::Path) -> PathBuf {
 
 fn config_for_echo() -> HermesConfig {
     HermesConfig {
-        provider: ProviderConfig {
+        providers: vec![ProviderConfig {
+            name: "local".into(),
             kind: ProviderKind::Echo,
+            api_key_env: None,
+            models: vec![ModelConfig {
+                name: "echo".into(),
+                context_window_size: 128_000,
+            }],
+            base_url: None,
+            api_key_header: None,
+            thinking: None,
+        }],
+        agent: hermes_agent::AgentConfig {
+            default_provider: "local".into(),
+            default_model: "echo".into(),
             ..Default::default()
         },
-        ..Default::default()
     }
 }
 
@@ -136,7 +150,7 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
     let text = system_text(&msgs);
     assert!(text.contains("careful assistant"));
     assert!(text.contains("Current working directory: /tmp"));
-    assert!(text.contains("Provider: echo"));
+    assert!(text.contains("Provider: local"));
     assert!(!text.contains("Available skills"));
 }
 

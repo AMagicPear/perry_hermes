@@ -7,7 +7,7 @@ use hermes_core::tool::{ToolContext, ToolPermissions};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{HermesConfig, ProviderKind};
+use crate::config::{HermesConfig, ResolvedProviderConfig};
 use crate::prompting::{
     build_runtime_system_prompt, compose_base_system_prompt, inject_system_prompt,
     resolve_skills_dir,
@@ -27,21 +27,29 @@ pub struct AIAgent {
 
 impl AIAgent {
     pub fn from_config(config: HermesConfig) -> anyhow::Result<Self> {
-        let provider_name = Some(provider_name(&config.provider).to_string());
+        let selected_provider = config.resolve_provider()?;
+        let provider_name = Some(selected_provider.name.clone());
         let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
-        let provider = build_provider(&config.provider)?;
+        let provider = build_provider(&selected_provider)?;
         Ok(Self {
-            loop_: build_loop(Arc::from(provider), &config),
+            loop_: build_loop(Arc::from(provider), &config, &selected_provider),
             base_system_prompt,
             provider_name,
         })
     }
 
     pub fn new(provider: impl Provider + 'static, config: HermesConfig) -> Self {
-        let provider_name = Some(provider_name(&config.provider).to_string());
+        let selected_provider = config.resolve_provider().ok();
+        let provider_name = selected_provider
+            .as_ref()
+            .map(|provider| provider.name.clone());
         let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
         Self {
-            loop_: build_loop(Arc::new(provider), &config),
+            loop_: build_loop_for_custom_provider(
+                Arc::new(provider),
+                &config,
+                selected_provider.as_ref(),
+            ),
             base_system_prompt,
             provider_name,
         }
@@ -100,7 +108,19 @@ impl AIAgent {
     }
 }
 
-fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
+fn build_loop(
+    provider: Arc<dyn Provider>,
+    config: &HermesConfig,
+    selected_provider: &ResolvedProviderConfig,
+) -> AgentLoop {
+    build_loop_for_custom_provider(provider, config, Some(selected_provider))
+}
+
+fn build_loop_for_custom_provider(
+    provider: Arc<dyn Provider>,
+    config: &HermesConfig,
+    selected_provider: Option<&ResolvedProviderConfig>,
+) -> AgentLoop {
     let skills_dir = resolve_skills_dir().unwrap_or_else(|| {
         std::env::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
@@ -113,18 +133,13 @@ fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
         if let Some(threshold_percent) = config.agent.context_compression_threshold_percent {
             compressor_config.threshold_percent = threshold_percent;
         }
-        let model_name = config
-            .provider
-            .model
-            .clone()
-            .unwrap_or_else(|| provider_name(&config.provider).to_string());
+        let model_name = selected_provider
+            .map(|provider| provider.model.clone())
+            .unwrap_or_else(|| "custom".to_string());
+        let context_window_size = selected_provider.map(|provider| provider.context_window_size);
         Some(Arc::new(TokioMutex::new(
-            ContextCompressor::new(
-                compressor_config,
-                model_name,
-                config.agent.context_window_size,
-            )
-            .with_summary_provider(Arc::clone(&provider)),
+            ContextCompressor::new(compressor_config, model_name, context_window_size)
+                .with_summary_provider(Arc::clone(&provider)),
         ))
             as Arc<TokioMutex<dyn hermes_core::ContextEngine>>)
     } else {
@@ -140,14 +155,6 @@ fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
             ..Default::default()
         },
     )
-}
-
-fn provider_name(config: &crate::config::ProviderConfig) -> &'static str {
-    match config.kind {
-        ProviderKind::Echo => "echo",
-        ProviderKind::Openai => "openai",
-        ProviderKind::Anthropic => "anthropic",
-    }
 }
 
 #[cfg(test)]
@@ -167,15 +174,41 @@ mod tests {
     use serde_json::{json, Value};
     use tokio_util::sync::CancellationToken;
 
-    use crate::config::{ProviderConfig, ProviderKind};
+    use crate::config::{ModelConfig, ProviderConfig, ProviderKind};
 
     fn echo_config() -> HermesConfig {
         HermesConfig {
-            provider: ProviderConfig {
-                kind: ProviderKind::Echo,
+            providers: vec![provider_config(
+                "local",
+                ProviderKind::Echo,
+                "echo",
+                128_000,
+            )],
+            agent: crate::config::AgentConfig {
+                default_provider: "local".into(),
+                default_model: "echo".into(),
                 ..Default::default()
             },
-            ..Default::default()
+        }
+    }
+
+    fn provider_config(
+        name: &str,
+        kind: ProviderKind,
+        model: &str,
+        context_window_size: u64,
+    ) -> ProviderConfig {
+        ProviderConfig {
+            name: name.into(),
+            kind,
+            api_key_env: None,
+            models: vec![ModelConfig {
+                name: model.into(),
+                context_window_size,
+            }],
+            base_url: None,
+            api_key_header: None,
+            thinking: None,
         }
     }
 
@@ -205,13 +238,23 @@ mod tests {
     #[test]
     fn from_config_errors_on_missing_model() {
         let config = HermesConfig {
-            provider: ProviderConfig {
+            providers: vec![ProviderConfig {
+                name: "openai-main".into(),
                 kind: ProviderKind::Openai,
-                model: None,
+                api_key_env: None,
+                models: vec![ModelConfig {
+                    name: "gpt-4o-mini".into(),
+                    context_window_size: 128_000,
+                }],
                 base_url: Some("https://api.openai.com/v1".into()),
+                api_key_header: None,
+                thinking: None,
+            }],
+            agent: crate::config::AgentConfig {
+                default_provider: "openai-main".into(),
+                default_model: "missing-model".into(),
                 ..Default::default()
             },
-            ..Default::default()
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -226,13 +269,23 @@ mod tests {
     #[test]
     fn from_config_errors_on_missing_base_url() {
         let config = HermesConfig {
-            provider: ProviderConfig {
+            providers: vec![ProviderConfig {
+                name: "openai-main".into(),
                 kind: ProviderKind::Openai,
-                model: Some("gpt-4o-mini".into()),
+                api_key_env: None,
+                models: vec![ModelConfig {
+                    name: "gpt-4o-mini".into(),
+                    context_window_size: 128_000,
+                }],
                 base_url: None,
+                api_key_header: None,
+                thinking: None,
+            }],
+            agent: crate::config::AgentConfig {
+                default_provider: "openai-main".into(),
+                default_model: "gpt-4o-mini".into(),
                 ..Default::default()
             },
-            ..Default::default()
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -247,14 +300,23 @@ mod tests {
     #[test]
     fn from_config_errors_on_missing_api_key_env() {
         let config = HermesConfig {
-            provider: ProviderConfig {
+            providers: vec![ProviderConfig {
+                name: "openai-main".into(),
                 kind: ProviderKind::Openai,
                 api_key_env: Some("HERMES_TEST_DEFINITELY_NOT_SET_98765".into()),
-                model: Some("gpt-4o-mini".into()),
+                models: vec![ModelConfig {
+                    name: "gpt-4o-mini".into(),
+                    context_window_size: 128_000,
+                }],
                 base_url: Some("https://api.openai.com/v1".into()),
+                api_key_header: None,
+                thinking: None,
+            }],
+            agent: crate::config::AgentConfig {
+                default_provider: "openai-main".into(),
+                default_model: "gpt-4o-mini".into(),
                 ..Default::default()
             },
-            ..Default::default()
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -269,13 +331,23 @@ mod tests {
     #[test]
     fn from_config_errors_on_missing_anthropic_model() {
         let config = HermesConfig {
-            provider: ProviderConfig {
+            providers: vec![ProviderConfig {
+                name: "anthropic-main".into(),
                 kind: ProviderKind::Anthropic,
-                model: None,
+                api_key_env: None,
+                models: vec![ModelConfig {
+                    name: "claude-sonnet".into(),
+                    context_window_size: 200_000,
+                }],
                 base_url: Some("https://api.anthropic.com/v1".into()),
+                api_key_header: None,
+                thinking: None,
+            }],
+            agent: crate::config::AgentConfig {
+                default_provider: "anthropic-main".into(),
+                default_model: "missing-model".into(),
                 ..Default::default()
             },
-            ..Default::default()
         };
 
         let err = AIAgent::from_config(config)

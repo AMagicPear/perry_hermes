@@ -34,15 +34,14 @@ async fn main() -> anyhow::Result<()> {
     let config = HermesConfig::from_path(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
 
-    let provider_name = provider_name(&config.provider).to_string();
-    let model_name = config
-        .provider
-        .model
-        .clone()
-        .unwrap_or_else(|| "?".to_string());
+    let selected_provider = config
+        .resolve_provider()
+        .with_context(|| format!("failed to resolve provider from {}", config_path.display()))?;
+    let provider_name = selected_provider.name.clone();
+    let model_name = selected_provider.model.clone();
 
     let max_iterations = config.agent.max_iterations.unwrap_or(10);
-    let context_window_size = config.agent.context_window_size;
+    let context_window_size = Some(selected_provider.context_window_size);
 
     let agent = Arc::new(
         AIAgent::from_config(config)
@@ -61,14 +60,6 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     Ok(())
-}
-
-fn provider_name(config: &hermes_agent::ProviderConfig) -> &'static str {
-    match config.kind {
-        hermes_agent::ProviderKind::Echo => "echo",
-        hermes_agent::ProviderKind::Openai => "openai",
-        hermes_agent::ProviderKind::Anthropic => "anthropic",
-    }
 }
 
 #[cfg(test)]
@@ -126,7 +117,23 @@ mod tests {
         let (home, cwd) = make_empty_dirs();
         let _cwd_guard = CwdGuard::enter(&cwd);
         let config_path = cwd.join("hermes.toml");
-        std::fs::write(&config_path, "[provider]\nkind=\"echo\"\n").unwrap();
+        std::fs::write(
+            &config_path,
+            r#"
+[[providers]]
+name = "local"
+kind = "echo"
+
+[[providers.models]]
+name = "echo"
+context_window_size = 128_000
+
+[agent]
+default_provider = "local"
+default_model = "echo"
+"#,
+        )
+        .unwrap();
 
         unsafe {
             std::env::set_var("HOME", &home);

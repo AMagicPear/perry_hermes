@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use hermes_agent::{
-    AIAgent, AgentLoop, CompressorConfig, ContextCompressor, HermesConfig, LoopConfig,
+    AIAgent, AgentLoop, CompressorConfig, ContextCompressor, HermesConfig, LoopConfig, ModelConfig,
     ProviderConfig, ProviderKind, SessionContext,
 };
 use hermes_core::message::{Content, Message, Role, ToolCall};
@@ -16,6 +16,29 @@ use tokio_util::sync::CancellationToken;
 
 mod support;
 use support::ScriptedProvider;
+
+fn echo_config_with_compression() -> HermesConfig {
+    HermesConfig {
+        providers: vec![ProviderConfig {
+            name: "local".into(),
+            kind: ProviderKind::Echo,
+            api_key_env: None,
+            models: vec![ModelConfig {
+                name: "echo".into(),
+                context_window_size: 128_000,
+            }],
+            base_url: None,
+            api_key_header: None,
+            thinking: None,
+        }],
+        agent: hermes_agent::AgentConfig {
+            default_provider: "local".into(),
+            default_model: "echo".into(),
+            context_compression_enabled: true,
+            ..Default::default()
+        },
+    }
+}
 
 fn user_message(text: &str) -> Message {
     Message {
@@ -155,16 +178,7 @@ async fn manual_compact_rewrites_history_with_summary_message() {
             usage: Usage::default(),
             finish_reason: FinishReason::Stop,
         }]),
-        HermesConfig {
-            provider: ProviderConfig {
-                kind: ProviderKind::Echo,
-                ..Default::default()
-            },
-            agent: hermes_agent::AgentConfig {
-                context_compression_enabled: true,
-                ..Default::default()
-            },
-        },
+        echo_config_with_compression(),
     );
 
     let history = vec![
@@ -206,16 +220,7 @@ async fn manual_compact_reports_summary_failure() {
                 "summary provider still down".into(),
             )),
         ]),
-        HermesConfig {
-            provider: ProviderConfig {
-                kind: ProviderKind::Echo,
-                ..Default::default()
-            },
-            agent: hermes_agent::AgentConfig {
-                context_compression_enabled: true,
-                ..Default::default()
-            },
-        },
+        echo_config_with_compression(),
     );
 
     let history = vec![
@@ -255,16 +260,7 @@ async fn manual_compact_compresses_medium_history_instead_of_skipping() {
             usage: Usage::default(),
             finish_reason: FinishReason::Stop,
         }]),
-        HermesConfig {
-            provider: ProviderConfig {
-                kind: ProviderKind::Echo,
-                ..Default::default()
-            },
-            agent: hermes_agent::AgentConfig {
-                context_compression_enabled: true,
-                ..Default::default()
-            },
-        },
+        echo_config_with_compression(),
     );
 
     let history = vec![

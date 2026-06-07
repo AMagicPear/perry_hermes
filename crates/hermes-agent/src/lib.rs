@@ -10,7 +10,9 @@ mod session;
 mod tool_catalog;
 pub mod tools;
 
-pub use config::{AgentConfig, HermesConfig, ProviderConfig, ProviderKind};
+pub use config::{
+    AgentConfig, HermesConfig, ModelConfig, ProviderConfig, ProviderKind, ResolvedProviderConfig,
+};
 pub use context::{CompressorConfig, ContextCompressor};
 pub use loop_engine::{
     estimate_tokens_for_messages, AgentLoop, AgentRunError, FailedTurn, LoopConfig, LoopEvent,

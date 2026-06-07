@@ -62,16 +62,24 @@ hermes-cli (ratatui TUI)
 Start from the sample config in [examples/config/hermes.toml](/Users/amagicpear/projects/perry_hermes/examples/config/hermes.toml).
 
 ```toml
-[provider]
+[[providers]]
+name = "openai-main"
 kind = "openai" # openai | anthropic | echo
 api_key_env = "OPENAI_API_KEY"
-model = "gpt-4.1-mini"
 base_url = "https://api.openai.com/v1"
+
+[[providers.models]]
+name = "gpt-4.1-mini"
+context_window_size = 1_047_576
+
+[agent]
+default_provider = "openai-main"
+default_model = "gpt-4.1-mini"
 ```
 
-Provider credentials are read from the single environment variable named by `api_key_env`. Other provider settings such as `model`, `base_url`, and optional header names belong in TOML.
+Provider credentials are read from the environment variable named by `api_key_env`. `providers.name` is the display name shown in the TUI. Model names and their `context_window_size` belong under `[[providers.models]]`; the agent selects one with `[agent].default_provider` and `[agent].default_model`.
 
-For OpenAI-compatible services such as DeepSeek, MiniMax, Ollama, or vLLM, change `base_url` and `model`.
+For OpenAI-compatible services such as DeepSeek, MiniMax, Ollama, or vLLM, change `base_url` and add the models you want to use.
 
 For Anthropic-compatible services, you can also set `api_key_header` when the endpoint expects something other than the default header.
 
@@ -118,7 +126,19 @@ cargo run -p hermes-cli -- --config /path/to/hermes.toml
 Offline smoke test with the `echo` provider:
 
 ```bash
-printf '[provider]\nkind = "echo"\n' > hermes.toml
+cat > hermes.toml <<'TOML'
+[[providers]]
+name = "local"
+kind = "echo"
+
+[[providers.models]]
+name = "echo"
+context_window_size = 128_000
+
+[agent]
+default_provider = "local"
+default_model = "echo"
+TOML
 cargo run -p hermes-cli
 ```
 
@@ -139,19 +159,29 @@ max_iterations = 50
 Example full config:
 
 ```toml
-[provider]
+[[providers]]
+name = "minimax"
 kind = "anthropic"
-api_key_env = "ANTHROPIC_API_KEY"
-model = "mimo-v2.5"
+api_key_env = "MINIMAX_API_KEY"
 base_url = "https://api.xiaomimimo.com/anthropic/v1"
 api_key_header = "api-key"
 
-[provider.thinking]
+[[providers.models]]
+name = "MiniMax-M3"
+context_window_size = 1_000_000
+
+[[providers.models]]
+name = "MiniMax-M2.7"
+context_window_size = 204_800
+
+[providers.thinking]
 mode = "off" # off | manual | adaptive
 # manual: budget_tokens = 8000
 # adaptive: display = "summarized", effort = "medium"
 
 [agent]
+default_provider = "minimax"
+default_model = "MiniMax-M3"
 max_iterations = 10
 disabled_toolsets = []
 # context_compression_enabled = false
@@ -197,7 +227,19 @@ cargo clippy --workspace --all-targets -- -D warnings
 ### CLI smoke check
 
 ```bash
-printf '[provider]\nkind = "echo"\n' > /tmp/hermes-smoke.toml
+cat > /tmp/hermes-smoke.toml <<'TOML'
+[[providers]]
+name = "local"
+kind = "echo"
+
+[[providers.models]]
+name = "echo"
+context_window_size = 128_000
+
+[agent]
+default_provider = "local"
+default_model = "echo"
+TOML
 printf 'hello\n' | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.toml
 ```
 
