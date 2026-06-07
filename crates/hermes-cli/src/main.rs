@@ -25,6 +25,12 @@ struct Args {
     /// `~/.perry_hermes/config.toml` then `./hermes.toml`.
     #[arg(long)]
     config: Option<PathBuf>,
+    /// Provider name to use for this run, overriding [agent].default_provider.
+    #[arg(long)]
+    provider: Option<String>,
+    /// Model name to use for this run, overriding [agent].default_model.
+    #[arg(long)]
+    model: Option<String>,
 }
 
 #[tokio::main]
@@ -33,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
     let config_path = config_path::resolve_config_path(args.config.as_deref())?;
     let config = HermesConfig::from_path(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
+    let config = apply_cli_provider_overrides(config, &args);
 
     let selected_provider = config
         .resolve_provider()
@@ -60,6 +67,16 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     Ok(())
+}
+
+fn apply_cli_provider_overrides(mut config: HermesConfig, args: &Args) -> HermesConfig {
+    if let Some(provider) = &args.provider {
+        config.agent.default_provider = provider.clone();
+    }
+    if let Some(model) = &args.model {
+        config.agent.default_model = model.clone();
+    }
+    config
 }
 
 #[cfg(test)]
@@ -169,5 +186,46 @@ default_model = "echo"
         assert!(err.contains("no hermes config found"), "{err}");
         assert!(err.contains(".perry_hermes"), "{err}");
         assert!(err.contains("hermes.toml"), "{err}");
+    }
+
+    #[test]
+    fn cli_provider_and_model_override_config_defaults() {
+        let config = HermesConfig {
+            providers: vec![hermes_agent::ProviderConfig {
+                name: "minimax".into(),
+                kind: hermes_agent::ProviderKind::Anthropic,
+                api_key_env: Some("MINIMAX_API_KEY".into()),
+                models: vec![
+                    hermes_agent::ModelConfig {
+                        name: "MiniMax-M3".into(),
+                        context_window_size: 1_000_000,
+                    },
+                    hermes_agent::ModelConfig {
+                        name: "MiniMax-M2.7".into(),
+                        context_window_size: 204_800,
+                    },
+                ],
+                base_url: Some("https://api.minimaxi.com/anthropic/v1".into()),
+                api_key_header: None,
+                thinking: None,
+            }],
+            agent: hermes_agent::AgentConfig {
+                default_provider: "minimax".into(),
+                default_model: "MiniMax-M3".into(),
+                ..Default::default()
+            },
+        };
+        let args = Args {
+            config: None,
+            provider: Some("minimax".into()),
+            model: Some("MiniMax-M2.7".into()),
+        };
+
+        let config = apply_cli_provider_overrides(config, &args);
+        let selected = config.resolve_provider().unwrap();
+
+        assert_eq!(selected.name, "minimax");
+        assert_eq!(selected.model, "MiniMax-M2.7");
+        assert_eq!(selected.context_window_size, 204_800);
     }
 }

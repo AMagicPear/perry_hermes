@@ -123,6 +123,12 @@ Run with an explicit config file:
 cargo run -p hermes-cli -- --config /path/to/hermes.toml
 ```
 
+Override the configured provider/model for one run:
+
+```bash
+cargo run -p hermes-cli -- --provider minimax --model MiniMax-M2.7
+```
+
 Offline smoke test with the `echo` provider:
 
 ```bash

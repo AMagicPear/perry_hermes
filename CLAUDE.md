@@ -20,16 +20,39 @@ cargo test -p hermes-core                # single crate
 cargo test -p hermes-agent --test tool_dispatch  # single integration test
 cargo clippy --all-targets --all-features -- -D warnings
 
-# Live smoke (needs OPENAI_API_KEY, OPENAI_BASE_URL, OPENAI_MODEL in env)
+# Live smoke (needs provider env vars loaded; .envrc is available locally)
 cargo run -p hermes-providers --example live_smoke
 cargo run -p hermes-agent --example live_tool_use -- "what time is it?"
+cargo run -p hermes-agent --example live_context_usage -- /Users/amagicpear/.perry_hermes/config.toml
 
 # CLI smoke (offline, no API key needed)
-echo '[provider]\nkind = "echo"' > /tmp/hermes-smoke.toml
+cat > /tmp/hermes-smoke.toml <<'TOML'
+[[providers]]
+name = "local"
+kind = "echo"
+
+[[providers.models]]
+name = "echo"
+context_window_size = 128_000
+
+[agent]
+default_provider = "local"
+default_model = "echo"
+TOML
 echo "hello" | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.toml
 ```
 
 direnv auto-loads `.envrc` on `cd` — no manual env var exports needed once set up.
+
+## Project-Specific Rules
+
+- This project is experimental and has no users. When changing behavior or config shape, do **not** preserve old compatibility unless explicitly requested in the current task.
+- Current config format is `[[providers]]` plus `[[providers.models]]`; do not reintroduce the old single `[provider]` format.
+- Provider selection lives in `[agent].default_provider` and `[agent].default_model`. CLI startup can override these for one run with `--provider <name>` and `--model <name>`.
+- `context_window_size` belongs on each model entry under `[[providers.models]]`, not on `[agent]`.
+- When real-provider testing is useful, use `/Users/amagicpear/.perry_hermes/config.toml` as the local config and load environment variables from `~/projects/perry_hermes/.envrc`.
+- Real-provider checks should stay manual or in examples such as `crates/hermes-agent/examples/live_context_usage.rs`; do not put live provider calls into automated test scripts.
+- Keep `CLAUDE.md`, `README.md`, `examples/config/hermes.toml`, and `/Users/amagicpear/.perry_hermes/config.toml` aligned with the current config format.
 
 ## Architecture
 
@@ -54,10 +77,10 @@ hermes-cli (ratatui TUI — 正在替换原 REPL)
 | `src/lib.rs` | Module declarations + public re-exports only |
 | `src/runtime_agent.rs` | `AIAgent` facade; `from_config` / `new` constructors, `run_turn` / `run_messages` |
 | `src/loop_engine.rs` | `AgentLoop` state machine: `stream` → dispatch tools → repeat. Also `LoopConfig`, `LoopEvent`, `RunResult`, `LoopMetrics` |
-| `src/config.rs` | `HermesConfig` / `ProviderConfig` / `AgentConfig` / `ProviderKind` / `ThinkingConfig` + `HermesConfig::from_path` |
+| `src/config.rs` | `HermesConfig` / `ProviderConfig` / `ModelConfig` / `ResolvedProviderConfig` / `AgentConfig` / `ProviderKind` / `ThinkingConfig` + `HermesConfig::from_path` and `resolve_provider` |
 | `src/session.rs` | `SessionContext` and per-run session metadata carrier |
 | `src/prompting.rs` | Base prompt composition, runtime system-prompt injection, session/environment metadata formatting |
-| `src/provider_factory.rs` | `build_provider(&ProviderConfig) -> Box<dyn Provider>` — single place that knows how to construct each provider from config |
+| `src/provider_factory.rs` | `build_provider(&ResolvedProviderConfig) -> Box<dyn Provider>` — single place that knows how to construct each provider from selected config |
 | `src/tool_catalog.rs` | `build_registry(&[disabled_toolsets])` — wires built-in tools into an `InMemoryRegistry` |
 | `src/tools/` | Built-in tool domains: `bash.rs`, `files/`, `skills/`, plus shared `support/` helpers |
 
@@ -73,11 +96,11 @@ Integration tests live in `crates/hermes-agent/tests/`: `echo_loop`, `tool_dispa
 
 **The agent loop** (`hermes-agent/src/loop_engine.rs`): `AgentLoop` holds `Arc<dyn Provider>` plus an `Arc<InMemoryRegistry>` and a `LoopConfig`. The `run()` method is a state machine — on `FinishReason::ToolUse` it dispatches tools sequentially, appends `role: tool` messages, and calls the provider again. `on_event` callback is the only side-channel (CLI uses it for spinner/activity feed; tests collect event strings). **`run()` takes a `ToolContext`** so runtime/gateway controls `session_id`, `working_dir`, and permissions.
 
-**Runtime + CLI/TUI** (`hermes-agent/src/runtime_agent.rs`, `crates/hermes-cli/src/main.rs`): the runtime is the shared composition point for CLI/TUI and future gateway. `AIAgent::from_config(HermesConfig)` and `AIAgent::new(provider, HermesConfig)` are the two constructors. Per-run `working_dir` / `session_id` travel in a `SessionContext` passed to `run_turn` / `run_messages` (the runtime is reusable across sessions). The CLI binary only parses args, resolves the config path (`--config` → `~/.perry_hermes/config.toml` → `./hermes.toml`, error if none), and hands off to a `ratatui` event loop that drives the agent and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's history. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the TUI. Slash commands (`/quit`, `/exit`, `/compact [focus]`) live inside the TUI's input handler. Provider-specific things (`OPENAI_API_KEY` etc.) live in `[provider]` of the TOML file; the runtime never reads the environment for defaults except for the single key named by `api_key_env`. Skills live in `~/.perry_hermes/skills/`; the runtime loads them when `compose_system_prompt` is called (during `AIAgent::from_config`) and injects a name+description index into the system prompt. Context compression is enabled by default unless `[agent].context_compression_enabled = false`.
+**Runtime + CLI/TUI** (`hermes-agent/src/runtime_agent.rs`, `crates/hermes-cli/src/main.rs`): the runtime is the shared composition point for CLI/TUI and future gateway. `AIAgent::from_config(HermesConfig)` and `AIAgent::new(provider, HermesConfig)` are the two constructors. Per-run `working_dir` / `session_id` travel in a `SessionContext` passed to `run_turn` / `run_messages` (the runtime is reusable across sessions). The CLI binary only parses args, resolves the config path (`--config` → `~/.perry_hermes/config.toml` → `./hermes.toml`, error if none), optionally overrides `[agent].default_provider` and `[agent].default_model` with `--provider` / `--model`, and hands off to a `ratatui` event loop that drives the agent and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's history. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the TUI. Slash commands (`/quit`, `/exit`, `/compact [focus]`) live inside the TUI's input handler. Provider-specific values live under `[[providers]]`; model names and context windows live under `[[providers.models]]`. `HermesConfig::resolve_provider()` selects the provider/model named by `[agent].default_provider` and `[agent].default_model`. The TUI displays the provider `name` (for example `minimax`), not provider `kind` (`anthropic`/`openai`). Skills live in `~/.perry_hermes/skills/`; the runtime loads them when `compose_system_prompt` is called (during `AIAgent::from_config`) and injects a name+description index into the system prompt. Context compression is enabled by default unless `[agent].context_compression_enabled = false`.
 
 **OpenAI adapter** (`hermes-providers/src/openai.rs`): `OpenAiProvider::with_base_url()` lets it talk to any OpenAI-compatible endpoint (DeepSeek, MiniMax, Ollama, vLLM). The `tool_calls` field round-trips: assistant's `tool_calls` are serialized back into the next request body so the LLM remembers which tools it called. OpenAI sends `arguments` as a JSON **string** (not object) — must `serde_json::from_str` on parse and `to_string` on serialize. `tool_choice: "auto"` is **omitted** when the tool list is empty (some providers reject it). `stream_options.include_usage = true` is sent so `in`/`out` metrics populate. `finish_reason` is parsed via `FinishReason::from_provider_str` (renamed from `from_str` to avoid colliding with the std `FromStr` trait).
 
-**Anthropic adapter** (`hermes-providers/src/anthropic.rs`): official `x-api-key` header by default; switch via `api_key_header` (e.g. MiMo uses `api-key`). `thinking` is **off** unless `[provider.thinking].mode` is set to `manual` or `adaptive` — third-party Anthropic-compatible endpoints should usually stay `off`.
+**Anthropic adapter** (`hermes-providers/src/anthropic.rs`): official `x-api-key` header by default; switch via `api_key_header` (e.g. MiMo uses `api-key`). `thinking` is **off** unless `[providers.thinking].mode` is set to `manual` or `adaptive` — third-party Anthropic-compatible endpoints should usually stay `off`.
 
 ## TDD Workflow
 
