@@ -66,7 +66,7 @@ fn tool_call_partial_does_not_push_scrollback_line() {
         index: 0,
         id: Some("call_abc".to_string()),
         name: Some("terminal".to_string()),
-        arguments_delta: Some("{\"cmd\":\"ls\"}".to_string()),
+        arguments_fragment: Some("{\"cmd\":\"ls\"}".to_string()),
     });
     let _ = apply_loop_event(&mut app, ev);
     assert!(

@@ -486,7 +486,7 @@ fn parse_content_block_start(
                     .get("name")
                     .and_then(|v| v.as_str())
                     .map(ToOwned::to_owned),
-                arguments_delta: None,
+                arguments_fragment: None,
             }),
             usage: None,
             finish_reason: None,
@@ -528,7 +528,7 @@ fn parse_content_block_delta(
                     .unwrap_or_default() as usize,
                 id: None,
                 name: None,
-                arguments_delta: delta
+                arguments_fragment: delta
                     .get("partial_json")
                     .and_then(|v| v.as_str())
                     .map(ToOwned::to_owned),

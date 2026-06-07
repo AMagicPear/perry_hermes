@@ -12,13 +12,15 @@ use crate::usage::Usage;
 /// (OpenAI, Anthropic, an echo mock, …) implements this.
 #[async_trait]
 pub trait Provider: Send + Sync {
-    /// Stream deltas as the LLM generates them. The consumer drives the
-    /// stream to completion (or cancellation), emitting one event per
-    /// delta, then assembles a final `Completion` from accumulated state.
+    /// Open a streaming completion for the given messages + tools.
     ///
-    /// Cancellation contract: the consumer MUST `select!` on the cancel
-    /// token and drop the stream when cancelled. Dropping the stream
-    /// aborts the in-flight HTTP body.
+    /// The returned stream yields `CompletionDelta`s; consumers either
+    /// drive it manually (see `AgentLoop`) or call `complete()` for the
+    /// default accumulation path.
+    ///
+    /// Cancellation: the consumer MUST `select!` on `cancel` and drop
+    /// the stream when cancelled. Dropping the stream aborts the
+    /// in-flight HTTP body.
     async fn stream(
         &self,
         messages: &[Message],
@@ -26,8 +28,10 @@ pub trait Provider: Send + Sync {
         cancel: CancellationToken,
     ) -> Result<CompletionStream, ProviderError>;
 
-    /// Convenience: drive the stream to a single `Completion`. Default
-    /// implementation uses `accumulate_stream`. Providers do not override.
+    /// Drive the stream to a single `Completion`. Default impl uses
+    /// `accumulate_stream`. Providers do not need to override unless they
+    /// can do this more efficiently than the SSE parse + accumulate path
+    /// (none do today).
     async fn complete(
         &self,
         messages: &[Message],
@@ -89,14 +93,19 @@ pub type CompletionStream =
 
 /// One chunk of a streaming tool call. OpenAI emits these incrementally:
 /// the first chunk for a given `index` carries `id` and `name`; later
-/// chunks carry `arguments_delta` (a JSON string fragment, NOT a parsed
-/// value — the consumer concatenates them).
+/// chunks carry `arguments_fragment`.
+///
+/// `arguments_fragment` is a **partial** JSON string, not a complete value.
+/// `StreamAccumulator` concatenates fragments per-`index` and re-parses
+/// the joined result back into a structured `Value` at the end of the
+/// stream. Consumers should never `serde_json::from_str` a single
+/// fragment; it almost certainly isn't valid JSON on its own.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolCallDelta {
     pub index: usize,
     pub id: Option<String>,
     pub name: Option<String>,
-    pub arguments_delta: Option<String>,
+    pub arguments_fragment: Option<String>,
 }
 
 /// One chunk of a streaming response.

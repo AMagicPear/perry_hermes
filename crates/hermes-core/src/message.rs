@@ -29,7 +29,8 @@ pub struct Message {
 }
 
 impl Message {
-    /// Convenience constructor for a plain user-role text message.
+    /// Build a user-role text message. Use for any new turn from the
+    /// human; tool-call responses go through `Message::tool_result`.
     pub fn user(text: impl Into<String>) -> Self {
         Self {
             role: Role::User,
@@ -40,7 +41,9 @@ impl Message {
         }
     }
 
-    /// Convenience constructor for a plain assistant-role text message.
+    /// Build an assistant-role text message. Use for the final reply in a
+    /// turn that has no tool calls; turns with tool calls carry a full
+    /// `Message` (with `tool_calls`) from the provider's `Completion`.
     pub fn assistant(text: impl Into<String>) -> Self {
         Self {
             role: Role::Assistant,
@@ -51,7 +54,9 @@ impl Message {
         }
     }
 
-    /// Convenience constructor for a system-role text message.
+    /// Build a system-role text message. `AgentLoop` prepends one of these
+    /// to the conversation if the loop's `LoopConfig.system_prompt` is set
+    /// and the caller hasn't supplied their own.
     pub fn system(text: impl Into<String>) -> Self {
         Self {
             role: Role::System,
@@ -62,8 +67,10 @@ impl Message {
         }
     }
 
-    /// Convenience constructor for a tool-role result message paired with
-    /// the call id from the assistant's `tool_calls`.
+    /// Build a tool-role result message paired with the `id` of the
+    /// assistant's `tool_call` that produced it. Required by every
+    /// provider's tool-result schema (Anthropic `tool_use_id`,
+    /// OpenAI `tool_call_id`).
     pub fn tool_result(tool_call_id: impl Into<String>, text: impl Into<String>) -> Self {
         Self {
             role: Role::Tool,
@@ -76,13 +83,29 @@ impl Message {
 
     /// Total character count across content, reasoning, and tool-call args.
     /// Used by the compressor to estimate tokens without a tokenizer.
+    /// Allocates a `String` per tool call to format the JSON arguments;
+    /// for hot loops, prefer `char_len_into` with a reused buffer.
     pub fn char_len(&self) -> usize {
-        let content_chars = self.content.chars();
-        let reasoning_chars = self.reasoning.as_ref().map_or(0, |s| s.len());
-        let tool_calls_chars: usize = self.tool_calls.as_ref().map_or(0, |calls| {
-            calls.iter().map(|c| c.arguments.to_string().len()).sum()
-        });
-        content_chars + reasoning_chars + tool_calls_chars
+        let mut buf = String::new();
+        self.char_len_into(&mut buf)
+    }
+
+    /// Like `char_len`, but reuses `buf` for tool-call JSON serialization
+    /// to avoid per-call allocation. The buffer is cleared and refilled
+    /// during the call; its final content is unspecified.
+    pub fn char_len_into(&self, buf: &mut String) -> usize {
+        let mut total = self.content.chars();
+        total += self.reasoning.as_ref().map_or(0, |s| s.chars().count());
+        if let Some(calls) = &self.tool_calls {
+            for call in calls {
+                buf.clear();
+                total += serde_json::to_string(&call.arguments)
+                    .unwrap_or_default()
+                    .chars()
+                    .count();
+            }
+        }
+        total
     }
 }
 
@@ -118,18 +141,20 @@ pub enum Content {
 }
 
 impl Content {
-    /// Total character count across all text/image_url parts.
+    /// Total character count across all text/image_url parts. Used by the
+    /// compressor and the context-usage estimator to size up a message
+    /// without a tokenizer.
     pub fn chars(&self) -> usize {
         match self {
-            Content::Text(s) => s.len(),
-            Content::Parts(parts) => parts
-                .iter()
-                .map(|p| match p {
-                    ContentPart::Text { text } => text.len(),
-                    ContentPart::ImageUrl { url } => url.len(),
-                })
-                .sum(),
+            Content::Text(s) => s.chars().count(),
+            Content::Parts(parts) => parts.iter().map(ContentPart::chars).sum(),
         }
+    }
+
+    /// `true` when this content is a single text part (no images, no
+    /// multimodal structure). Lets callers short-circuit without a `match`.
+    pub fn is_text(&self) -> bool {
+        matches!(self, Content::Text(_))
     }
 
     /// Concatenated text across all text parts. Image parts contribute an
@@ -158,6 +183,18 @@ pub enum ContentPart {
     // future: Audio, File, ...
 }
 
+impl ContentPart {
+    /// Character count contributed by this part. Image URLs count their
+    /// string length; future media parts should report a useful proxy
+    /// (e.g. file size, duration) so token estimates stay roughly right.
+    pub fn chars(&self) -> usize {
+        match self {
+            ContentPart::Text { text } => text.chars().count(),
+            ContentPart::ImageUrl { url } => url.chars().count(),
+        }
+    }
+}
+
 /// A tool call the LLM wants to make.
 ///
 /// `arguments` is `serde_json::Value`, not a typed struct. Strong typing
@@ -170,6 +207,23 @@ pub struct ToolCall {
     /// Raw JSON. Don't parse into a typed struct at the core layer —
     /// parsing is each tool's responsibility, since the schema is per-tool.
     pub arguments: serde_json::Value,
+}
+
+impl ToolCall {
+    /// Build a new tool call. `id` and `name` are owned so they travel
+    /// through serialization without lifetime tracking; `arguments` is
+    /// the already-parsed JSON value the LLM streamed.
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+        }
+    }
 }
 
 #[cfg(test)]

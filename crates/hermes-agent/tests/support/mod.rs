@@ -75,7 +75,7 @@ pub(crate) fn completion_to_deltas(c: &Completion) -> Vec<CompletionDelta> {
                 index,
                 id: Some(tc.id.clone()),
                 name: Some(tc.name.clone()),
-                arguments_delta: Some(tc.arguments.to_string()),
+                arguments_fragment: Some(tc.arguments.to_string()),
             }),
             usage: None,
             finish_reason: None,

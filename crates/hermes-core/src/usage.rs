@@ -19,3 +19,20 @@ pub struct Usage {
     #[serde(default, rename = "cached_tokens")]
     pub cached_input_tokens: u64,
 }
+
+impl Usage {
+    /// `input_tokens + cached_input_tokens`. Matches the value used for
+    /// `LoopEvent::ContextUsageUpdated` after a real provider response
+    /// (cached tokens still occupy context).
+    pub fn prompt_context_tokens(&self) -> u64 {
+        self.input_tokens.saturating_add(self.cached_input_tokens)
+    }
+
+    /// Sum of all token fields. Useful for cost dashboards and per-turn
+    /// totals; not used for context-occupancy accounting.
+    pub fn total(&self) -> u64 {
+        self.input_tokens
+            .saturating_add(self.cached_input_tokens)
+            .saturating_add(self.output_tokens)
+    }
+}

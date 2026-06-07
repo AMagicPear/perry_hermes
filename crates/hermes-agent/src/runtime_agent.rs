@@ -397,7 +397,7 @@ mod tests {
                         index: 0,
                         id: Some("call_1".into()),
                         name: Some("capture".into()),
-                        arguments_delta: Some("{}".into()),
+                        arguments_fragment: Some("{}".into()),
                     }),
                     usage: Some(Usage::default()),
                     finish_reason: Some(FinishReason::ToolUse),

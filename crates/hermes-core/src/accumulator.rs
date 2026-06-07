@@ -62,7 +62,7 @@ impl StreamAccumulator {
             if let Some(name) = &td.name {
                 entry.name = name.clone();
             }
-            if let Some(args_frag) = &td.arguments_delta {
+            if let Some(args_frag) = &td.arguments_fragment {
                 let existing = match &entry.arguments {
                     serde_json::Value::Null => String::new(),
                     serde_json::Value::String(s) => s.clone(),
@@ -290,7 +290,7 @@ mod tests {
                 index: 0,
                 id: Some("call_a".into()),
                 name: Some("bash".into()),
-                arguments_delta: Some("{\"command\":".into()),
+                arguments_fragment: Some("{\"command\":".into()),
             }),
             usage: None,
             finish_reason: None,
@@ -302,7 +302,7 @@ mod tests {
                 index: 0,
                 id: None,
                 name: None,
-                arguments_delta: Some("\"ls\"}".into()),
+                arguments_fragment: Some("\"ls\"}".into()),
             }),
             usage: None,
             finish_reason: None,
@@ -314,7 +314,7 @@ mod tests {
                 index: 1,
                 id: Some("call_b".into()),
                 name: Some("bash".into()),
-                arguments_delta: Some("{\"command\":\"pwd\"}".into()),
+                arguments_fragment: Some("{\"command\":\"pwd\"}".into()),
             }),
             usage: None,
             finish_reason: Some(FinishReason::ToolUse),
@@ -359,7 +359,7 @@ mod tests {
                 index: 0,
                 id: Some("call_a".into()),
                 name: Some("bash".into()),
-                arguments_delta: Some("{\"command\":".into()),
+                arguments_fragment: Some("{\"command\":".into()),
             }),
             usage: None,
             finish_reason: None,
@@ -371,7 +371,7 @@ mod tests {
                 index: 0,
                 id: None,
                 name: None,
-                arguments_delta: Some("\"ls\"}".into()),
+                arguments_fragment: Some("\"ls\"}".into()),
             }),
             usage: None,
             finish_reason: None,
@@ -398,7 +398,7 @@ mod tests {
                 index: 0,
                 id: Some("call_a".into()),
                 name: Some("bash".into()),
-                arguments_delta: Some("{\"command\":\"ls\"}".into()),
+                arguments_fragment: Some("{\"command\":\"ls\"}".into()),
             }),
             usage: None,
             finish_reason: None,
@@ -410,7 +410,7 @@ mod tests {
                 index: 1,
                 id: Some("call_b".into()),
                 name: Some("bash".into()),
-                arguments_delta: Some("{\"comm".into()),
+                arguments_fragment: Some("{\"comm".into()),
             }),
             usage: None,
             finish_reason: None,

@@ -357,7 +357,7 @@ fn parse_sse_data_payload(
                 index: c.index,
                 id: c.id,
                 name: c.function.name,
-                arguments_delta: c.function.arguments,
+                arguments_fragment: c.function.arguments,
             })
     });
 
