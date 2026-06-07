@@ -14,7 +14,7 @@ fn ctx() -> ToolContext {
     }
 }
 
-fn parse(out: hermes_core::tool::ToolOutput) -> serde_json::Value {
+fn parse(out: &hermes_core::tool::ToolOutput) -> serde_json::Value {
     serde_json::from_str(&out.content).expect("tool should return JSON")
 }
 
@@ -39,7 +39,7 @@ async fn skills_list_returns_empty_for_missing_dir() {
         .execute(json!({}), ctx(), CancellationToken::new())
         .await
         .expect("list should not error on missing dir");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(true));
     assert_eq!(v["count"].as_i64(), Some(0));
     // The spec says create-on-first-access; the dir should now exist.
@@ -60,7 +60,7 @@ async fn skills_list_returns_metadata_for_installed_skills() {
         .execute(json!({}), ctx(), CancellationToken::new())
         .await
         .expect("list should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(true));
     assert_eq!(v["count"].as_i64(), Some(2));
     let names: Vec<&str> = v["skills"]
@@ -108,7 +108,7 @@ async fn skills_list_filters_by_category() {
         )
         .await
         .expect("list should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["count"].as_i64(), Some(1));
     assert_eq!(v["skills"][0]["name"].as_str().unwrap(), "axolotl");
 }
@@ -131,7 +131,7 @@ async fn skills_list_sorts_by_category_then_name() {
         .execute(json!({}), ctx(), CancellationToken::new())
         .await
         .expect("list should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     let names: Vec<String> = v["skills"]
         .as_array()
         .unwrap()
@@ -161,7 +161,7 @@ async fn skill_view_loads_main_body_with_frontmatter_stripped() {
         .execute(json!({"name": "alpha"}), ctx(), CancellationToken::new())
         .await
         .expect("view should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(true));
     let content = v["content"].as_str().unwrap();
     assert!(
@@ -194,7 +194,7 @@ async fn skill_view_loads_linked_reference_file() {
         )
         .await
         .expect("view linked file should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(true));
     assert!(v["content"].as_str().unwrap().contains("endpoint docs"));
     assert_eq!(v["file"].as_str().unwrap(), "references/api.md");
@@ -210,7 +210,7 @@ async fn skill_view_reports_not_found_with_available_skills() {
         .execute(json!({"name": "missing"}), ctx(), CancellationToken::new())
         .await
         .expect("not-found returns JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(false));
     assert!(v["error"].as_str().unwrap().contains("missing"));
     let available = v["available_skills"].as_array().unwrap();
@@ -230,7 +230,7 @@ async fn skill_view_rejects_traversal_in_file_path() {
         )
         .await
         .expect("traversal returns JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(false));
     assert!(v["error"].as_str().unwrap().contains("escapes"));
 }
@@ -248,7 +248,7 @@ async fn skill_view_rejects_missing_linked_file() {
         )
         .await
         .expect("missing linked file returns JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(false));
     assert!(v["error"].as_str().unwrap().contains("not found"));
 }
@@ -266,7 +266,7 @@ async fn skill_view_rejects_plugin_qualified_name() {
         )
         .await
         .expect("plugin qualifier returns JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(false));
     assert!(v["error"]
         .as_str()
@@ -297,7 +297,7 @@ async fn skill_view_returns_ambiguous_error_for_colliding_names() {
         .execute(json!({"name": "dupe"}), ctx(), CancellationToken::new())
         .await
         .expect("collision returns JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(false));
     assert!(v["error"]
         .as_str()
@@ -332,7 +332,7 @@ async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
         .execute(json!({"name": "alpha"}), ctx(), CancellationToken::new())
         .await
         .expect("view should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     let lf = &v["linked_files"];
     assert!(lf["references"]
         .as_array()

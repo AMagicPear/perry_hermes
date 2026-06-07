@@ -12,7 +12,7 @@ use tokio::sync::mpsc;
 
 pub use app::App;
 pub use event::{AppEvent, AppMode, RenderedLine};
-pub use run::{run, run_with_backend, RunError};
+pub use run::{run, run_with_backend};
 
 /// Build the `on_event` closure to pass to `AIAgent::run_messages`. Each
 /// `LoopEvent` is forwarded into the TUI's main loop as an `AppEvent::Loop`.

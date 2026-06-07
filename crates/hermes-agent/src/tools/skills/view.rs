@@ -201,17 +201,14 @@ fn read_linked_file(
             };
         }
     };
-    let canon_target = match std::fs::canonicalize(&target) {
-        Ok(p) => p,
-        Err(_) => {
-            return ToolOutput {
-                content: json!({
-                    "success": false,
-                    "error": format!("file_path not found: {file_path}"),
-                })
-                .to_string(),
-            };
-        }
+    let Ok(canon_target) = std::fs::canonicalize(&target) else {
+        return ToolOutput {
+            content: json!({
+                "success": false,
+                "error": format!("file_path not found: {file_path}"),
+            })
+            .to_string(),
+        };
     };
     if !canon_target.starts_with(&canon_root) {
         return ToolOutput {
@@ -271,9 +268,8 @@ fn strip_frontmatter(text: &str) -> String {
             break;
         }
     }
-    let close = match idx {
-        Some(o) => o,
-        None => return stripped.to_string(),
+    let Some(close) = idx else {
+        return stripped.to_string();
     };
     after_open[close..]
         .trim_start_matches(['\n', '\r'])

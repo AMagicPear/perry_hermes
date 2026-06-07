@@ -8,12 +8,9 @@ use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
 async fn main() {
-    let api_key = match std::env::var("OPENAI_API_KEY") {
-        Ok(k) => k,
-        Err(_) => {
-            eprintln!("error: OPENAI_API_KEY is not set");
-            std::process::exit(2);
-        }
+    let Ok(api_key) = std::env::var("OPENAI_API_KEY") else {
+        eprintln!("error: OPENAI_API_KEY is not set");
+        std::process::exit(2);
     };
     let base_url =
         std::env::var("OPENAI_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".into());

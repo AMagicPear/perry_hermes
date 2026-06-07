@@ -120,15 +120,11 @@ pub fn load_all(skills_dir: &Path) -> anyhow::Result<Vec<Skill>> {
             );
             continue;
         }
-        match parse_one(&loc) {
-            Some(s) => {
-                seen.insert(key, ());
-                skills.push(s);
-            }
-            None => {
-                // parse_one already logged a warn.
-            }
+        if let Some(s) = parse_one(&loc) {
+            seen.insert(key, ());
+            skills.push(s);
         }
+        // None branch: parse_one already logged a warn.
     }
 
     skills.sort_by(|a, b| {
@@ -164,12 +160,9 @@ fn parse_one(loc: &layout::SkillLocation) -> Option<Skill> {
         }
     };
 
-    let (fm, body) = match frontmatter::parse(&raw) {
-        Some(pair) => pair,
-        None => {
-            tracing::warn!("skipping {}: no valid frontmatter", loc.skill_md.display());
-            return None;
-        }
+    let Some((fm, body)) = frontmatter::parse(&raw) else {
+        tracing::warn!("skipping {}: no valid frontmatter", loc.skill_md.display());
+        return None;
     };
 
     if !fm.is_mapping() {
@@ -180,25 +173,19 @@ fn parse_one(loc: &layout::SkillLocation) -> Option<Skill> {
         return None;
     }
 
-    let name = match fm.get("name").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => {
-            tracing::warn!(
-                "skipping {}: frontmatter missing `name`",
-                loc.skill_md.display()
-            );
-            return None;
-        }
+    let Some(name) = fm.get("name").and_then(|v| v.as_str()) else {
+        tracing::warn!(
+            "skipping {}: frontmatter missing `name`",
+            loc.skill_md.display()
+        );
+        return None;
     };
-    let description = match fm.get("description").and_then(|v| v.as_str()) {
-        Some(s) => s,
-        None => {
-            tracing::warn!(
-                "skipping {}: frontmatter missing `description`",
-                loc.skill_md.display()
-            );
-            return None;
-        }
+    let Some(description) = fm.get("description").and_then(|v| v.as_str()) else {
+        tracing::warn!(
+            "skipping {}: frontmatter missing `description`",
+            loc.skill_md.display()
+        );
+        return None;
     };
 
     if !validate::is_valid_name(name) {

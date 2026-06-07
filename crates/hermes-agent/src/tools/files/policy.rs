@@ -200,15 +200,13 @@ pub(super) fn suggest_similar_files(path: &Path) -> Vec<String> {
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let entries = match std::fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(_) => return Vec::new(),
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
     };
     let mut scored: Vec<(i32, String)> = Vec::new();
     for entry in entries.flatten() {
-        let name = match entry.file_name().into_string() {
-            Ok(s) => s,
-            Err(_) => continue,
+        let Ok(name) = entry.file_name().into_string() else {
+            continue;
         };
         let lname = name.to_ascii_lowercase();
         let lstem = Path::new(&lname)

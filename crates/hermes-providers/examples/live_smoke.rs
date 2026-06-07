@@ -61,24 +61,21 @@ use hermes_providers::OpenAiProvider;
 
 #[tokio::main]
 async fn main() {
-    let api_key = match std::env::var("OPENAI_API_KEY") {
-        Ok(k) => k,
-        Err(_) => {
-            eprintln!("error: OPENAI_API_KEY is not set");
-            eprintln!();
-            eprintln!("either export it:");
-            eprintln!("  export OPENAI_API_KEY=sk-...");
-            eprintln!("or use direnv to auto-load a project-local .envrc:");
-            eprintln!("  brew install direnv");
-            eprintln!("  echo 'eval \"$(direnv hook zsh)\"' >> ~/.zshrc");
-            eprintln!("  cat > .envrc <<'EOF'");
-            eprintln!("  export OPENAI_API_KEY=sk-...");
-            eprintln!("  export OPENAI_BASE_URL=https://api.minimaxi.com/v1");
-            eprintln!("  export OPENAI_MODEL=MiniMax-M3");
-            eprintln!("  EOF");
-            eprintln!("  direnv allow");
-            std::process::exit(2);
-        }
+    let Ok(api_key) = std::env::var("OPENAI_API_KEY") else {
+        eprintln!("error: OPENAI_API_KEY is not set");
+        eprintln!();
+        eprintln!("either export it:");
+        eprintln!("  export OPENAI_API_KEY=sk-...");
+        eprintln!("or use direnv to auto-load a project-local .envrc:");
+        eprintln!("  brew install direnv");
+        eprintln!("  echo 'eval \"$(direnv hook zsh)\"' >> ~/.zshrc");
+        eprintln!("  cat > .envrc <<'EOF'");
+        eprintln!("  export OPENAI_API_KEY=sk-...");
+        eprintln!("  export OPENAI_BASE_URL=https://api.minimaxi.com/v1");
+        eprintln!("  export OPENAI_MODEL=MiniMax-M3");
+        eprintln!("  EOF");
+        eprintln!("  direnv allow");
+        std::process::exit(2);
     };
 
     let base_url =

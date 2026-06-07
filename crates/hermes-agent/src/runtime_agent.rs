@@ -26,6 +26,11 @@ pub struct AIAgent {
 }
 
 impl AIAgent {
+    // Public constructor: takes HermesConfig by value so callers can
+    // move their config in. This is the public API — changing the
+    // signature would break every CLI and test caller. The clippy
+    // suggestion to take &HermesConfig is rejected intentionally.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn from_config(config: HermesConfig) -> anyhow::Result<Self> {
         let selected_provider = config.resolve_provider()?;
         let provider_name = Some(selected_provider.name.clone());
@@ -38,6 +43,9 @@ impl AIAgent {
         })
     }
 
+    // Public constructor: takes HermesConfig by value so callers can
+    // move their config in (public API; see from_config comment).
+    #[allow(clippy::needless_pass_by_value)]
     pub fn new(provider: impl Provider + 'static, config: HermesConfig) -> Self {
         let selected_provider = config.resolve_provider().ok();
         let provider_name = selected_provider

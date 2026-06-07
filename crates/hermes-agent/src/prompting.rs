@@ -222,7 +222,7 @@ mod tests {
     fn inject_system_prompt_is_noop_when_messages_already_have_system_role() {
         let messages = vec![Message::system("existing")];
 
-        let injected = inject_system_prompt(messages.clone(), Some("new prompt".into()));
+        let injected = inject_system_prompt(messages, Some("new prompt".into()));
         assert_eq!(injected.len(), 1);
         assert_eq!(injected[0].content.as_text(), "existing");
     }

@@ -8,7 +8,6 @@ description = "Skill loading and system-prompt injection for Hermes"
 
 [dependencies]
 anyhow.workspace = true
-serde.workspace = true
 serde_yaml = "0.9"
 tracing.workspace = true
 

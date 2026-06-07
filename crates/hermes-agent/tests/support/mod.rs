@@ -28,8 +28,10 @@ pub enum ScriptedStep {
 impl ScriptedProvider {
     #[allow(dead_code)]
     pub fn new(script: Vec<Completion>) -> Self {
-        let script: Vec<Vec<CompletionDelta>> =
-            script.into_iter().map(completion_to_deltas).collect();
+        let script: Vec<Vec<CompletionDelta>> = script
+            .into_iter()
+            .map(|c| completion_to_deltas(&c))
+            .collect();
         Self::from_steps(script.into_iter().map(ScriptedStep::Deltas).collect())
     }
 
@@ -47,7 +49,7 @@ impl ScriptedProvider {
 }
 
 #[allow(dead_code)]
-pub(crate) fn completion_to_deltas(c: Completion) -> Vec<CompletionDelta> {
+pub(crate) fn completion_to_deltas(c: &Completion) -> Vec<CompletionDelta> {
     let mut deltas = Vec::new();
     let has_text = matches!(&c.message.content, Content::Text(t) if !t.is_empty());
     let has_reasoning = c.message.reasoning.as_ref().is_some_and(|s| !s.is_empty());

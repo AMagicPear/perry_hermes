@@ -20,7 +20,7 @@ fn ctx(working_dir: PathBuf) -> ToolContext {
     }
 }
 
-fn parse(out: hermes_core::tool::ToolOutput) -> serde_json::Value {
+fn parse(out: &hermes_core::tool::ToolOutput) -> serde_json::Value {
     serde_json::from_str(&out.content).expect("read_file should return JSON")
 }
 
@@ -40,7 +40,7 @@ async fn read_file_returns_line_numbered_content() {
         .await
         .expect("read should succeed");
 
-    let v = parse(out);
+    let v = parse(&out);
     let content = v["content"].as_str().unwrap();
     assert!(content.contains("1|alpha"), "got: {content}");
     assert!(content.contains("2|beta"));
@@ -65,7 +65,7 @@ async fn read_file_supports_offset_and_limit() {
         )
         .await
         .expect("read should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     let content = v["content"].as_str().unwrap();
     assert!(content.contains("4|line4"));
     assert!(content.contains("5|line5"));
@@ -85,7 +85,7 @@ async fn read_file_rejects_blocked_device_path() {
         )
         .await
         .expect("device path returns JSON error, not Err");
-    let v = parse(out);
+    let v = parse(&out);
     let err = v["error"].as_str().unwrap_or_default();
     assert!(err.contains("device"), "got error: {err}");
 }
@@ -105,7 +105,7 @@ async fn read_file_rejects_known_binary_extension() {
         )
         .await
         .expect("binary returns JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     let err = v["error"].as_str().unwrap_or_default();
     assert!(err.to_lowercase().contains("binary"), "got error: {err}");
 }
@@ -125,7 +125,7 @@ async fn read_file_reports_not_found_with_similar_files() {
         )
         .await
         .expect("not-found returns JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     let err = v["error"].as_str().unwrap_or_default();
     assert!(err.contains("not found"), "got error: {err}");
     let similar = v["similar_files"].as_array().expect("similar_files array");
@@ -149,7 +149,7 @@ async fn read_file_resolves_relative_path_against_working_dir() {
         )
         .await
         .expect("read should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     let content = v["content"].as_str().unwrap();
     assert!(content.contains("from working dir"));
 }
@@ -175,7 +175,7 @@ async fn read_file_caps_content_at_100k_chars() {
         )
         .await
         .expect("read should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     let content = v["content"].as_str().unwrap();
     // Cap is 100K chars including the truncation notice; allow some slack for
     // the line-number prefix.
@@ -207,7 +207,7 @@ async fn write_file_creates_new_file() {
         )
         .await
         .expect("write should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["bytes_written"].as_i64(), Some(6));
     let on_disk = std::fs::read_to_string(&path).unwrap();
     assert_eq!(on_disk, "hello\n");
@@ -228,7 +228,7 @@ async fn write_file_overwrites_existing_file() {
         )
         .await
         .expect("write should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["bytes_written"].as_i64(), Some(3));
     let on_disk = std::fs::read_to_string(&path).unwrap();
     assert_eq!(on_disk, "new");
@@ -249,7 +249,7 @@ async fn write_file_creates_parent_directories() {
         )
         .await
         .expect("write should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     assert_eq!(v["dirs_created"].as_bool(), Some(true));
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "deep");
 }
@@ -268,7 +268,7 @@ async fn write_file_includes_resolved_path() {
         )
         .await
         .expect("write should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     let rp = v["resolved_path"].as_str().unwrap();
     assert!(rp.ends_with("rel.txt"), "resolved_path: {rp}");
 }
@@ -288,7 +288,7 @@ async fn write_file_rejects_internal_status_text() {
         )
         .await
         .expect("write should return JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     assert!(v["error"]
         .as_str()
         .unwrap()
@@ -313,7 +313,7 @@ async fn write_file_rejects_cross_profile_write_without_override() {
         )
         .await
         .expect("cross-profile write should return JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     assert!(v["error"].as_str().unwrap().contains("cross-profile"));
     unsafe { std::env::remove_var("HERMES_HOME") };
 }
@@ -336,7 +336,7 @@ async fn write_file_rejects_hermes_config_path() {
         )
         .await
         .expect("config-path write should return JSON error");
-    let v = parse(out);
+    let v = parse(&out);
     assert!(v["error"].as_str().unwrap().contains("Hermes config file"));
     unsafe { std::env::remove_var("HERMES_HOME") };
 }
@@ -363,7 +363,7 @@ async fn write_file_allows_cross_profile_write_with_override() {
         )
         .await
         .expect("cross-profile override should succeed");
-    let v = parse(out);
+    let v = parse(&out);
     assert!(v["resolved_path"].is_string());
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "demo");
     unsafe { std::env::remove_var("HERMES_HOME") };

@@ -181,7 +181,7 @@ impl AgentLoop {
                 true,
             )
             .await
-            .unwrap_or(LoopEvent::CompressionFailed {
+            .unwrap_or_else(|| LoopEvent::CompressionFailed {
                 trigger: CompressionTrigger::Manual,
                 error: "compression failed".into(),
             });
@@ -422,13 +422,10 @@ impl AgentLoop {
         metrics: &mut LoopMetrics,
         force: bool,
     ) -> Option<LoopEvent> {
-        let guard = match engine.try_lock() {
-            Ok(g) => g,
-            Err(_) => {
-                return Some(LoopEvent::CompressionSkipped {
-                    reason: CompressionSkipReason::NothingToCompress,
-                });
-            }
+        let Ok(guard) = engine.try_lock() else {
+            return Some(LoopEvent::CompressionSkipped {
+                reason: CompressionSkipReason::NothingToCompress,
+            });
         };
 
         let tokens_before = estimate_tokens_for_messages(messages, 4.0);
@@ -490,7 +487,13 @@ impl AgentLoop {
             .get(&call.name)
             .ok_or_else(|| hermes_core::error::ToolError::NotFound(call.name.clone()))?;
 
-        let args = validate_args(&call.arguments, tool.parameters_schema())
+        // `e` is a borrowed error and `e.to_string()` allocates a new
+        // String from it. There's no clone to remove — clippy flags this
+        // as `redundant_clone` because the borrowed `e` is dropped right
+        // after `to_string()` returns, but `to_string()` is exactly the
+        // conversion we want.
+        #[allow(clippy::redundant_clone)]
+        let args = validate_args(&call.arguments, &tool.parameters_schema())
             .map_err(|e| hermes_core::error::ToolError::InvalidArgs(e.to_string()))?;
 
         tool.execute(args, ctx.clone(), cancel).await
@@ -547,12 +550,12 @@ fn estimate_request_context_tokens(
 
 fn validate_args(
     args: &serde_json::Value,
-    schema: serde_json::Value,
+    schema: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     use jsonschema::JSONSchema;
     let compiled = JSONSchema::options()
         .with_draft(jsonschema::Draft::Draft7)
-        .compile(&schema)
+        .compile(schema)
         .map_err(|e| format!("schema compile: {e}"))?;
     let result = compiled.validate(args);
     if let Err(errors) = result {

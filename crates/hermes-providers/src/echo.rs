@@ -41,7 +41,7 @@ impl Provider for EchoProvider {
             .rev()
             .find(|m| m.role == Role::User)
             .cloned()
-            .unwrap_or(Message {
+            .unwrap_or_else(|| Message {
                 role: Role::Assistant,
                 content: Content::Text("(nothing to echo)".into()),
                 reasoning: None,

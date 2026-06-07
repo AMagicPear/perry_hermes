@@ -100,24 +100,22 @@ async fn anthropic_provider_maps_401_and_429() {
 
     let auth_provider =
         AnthropicProvider::new("bad", "claude-sonnet-4-5").with_base_url(server.url("/auth"));
-    let err = match auth_provider
+    let Err(err) = auth_provider
         .stream(&[message(Role::User, "hi")], &[], CancellationToken::new())
         .await
-    {
-        Err(e) => e,
-        Ok(_) => panic!("expected auth error"),
+    else {
+        panic!("expected auth error")
     };
     assert!(matches!(err, ProviderError::Auth(_)));
     auth.assert_async().await;
 
     let rate_provider =
         AnthropicProvider::new("k", "claude-sonnet-4-5").with_base_url(server.url("/rate"));
-    let err = match rate_provider
+    let Err(err) = rate_provider
         .stream(&[message(Role::User, "hi")], &[], CancellationToken::new())
         .await
-    {
-        Err(e) => e,
-        Ok(_) => panic!("expected rate limit error"),
+    else {
+        panic!("expected rate limit error")
     };
     assert!(matches!(err, ProviderError::RateLimited { .. }));
     rate.assert_async().await;

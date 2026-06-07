@@ -35,8 +35,10 @@ struct ScriptedProvider {
 
 impl ScriptedProvider {
     fn new(script: Vec<Completion>) -> Self {
-        let script: Vec<Vec<CompletionDelta>> =
-            script.into_iter().map(completion_to_deltas).collect();
+        let script: Vec<Vec<CompletionDelta>> = script
+            .into_iter()
+            .map(|c| completion_to_deltas(&c))
+            .collect();
         Self {
             script: std::sync::Mutex::new(script),
             call_count: AtomicUsize::new(0),
@@ -44,7 +46,7 @@ impl ScriptedProvider {
     }
 }
 
-fn completion_to_deltas(c: Completion) -> Vec<CompletionDelta> {
+fn completion_to_deltas(c: &Completion) -> Vec<CompletionDelta> {
     let mut deltas = Vec::new();
     let has_text = matches!(&c.message.content, Content::Text(t) if !t.is_empty());
     let has_reasoning = c.message.reasoning.as_ref().is_some_and(|s| !s.is_empty());

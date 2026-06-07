@@ -38,9 +38,8 @@ async fn openai_provider_maps_401_to_auth_error() {
 
     let provider = OpenAiProvider::new("bad-key", "gpt-4o-mini").with_base_url(server.url("/v1"));
     let cancel = CancellationToken::new();
-    let err = match provider.stream(&[user_message("hi")], &[], cancel).await {
-        Err(e) => e,
-        Ok(_) => panic!("expected error, got Ok"),
+    let Err(err) = provider.stream(&[user_message("hi")], &[], cancel).await else {
+        panic!("expected error, got Ok")
     };
 
     match err {
@@ -61,9 +60,8 @@ async fn openai_provider_maps_429_to_rate_limited() {
 
     let provider = OpenAiProvider::new("k", "gpt-4o-mini").with_base_url(server.url("/v1"));
     let cancel = CancellationToken::new();
-    let err = match provider.stream(&[user_message("hi")], &[], cancel).await {
-        Err(e) => e,
-        Ok(_) => panic!("expected error, got Ok"),
+    let Err(err) = provider.stream(&[user_message("hi")], &[], cancel).await else {
+        panic!("expected error, got Ok")
     };
 
     assert!(matches!(err, ProviderError::RateLimited { .. }));
@@ -74,9 +72,8 @@ async fn openai_provider_transport_error_is_transport_agnostic() {
     let provider = OpenAiProvider::new("k", "gpt-4o-mini").with_base_url("http://127.0.0.1:1/v1");
     let cancel = CancellationToken::new();
 
-    let err = match provider.stream(&[user_message("hi")], &[], cancel).await {
-        Err(e) => e,
-        Ok(_) => panic!("expected transport error, got Ok"),
+    let Err(err) = provider.stream(&[user_message("hi")], &[], cancel).await else {
+        panic!("expected transport error, got Ok")
     };
 
     match err {

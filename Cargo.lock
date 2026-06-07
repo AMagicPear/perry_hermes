@@ -1078,7 +1078,6 @@ name = "hermes-skill-loader"
 version = "0.3.2"
 dependencies = [
  "anyhow",
- "serde",
  "serde_yaml",
  "tempfile",
  "tracing",

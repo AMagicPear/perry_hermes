@@ -96,9 +96,8 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
 
     assert_eq!(result.metrics.iterations, 2);
     assert_eq!(result.metrics.tool_calls, 1);
-    let final_text = match result.final_message.content {
-        Content::Text(s) => s,
-        _ => panic!("expected text"),
+    let Content::Text(final_text) = result.final_message.content else {
+        panic!("expected text")
     };
     assert_eq!(final_text, "done");
 
@@ -107,9 +106,8 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
     assert_eq!(result.messages[1].role, Role::Assistant);
     assert!(result.messages[1].tool_calls.is_some());
     assert_eq!(result.messages[2].role, Role::Tool);
-    let tool_content = match &result.messages[2].content {
-        Content::Text(s) => s.clone(),
-        _ => panic!("tool result should be text"),
+    let Content::Text(tool_content) = &result.messages[2].content else {
+        panic!("tool result should be text")
     };
     assert!(tool_content.contains("from-bash"));
     assert_eq!(result.messages[2].tool_call_id.as_deref(), Some("call_1"));
@@ -174,9 +172,8 @@ async fn loop_routes_read_file_tool_call() {
         )
         .await
         .expect("loop should succeed");
-    let tool_content = match &result.messages[2].content {
-        Content::Text(s) => s.clone(),
-        _ => panic!("tool result should be text"),
+    let Content::Text(tool_content) = &result.messages[2].content else {
+        panic!("tool result should be text")
     };
     assert!(tool_content.contains("routed"));
     assert!(tool_content.contains("1|"));
@@ -201,7 +198,7 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
     };
 
     let provider = ScriptedProvider::from_steps(vec![
-        ScriptedStep::Deltas(support::completion_to_deltas(first)),
+        ScriptedStep::Deltas(support::completion_to_deltas(&first)),
         ScriptedStep::Error(hermes_core::ProviderError::InvalidResponse(
             "context window exceeds limit".into(),
         )),
@@ -246,15 +243,13 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
             assert_eq!(messages[0].role, Role::User);
             assert_eq!(messages[1].role, Role::Assistant);
             assert_eq!(messages[2].role, Role::Tool);
-            let tool_content = match &messages[2].content {
-                Content::Text(s) => s,
-                _ => panic!("tool result should be text"),
+            let Content::Text(tool_content) = &messages[2].content else {
+                panic!("tool result should be text")
             };
             assert!(tool_content.contains("retained-output"));
             assert_eq!(messages[3].role, Role::Assistant);
-            let error_text = match &messages[3].content {
-                Content::Text(s) => s,
-                _ => panic!("synthetic error should be text"),
+            let Content::Text(error_text) = &messages[3].content else {
+                panic!("synthetic error should be text")
             };
             assert!(
                 error_text.contains("Turn interrupted by error: provider error: invalid response: context window exceeds limit")
@@ -314,15 +309,13 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
             assert_eq!(messages.len(), 3);
             assert_eq!(messages[0].role, Role::User);
             assert_eq!(messages[1].role, Role::Assistant);
-            let assistant_text = match &messages[1].content {
-                Content::Text(s) => s,
-                _ => panic!("assistant partial should be text"),
+            let Content::Text(assistant_text) = &messages[1].content else {
+                panic!("assistant partial should be text")
             };
             assert_eq!(assistant_text, "partial answer");
             assert_eq!(messages[2].role, Role::Assistant);
-            let error_text = match &messages[2].content {
-                Content::Text(s) => s,
-                _ => panic!("synthetic error should be text"),
+            let Content::Text(error_text) = &messages[2].content else {
+                panic!("synthetic error should be text")
             };
             assert!(error_text.contains(
                 "Turn interrupted by error: provider error: transport error: stream dropped"

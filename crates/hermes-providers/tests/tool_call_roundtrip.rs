@@ -39,9 +39,8 @@ async fn run_capturing_server(listener: TcpListener, bodies: Arc<Mutex<Vec<Strin
     .unwrap();
 
     loop {
-        let (mut socket, _addr) = match listener.accept().await {
-            Ok(s) => s,
-            Err(_) => break,
+        let Ok((mut socket, _addr)) = listener.accept().await else {
+            break;
         };
         let bodies = Arc::clone(&bodies);
         let canned = canned.clone();
