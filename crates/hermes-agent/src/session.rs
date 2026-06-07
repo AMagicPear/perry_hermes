@@ -57,6 +57,12 @@ impl SessionState {
         *self.first_prompt_context_tokens.read().await
     }
 
+    pub async fn compacted_context_tokens(&self, summary_output_tokens: u64) -> Option<u64> {
+        self.first_prompt_context_tokens()
+            .await
+            .map(|baseline| baseline.saturating_add(summary_output_tokens))
+    }
+
     pub async fn reset(&self) {
         *self.first_prompt_context_tokens.write().await = None;
     }

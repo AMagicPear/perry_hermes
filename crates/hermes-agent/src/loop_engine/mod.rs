@@ -3,7 +3,7 @@
 //!
 //! Sub-modules:
 //! - `metrics` — provider usage helpers + `validate_args`
-//! - `compressor` — compression orchestration and message rewriting strategy
+//! - `compaction` — compaction orchestration and message rewriting strategy
 //! - `run` — the state machine (`run`, `drive_turn`, `handle_finish_reason`, `dispatch_tool_calls`)
 
 use std::sync::Arc;
@@ -12,7 +12,9 @@ use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::context_engine::{CompressionSkipReason, CompressionTrigger, ContextEngine};
+use hermes_core::compaction_strategy::{
+    CompactionStrategy, CompressionSkipReason, CompressionTrigger,
+};
 use hermes_core::error::{LoopError, ProviderError, ToolError};
 use hermes_core::message::{Message, ToolCall};
 use hermes_core::provider::{Provider, ToolCallDelta};
@@ -21,11 +23,11 @@ use hermes_core::tool::{ToolContext, ToolOutput};
 
 use crate::session::SessionState;
 
-mod compressor;
+mod compaction;
 mod metrics;
 mod run;
 
-pub use compressor::{CompressorConfig, ContextCompressor};
+pub use compaction::{CompactorConfig, SummaryCompactor};
 
 pub struct AgentLoop {
     pub(crate) provider: Arc<dyn Provider>,
@@ -39,7 +41,7 @@ pub struct LoopConfig {
     pub max_duration: Duration,
     pub system_prompt: Option<String>,
     /// Optional context compression engine. None = no compression.
-    pub context_engine: Option<Arc<TokioMutex<dyn ContextEngine>>>,
+    pub compaction_strategy: Option<Arc<TokioMutex<dyn CompactionStrategy>>>,
     /// Model context window and compression threshold used with real
     /// provider usage.
     pub context_window: Option<ContextWindow>,
@@ -69,7 +71,7 @@ impl std::fmt::Debug for LoopConfig {
             .field("max_iterations", &self.max_iterations)
             .field("max_duration", &self.max_duration)
             .field("system_prompt", &self.system_prompt)
-            .field("context_engine", &"<dyn ContextEngine>")
+            .field("compaction_strategy", &"<dyn CompactionStrategy>")
             .field("context_window", &self.context_window)
             .field("focus_topic", &self.focus_topic)
             .finish()
@@ -82,7 +84,7 @@ impl Default for LoopConfig {
             max_iterations: 90,
             max_duration: Duration::from_secs(60 * 10),
             system_prompt: None,
-            context_engine: None,
+            compaction_strategy: None,
             context_window: None,
             focus_topic: None,
         }
@@ -151,6 +153,9 @@ pub enum LoopEvent {
         /// Provider-reported prompt context tokens that caused automatic
         /// compression. `None` for manual `/compact`.
         context_tokens: Option<u64>,
+        /// Best known post-compaction context usage, derived from the first
+        /// prompt-context baseline plus the summary call's output tokens.
+        compacted_tokens: Option<u64>,
         duration: Duration,
     },
     CompressionSkipped {
@@ -183,17 +188,17 @@ impl AgentLoop {
         }
     }
 
-    pub fn has_context_engine(&self) -> bool {
-        self.config.context_engine.is_some()
+    pub fn has_compaction_strategy(&self) -> bool {
+        self.config.compaction_strategy.is_some()
     }
 
     pub async fn compact_messages(
         &self,
         mut messages: Vec<Message>,
         focus_topic: Option<&str>,
-        _session_state: Arc<SessionState>,
+        session_state: Arc<SessionState>,
     ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
-        let Some(engine) = &self.config.context_engine else {
+        let Some(engine) = &self.config.compaction_strategy else {
             return Ok((
                 messages,
                 LoopEvent::CompressionSkipped {
@@ -201,27 +206,33 @@ impl AgentLoop {
                 },
             ));
         };
-        let outcome = compressor::try_compress(
+        let outcome = compaction::try_compact(
             engine,
             &mut messages,
             focus_topic,
             self.config.focus_topic.as_deref(),
-            true,
         )
         .await
-        .unwrap_or_else(|| compressor::CompactOutcome::Failed {
+        .unwrap_or_else(|| compaction::CompactOutcome::Failed {
             error: "compression failed".into(),
         });
         let event = match outcome {
-            compressor::CompactOutcome::Compressed { duration, .. } => {
+            compaction::CompactOutcome::Compressed {
+                duration,
+                summary_output_tokens,
+            } => {
+                let compacted_tokens = session_state
+                    .compacted_context_tokens(summary_output_tokens)
+                    .await;
                 LoopEvent::CompressionCompleted {
                     trigger: CompressionTrigger::Manual,
                     context_tokens: None,
+                    compacted_tokens,
                     duration,
                 }
             }
-            compressor::CompactOutcome::Skipped(reason) => LoopEvent::CompressionSkipped { reason },
-            compressor::CompactOutcome::Failed { error } => LoopEvent::CompressionFailed {
+            compaction::CompactOutcome::Skipped(reason) => LoopEvent::CompressionSkipped { reason },
+            compaction::CompactOutcome::Failed { error } => LoopEvent::CompressionFailed {
                 trigger: CompressionTrigger::Manual,
                 error,
             },

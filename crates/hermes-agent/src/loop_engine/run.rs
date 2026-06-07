@@ -20,13 +20,13 @@ use std::time::Instant;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::context_engine::CompressionTrigger;
+use hermes_core::compaction_strategy::CompressionTrigger;
 use hermes_core::error::{LoopError, ProviderError, ToolError};
 use hermes_core::message::{Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason, StreamAccumulator};
 use hermes_core::tool::ToolContext;
 
-use super::compressor::{try_compress, CompactOutcome};
+use super::compaction::{try_compact, CompactOutcome};
 use super::metrics::{prompt_context_tokens_from_usage, validate_args};
 use super::{AgentLoop, AgentRunError, FailedTurn, LoopEvent, LoopMetrics, RunResult};
 use crate::session::SessionState;
@@ -300,7 +300,7 @@ async fn auto_compress_after_response(
     session_state: &SessionState,
     on_event: &mut impl FnMut(LoopEvent),
 ) {
-    let Some(engine_arc) = &engine.config.context_engine else {
+    let Some(engine_arc) = &engine.config.compaction_strategy else {
         return;
     };
     let Some(context_window) = engine.config.context_window else {
@@ -309,23 +309,17 @@ async fn auto_compress_after_response(
     if !context_window.should_compress(prompt_context_tokens) {
         return;
     }
-    let should = {
-        let guard = engine_arc.lock().await;
-        guard.can_compress_automatically()
-    };
-    if !should {
-        return;
-    }
-    if let Some(outcome) = try_compress(engine_arc, messages, None, None, false).await {
+    if let Some(outcome) = try_compact(engine_arc, messages, None, None).await {
         let event = match outcome {
             CompactOutcome::Compressed {
                 duration,
                 summary_output_tokens,
             } => {
+                let compacted_tokens = session_state
+                    .compacted_context_tokens(summary_output_tokens)
+                    .await;
                 metrics.compressions += 1;
-                if let Some(compacted_tokens) =
-                    compacted_context_tokens(session_state, summary_output_tokens).await
-                {
+                if let Some(compacted_tokens) = compacted_tokens {
                     on_event(LoopEvent::ContextUsageUpdated {
                         used_tokens: compacted_tokens,
                     });
@@ -333,6 +327,7 @@ async fn auto_compress_after_response(
                 LoopEvent::CompressionCompleted {
                     trigger: CompressionTrigger::PostTurn,
                     context_tokens: Some(prompt_context_tokens),
+                    compacted_tokens,
                     duration,
                 }
             }
@@ -344,14 +339,6 @@ async fn auto_compress_after_response(
         };
         on_event(event);
     }
-}
-
-async fn compacted_context_tokens(
-    session_state: &SessionState,
-    summary_output_tokens: u64,
-) -> Option<u64> {
-    let baseline = session_state.first_prompt_context_tokens().await?;
-    Some(baseline.saturating_add(summary_output_tokens))
 }
 
 /// Build an `AgentRunError::FailedTurn` (or a plain `LoopError::Provider`

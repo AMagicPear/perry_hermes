@@ -16,8 +16,8 @@ use crate::provider_factory::build_provider;
 use crate::session::{AgentSession, SessionContext};
 use crate::tool_catalog::build_registry;
 use crate::{
-    AgentLoop, AgentRunError, CompressorConfig, ContextCompressor, ContextWindow, LoopConfig,
-    LoopEvent, RunResult,
+    AgentLoop, AgentRunError, CompactorConfig, ContextWindow, LoopConfig, LoopEvent, RunResult,
+    SummaryCompactor,
 };
 
 pub struct AIAgent {
@@ -159,8 +159,8 @@ impl AIAgent {
     }
 
     #[cfg(test)]
-    fn has_context_engine(&self) -> bool {
-        self.loop_.has_context_engine()
+    fn has_compaction_strategy(&self) -> bool {
+        self.loop_.has_compaction_strategy()
     }
 }
 
@@ -184,12 +184,12 @@ fn build_loop_for_custom_provider(
             .join("skills")
     });
     let registry = Arc::new(build_registry(&config.agent.disabled_toolsets, &skills_dir));
-    let context_engine = if config.agent.context_compression_enabled {
-        let compressor_config = CompressorConfig::default();
+    let compaction_strategy = if config.agent.context_compression_enabled {
+        let compactor_config = CompactorConfig::default();
         Some(Arc::new(TokioMutex::new(
-            ContextCompressor::new(compressor_config).with_summary_provider(Arc::clone(&provider)),
+            SummaryCompactor::new(compactor_config).with_summary_provider(Arc::clone(&provider)),
         ))
-            as Arc<TokioMutex<dyn hermes_core::ContextEngine>>)
+            as Arc<TokioMutex<dyn hermes_core::CompactionStrategy>>)
     } else {
         None
     };
@@ -206,7 +206,7 @@ fn build_loop_for_custom_provider(
         LoopConfig {
             max_iterations: config.agent.max_iterations.unwrap_or(10),
             system_prompt: None,
-            context_engine,
+            compaction_strategy,
             context_window,
             ..Default::default()
         },
@@ -282,12 +282,12 @@ mod tests {
     }
 
     #[test]
-    fn from_config_wires_context_engine_when_enabled() {
+    fn from_config_wires_compaction_strategy_when_enabled() {
         let agent = AIAgent::from_config(echo_config_with_compression())
             .expect("echo should build with compression enabled");
         assert!(
-            agent.has_context_engine(),
-            "compression-enabled config should wire a context engine"
+            agent.has_compaction_strategy(),
+            "compression-enabled config should wire a compaction strategy"
         );
     }
 

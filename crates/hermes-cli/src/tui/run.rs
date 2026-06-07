@@ -348,7 +348,6 @@ fn dispatch_event(
                     let _ = dispatch_event(app, next, cancel, None)?;
                     if compacted {
                         app.session_history = messages;
-                        app.context_used_tokens = None;
                     }
                 }
                 Err(AgentRunError::Loop(LoopError::CancelledWith(partial))) => {
@@ -430,7 +429,7 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use hermes_agent::{AgentLoop, LoopConfig};
-    use hermes_core::context_engine::{CompressError, CompressionResult, ContextEngine};
+    use hermes_core::compaction_strategy::{CompactError, CompactionResult, CompactionStrategy};
     use hermes_core::message::Message;
     use hermes_core::provider::{CompletionStream, Provider};
     use hermes_core::registry::{InMemoryRegistry, ToolSchema};
@@ -451,17 +450,16 @@ mod tests {
         }
     }
 
-    struct TestContextEngine;
+    struct TestCompactionStrategy;
 
     #[async_trait]
-    impl ContextEngine for TestContextEngine {
-        async fn compress(
+    impl CompactionStrategy for TestCompactionStrategy {
+        async fn compact(
             &mut self,
             _messages: Vec<Message>,
             _focus_topic: Option<&str>,
-            _force: bool,
-        ) -> Result<CompressionResult, CompressError> {
-            Ok(CompressionResult {
+        ) -> Result<CompactionResult, CompactError> {
+            Ok(CompactionResult {
                 messages: vec![Message::system("system"), Message::user("summary")],
                 summary_usage: hermes_core::Usage {
                     input_tokens: 10,
@@ -470,8 +468,6 @@ mod tests {
                 },
             })
         }
-
-        fn on_session_reset(&mut self) {}
     }
 
     fn app_with_history() -> App {
@@ -493,7 +489,7 @@ mod tests {
             NoopProvider,
             Arc::new(InMemoryRegistry::new()),
             LoopConfig {
-                context_engine: Some(Arc::new(TokioMutex::new(TestContextEngine))),
+                compaction_strategy: Some(Arc::new(TokioMutex::new(TestCompactionStrategy))),
                 ..Default::default()
             },
         );
@@ -502,6 +498,10 @@ mod tests {
             working_dir: PathBuf::from("."),
             session_id: "test".into(),
         });
+        session
+            .state
+            .remember_first_prompt_context_tokens(1_000)
+            .await;
         let (input_tx, mut input_rx) = mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
         let mut app = app_with_history();
@@ -534,7 +534,7 @@ mod tests {
             app.session_history.get(1),
             Some(Message { content, .. }) if content.as_text() == "summary"
         ));
-        assert_eq!(app.context_used_tokens, None);
+        assert_eq!(app.context_used_tokens, Some(1_002));
         assert_eq!(app.compression_hint.as_deref(), Some("Compressed in 0ms"));
         assert_eq!(app.mode, AppMode::Idle);
     }

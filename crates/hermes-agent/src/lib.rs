@@ -11,8 +11,8 @@ pub mod tools;
 
 pub use config::{AgentConfig, HermesConfig, ModelConfig, ProviderConfig, ProviderKind};
 pub use loop_engine::{
-    AgentLoop, AgentRunError, CompressorConfig, ContextCompressor, ContextWindow, FailedTurn,
-    LoopConfig, LoopEvent, LoopMetrics, RunResult,
+    AgentLoop, AgentRunError, CompactorConfig, ContextWindow, FailedTurn, LoopConfig, LoopEvent,
+    LoopMetrics, RunResult, SummaryCompactor,
 };
 pub use runtime_agent::AIAgent;
 pub use session::{AgentSession, SessionContext, SessionState};

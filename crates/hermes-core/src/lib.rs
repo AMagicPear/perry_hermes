@@ -6,7 +6,7 @@
 //! crate in the workspace.
 
 pub mod accumulator;
-pub mod context_engine;
+pub mod compaction_strategy;
 pub mod error;
 pub mod message;
 pub mod provider;
@@ -14,7 +14,9 @@ pub mod registry;
 pub mod tool;
 pub mod usage;
 
-pub use context_engine::{CompressError, CompressionSkipReason, CompressionTrigger, ContextEngine};
+pub use compaction_strategy::{
+    CompactError, CompactionResult, CompactionStrategy, CompressionSkipReason, CompressionTrigger,
+};
 pub use error::{LoopError, ProviderError, ToolError};
 pub use message::{Content, ContentPart, Message, Role, ToolCall};
 pub use provider::{Completion, CompletionDelta, CompletionStream, FinishReason, Provider};

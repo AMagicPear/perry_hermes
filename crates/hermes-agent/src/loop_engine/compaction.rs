@@ -1,4 +1,4 @@
-//! Context compression orchestration and the built-in summary strategy.
+//! Context compaction orchestration and the built-in summary strategy.
 //!
 //! The strategy is intentionally small:
 //! - keep the system prompt, if present
@@ -11,17 +11,17 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use hermes_core::context_engine::{CompressionResult, CompressionSkipReason};
+use hermes_core::compaction_strategy::{CompactionResult, CompressionSkipReason};
 use hermes_core::message::{Message, Role};
-use hermes_core::{CompressError, ContextEngine, Provider, ProviderError};
+use hermes_core::{CompactError, CompactionStrategy, Provider, ProviderError};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-/// Outcome of one compression attempt. The loop maps this to `LoopEvent`.
+/// Outcome of one compaction attempt. The loop maps this to `LoopEvent`.
 pub(crate) enum CompactOutcome {
     Skipped(CompressionSkipReason),
     Compressed {
-        /// Total duration of the compression call.
+        /// Total duration of the compaction call.
         duration: Duration,
         /// Provider-reported output tokens from the summary call.
         summary_output_tokens: u64,
@@ -31,18 +31,17 @@ pub(crate) enum CompactOutcome {
     },
 }
 
-/// Attempt one compression pass. Holds the engine lock for the full
-/// `compress()` call and replaces `messages` in place on success.
-pub(crate) async fn try_compress(
-    engine: &Arc<TokioMutex<dyn ContextEngine>>,
+/// Attempt one compaction pass. Holds the strategy lock for the full
+/// `compact()` call and replaces `messages` in place on success.
+pub(crate) async fn try_compact(
+    strategy: &Arc<TokioMutex<dyn CompactionStrategy>>,
     messages: &mut Vec<Message>,
     focus_topic: Option<&str>,
     config_focus: Option<&str>,
-    force: bool,
 ) -> Option<CompactOutcome> {
     let started = Instant::now();
 
-    let mut guard = match engine.try_lock() {
+    let mut guard = match strategy.try_lock() {
         Ok(g) => g,
         Err(_) => {
             return Some(CompactOutcome::Skipped(
@@ -51,7 +50,7 @@ pub(crate) async fn try_compress(
         }
     };
     let focus = config_focus.or(focus_topic);
-    let result = guard.compress(messages.clone(), focus, force).await;
+    let result = guard.compact(messages.clone(), focus).await;
     drop(guard);
 
     let duration = started.elapsed();
@@ -64,7 +63,7 @@ pub(crate) async fn try_compress(
                 summary_output_tokens,
             })
         }
-        Err(CompressError::NothingToCompress) => Some(CompactOutcome::Skipped(
+        Err(CompactError::NothingToCompress) => Some(CompactOutcome::Skipped(
             CompressionSkipReason::NothingToCompress,
         )),
         Err(e) => Some(CompactOutcome::Failed {
@@ -73,15 +72,15 @@ pub(crate) async fn try_compress(
     }
 }
 
-/// Configuration for the context compressor.
+/// Configuration for the built-in summary compactor.
 #[derive(Debug, Clone)]
-pub struct CompressorConfig {
+pub struct CompactorConfig {
     /// Instructional target for generated summaries. This is not used for
     /// context-window accounting; it only constrains the summary prompt.
     pub max_summary_tokens: u64,
 }
 
-impl Default for CompressorConfig {
+impl Default for CompactorConfig {
     fn default() -> Self {
         Self {
             max_summary_tokens: 8_000,
@@ -145,7 +144,7 @@ pub fn messages_to_transcript(messages: &[Message]) -> String {
 
 fn split_compaction_anchors(
     messages: &[Message],
-) -> Result<(Vec<Message>, Vec<Message>), CompressError> {
+) -> Result<(Vec<Message>, Vec<Message>), CompactError> {
     let mut anchors = Vec::new();
     let mut first_user_idx = None;
 
@@ -171,7 +170,7 @@ fn split_compaction_anchors(
     }
 
     let Some(first_user_idx) = first_user_idx else {
-        return Err(CompressError::NothingToCompress);
+        return Err(CompactError::NothingToCompress);
     };
 
     let compacted: Vec<Message> = messages
@@ -182,20 +181,20 @@ fn split_compaction_anchors(
         .collect();
 
     if compacted.is_empty() {
-        return Err(CompressError::NothingToCompress);
+        return Err(CompactError::NothingToCompress);
     }
 
     Ok((anchors, compacted))
 }
 
-/// The built-in `ContextEngine`.
-pub struct ContextCompressor {
-    config: CompressorConfig,
+/// Built-in summary-based compaction strategy.
+pub struct SummaryCompactor {
+    config: CompactorConfig,
     summary_provider: Option<Arc<dyn Provider>>,
 }
 
-impl ContextCompressor {
-    pub fn new(config: CompressorConfig) -> Self {
+impl SummaryCompactor {
+    pub fn new(config: CompactorConfig) -> Self {
         Self {
             config,
             summary_provider: None,
@@ -212,17 +211,17 @@ impl ContextCompressor {
         &mut self,
         messages: Vec<Message>,
         focus_topic: Option<&str>,
-    ) -> Result<CompressionResult, CompressError> {
+    ) -> Result<CompactionResult, CompactError> {
         let (mut anchors, compacted) = split_compaction_anchors(&messages)?;
         let transcript = messages_to_transcript(&compacted);
         let prompt = build_summary_prompt(&transcript, focus_topic, self.config.max_summary_tokens);
         let completion = self
             .call_summary_llm(&prompt)
             .await
-            .map_err(|e| CompressError::SummaryFailed(e.to_string()))?;
+            .map_err(|e| CompactError::SummaryFailed(e.to_string()))?;
 
         anchors.push(build_summary_message(&completion.message.content.as_text()));
-        Ok(CompressionResult {
+        Ok(CompactionResult {
             messages: anchors,
             summary_usage: completion.usage,
         })
@@ -245,17 +244,14 @@ impl ContextCompressor {
 }
 
 #[async_trait]
-impl ContextEngine for ContextCompressor {
-    async fn compress(
+impl CompactionStrategy for SummaryCompactor {
+    async fn compact(
         &mut self,
         messages: Vec<Message>,
         focus_topic: Option<&str>,
-        _force: bool,
-    ) -> Result<CompressionResult, CompressError> {
+    ) -> Result<CompactionResult, CompactError> {
         self.compress_inner(messages, focus_topic).await
     }
-
-    fn on_session_reset(&mut self) {}
 }
 
 #[cfg(test)]
@@ -276,7 +272,7 @@ mod tests {
 
     #[test]
     fn default_summary_target_is_prompt_instruction_only() {
-        let config = CompressorConfig::default();
+        let config = CompactorConfig::default();
         assert_eq!(config.max_summary_tokens, 8_000);
     }
 
@@ -325,11 +321,11 @@ mod tests {
 
     #[tokio::test]
     async fn nothing_to_compress_when_only_anchor_exists() {
-        let mut compressor = ContextCompressor::new(CompressorConfig::default());
-        let result = compressor
-            .compress(vec![system_msg("system"), user_msg("first")], None, true)
+        let mut compactor = SummaryCompactor::new(CompactorConfig::default());
+        let result = compactor
+            .compact(vec![system_msg("system"), user_msg("first")], None)
             .await;
 
-        assert!(matches!(result, Err(CompressError::NothingToCompress)));
+        assert!(matches!(result, Err(CompactError::NothingToCompress)));
     }
 }

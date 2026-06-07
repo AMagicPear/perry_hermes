@@ -4,7 +4,7 @@ use hermes_agent::LoopEvent;
 use hermes_cli::tui::app::App;
 use hermes_cli::tui::event::{AppEvent, AppMode, RenderedLine};
 use hermes_cli::tui::loop_bridge::apply_loop_event;
-use hermes_core::context_engine::{CompressionSkipReason, CompressionTrigger};
+use hermes_core::compaction_strategy::{CompressionSkipReason, CompressionTrigger};
 use hermes_core::error::ToolError;
 use hermes_core::message::ToolCall;
 use hermes_core::provider::ToolCallDelta;
@@ -118,6 +118,7 @@ fn compression_completed_sets_hint() {
     let ev = LoopEvent::CompressionCompleted {
         trigger: CompressionTrigger::Manual,
         context_tokens: None,
+        compacted_tokens: Some(12_345),
         duration: Duration::from_millis(1_200),
     };
     let _ = apply_loop_event(&mut app, ev);
@@ -125,6 +126,7 @@ fn compression_completed_sets_hint() {
         app.compression_hint.as_deref(),
         Some("Compressed in 1200ms")
     );
+    assert_eq!(app.context_used_tokens, Some(12_345));
 }
 
 #[test]

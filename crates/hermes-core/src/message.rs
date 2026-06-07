@@ -141,9 +141,9 @@ pub enum Content {
 }
 
 impl Content {
-    /// Total character count across all text/image_url parts. Used by the
-    /// compressor and the context-usage estimator to size up a message
-    /// without a tokenizer.
+    /// Total character count across all text/image_url parts. Useful for
+    /// display previews and local truncation; context accounting uses
+    /// provider-reported token usage instead.
     pub fn chars(&self) -> usize {
         match self {
             Content::Text(s) => s.chars().count(),

@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use hermes_agent::{
-    AIAgent, AgentLoop, CompressorConfig, ContextCompressor, ContextWindow, HermesConfig,
-    LoopConfig, ModelConfig, ProviderConfig, ProviderKind, SessionContext, SessionState,
+    AIAgent, AgentLoop, CompactorConfig, ContextWindow, HermesConfig, LoopConfig, ModelConfig,
+    ProviderConfig, ProviderKind, SessionContext, SessionState, SummaryCompactor,
 };
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason};
@@ -129,15 +129,15 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
         finish_reason: FinishReason::Stop,
     }]));
 
-    let compressor =
-        ContextCompressor::new(CompressorConfig::default()).with_summary_provider(summary_provider);
+    let compactor =
+        SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
     let loop_ = AgentLoop::new(
         ScriptedProvider::new(vec![first, second]),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
             max_iterations: 5,
-            context_engine: Some(Arc::new(TokioMutex::new(compressor))),
+            compaction_strategy: Some(Arc::new(TokioMutex::new(compactor))),
             context_window: Some(ContextWindow {
                 max_tokens: 128_000,
                 compression_threshold_ratio: 0.50,
@@ -202,15 +202,15 @@ async fn loop_does_not_compress_until_real_context_usage_reaches_threshold() {
         finish_reason: FinishReason::Stop,
     }]));
 
-    let compressor =
-        ContextCompressor::new(CompressorConfig::default()).with_summary_provider(summary_provider);
+    let compactor =
+        SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
     let loop_ = AgentLoop::new(
         ScriptedProvider::new(vec![first]),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
             max_iterations: 5,
-            context_engine: Some(Arc::new(TokioMutex::new(compressor))),
+            compaction_strategy: Some(Arc::new(TokioMutex::new(compactor))),
             context_window: Some(ContextWindow {
                 max_tokens: 128_000,
                 compression_threshold_ratio: 0.50,
@@ -261,15 +261,15 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
         finish_reason: FinishReason::Stop,
     }]));
 
-    let compressor =
-        ContextCompressor::new(CompressorConfig::default()).with_summary_provider(summary_provider);
+    let compactor =
+        SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
     let loop_ = AgentLoop::new(
         ScriptedProvider::new(vec![first]),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
             max_iterations: 5,
-            context_engine: Some(Arc::new(TokioMutex::new(compressor))),
+            compaction_strategy: Some(Arc::new(TokioMutex::new(compactor))),
             context_window: Some(ContextWindow {
                 max_tokens: 128_000,
                 compression_threshold_ratio: 0.50,
@@ -301,7 +301,7 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
             matches!(
                 event,
                 hermes_agent::LoopEvent::CompressionCompleted {
-                    trigger: hermes_core::context_engine::CompressionTrigger::PostTurn,
+                    trigger: hermes_core::compaction_strategy::CompressionTrigger::PostTurn,
                     context_tokens: Some(64_000),
                     ..
                 }
@@ -355,15 +355,15 @@ async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
         finish_reason: FinishReason::Stop,
     }]));
 
-    let compressor =
-        ContextCompressor::new(CompressorConfig::default()).with_summary_provider(summary_provider);
+    let compactor =
+        SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
     let loop_ = AgentLoop::new(
         ScriptedProvider::new(vec![first]),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
             max_iterations: 5,
-            context_engine: Some(Arc::new(TokioMutex::new(compressor))),
+            compaction_strategy: Some(Arc::new(TokioMutex::new(compactor))),
             context_window: Some(ContextWindow {
                 max_tokens: 128_000,
                 compression_threshold_ratio: 0.50,

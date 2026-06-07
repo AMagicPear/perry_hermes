@@ -13,7 +13,7 @@ Current status: **Phases 0-10 are complete**. That includes the core agent loop,
 - **TOML runtime configuration**: the CLI resolves config files in this order: `--config`, `~/.perry_hermes/config.toml`, then `./hermes.toml`.
 - **Cooperative cancellation**: a shared `CancellationToken` flows through model calls and tool execution, enabling graceful Ctrl-C interruption.
 - **Interactive TUI** (replacing the original REPL): full-screen `ratatui` interface with multi-turn chat, streaming output, live tool rendering, slash commands, per-agent toolset filtering, and a dynamic-height input box that grows with wrapped text.
-- **Built-in context compression**: compression is enabled by default, can be triggered manually with `/compact [focus]`, and reports completed, skipped, and failed compactions in the TUI status line.
+- **Built-in context compaction**: compaction is enabled by default, can be triggered manually with `/compact [focus]`, keeps only the system prompt, first user message, and an LLM summary, and reports completed, skipped, and failed compactions in the TUI status line.
 - **Runtime skill loading**: `SKILL.md` files under `~/.perry_hermes/skills/` are discovered and injected into the system prompt.
 - **Robust terminal tooling**: concurrent stdout/stderr draining avoids pipe deadlocks, and output truncation is aligned with Python Hermes behavior.
 - **Clear crate boundaries**: `hermes-core` stays transport-agnostic, while runtime orchestration lives in `hermes-agent` and the product shell lives in `hermes-cli` (TUI). Phase 11 will add `hermes-gateway` as a peer adapter of `hermes-agent` for Slack/Discord/Telegram.
@@ -36,7 +36,7 @@ hermes-cli (ratatui TUI)
 |---|---|---|
 | `hermes-core` | Shared types, traits, and errors with no IO concerns | `Provider`, `Tool`, `Message`, `Completion`, `FinishReason` |
 | `hermes-providers` | Provider implementations and streaming protocol adapters | `OpenAiProvider`, `AnthropicProvider`, `EchoProvider` |
-| `hermes-agent` | Runtime assembly, loop execution, session context, and built-in tools | `AIAgent`, `AgentLoop`, `SessionContext`, built-in tool registry |
+| `hermes-agent` | Runtime assembly, loop execution, session ownership, context compaction, and built-in tools | `AIAgent`, `AgentSession`, `AgentLoop`, `CompactionStrategy`, built-in tool registry |
 | `hermes-skill-loader` | Skill data loading, validation, and prompt-ready metadata | `SKILL.md` frontmatter/layout/validate, `render_system_prompt_block` |
 | `hermes-cli` | Interactive TUI entrypoint (ratatui) | config resolution, TUI event loop, event rendering |
 
@@ -45,6 +45,10 @@ hermes-cli (ratatui TUI)
 - **`Provider`** is the async model interface used by the agent loop.
 - **`Tool`** is the async execution interface for built-in and future external tools.
 - **Tool registry and toolset filtering** are runtime concerns handled by `hermes-agent`.
+- **`AIAgent`** is the reusable runtime service. It owns the provider, tool registry, config, and system-prompt composition.
+- **`AgentSession`** is the per-conversation owner. CLI, gateway, and future adapters should hold one session per chat/thread/user-facing conversation.
+- **`CompactionStrategy`** is policy only: it rewrites a message list into a shorter message list. Session state, token facts, cancellation, and history ownership stay outside the strategy.
+- **Context window accounting** uses provider-reported usage only. The loop records the first real prompt-context token count, then after compaction reports `first_prompt_context_tokens + summary_output_tokens` until the next provider response becomes the source of truth.
 - **Prompt and session composition** are isolated from the CLI so the runtime can stay reusable.
 - **Display logic** is kept in the CLI layer instead of leaking into the runtime.
 
