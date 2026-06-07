@@ -282,7 +282,9 @@ fn dispatch_event(
             Ok(false)
         }
         AppEvent::SetInput(s) => {
+            let len = s.len();
             app.input = s;
+            app.cursor = len;
             Ok(false)
         }
         AppEvent::CancelInFlight => {

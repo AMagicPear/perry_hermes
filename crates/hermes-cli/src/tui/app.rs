@@ -16,6 +16,9 @@ pub struct App {
     pub scrollback: Vec<RenderedLine>,
     /// Current text in the input box.
     pub input: String,
+    /// Byte offset of the cursor within `input`. Always at a UTF-8 character
+    /// boundary. Range: `0 ..= input.len()`.
+    pub cursor: usize,
     /// High-level mode.
     pub mode: AppMode,
     /// Provider kind (e.g. "openai", "anthropic", "echo") for the status bar.
@@ -65,6 +68,7 @@ impl App {
         Self {
             scrollback: Vec::new(),
             input: String::new(),
+            cursor: 0,
             mode: AppMode::Idle,
             provider_name: None,
             model_name: None,
@@ -129,6 +133,85 @@ impl App {
     fn chat_cache_state(&self) -> (Option<u16>, u64) {
         (self.cached_chat_width, self.cached_chat_revision)
     }
+
+    // ── Cursor movement & text editing ──────────────────────────────────
+
+    /// Insert a character at the cursor position. Advances the cursor past
+    /// the inserted character.
+    pub fn insert_at_cursor(&mut self, c: char) {
+        self.input.insert(self.cursor, c);
+        self.cursor += c.len_utf8();
+    }
+
+    /// Delete the character immediately before the cursor.
+    /// Returns `true` if anything was deleted.
+    pub fn delete_before_cursor(&mut self) -> bool {
+        if self.cursor == 0 {
+            return false;
+        }
+        let prev = self.prev_char_boundary(self.cursor);
+        self.input.replace_range(prev..self.cursor, "");
+        self.cursor = prev;
+        true
+    }
+
+    /// Delete the character at the cursor (forward delete / Delete key).
+    /// Returns `true` if anything was deleted.
+    pub fn delete_at_cursor(&mut self) -> bool {
+        if self.cursor >= self.input.len() {
+            return false;
+        }
+        let next = self.next_char_boundary(self.cursor);
+        self.input.replace_range(self.cursor..next, "");
+        true
+    }
+
+    /// Move the cursor one character to the left. CJK-safe — moves past the
+    /// entire multi-byte character.
+    pub fn move_cursor_left(&mut self) {
+        if self.cursor == 0 {
+            return;
+        }
+        self.cursor = self.prev_char_boundary(self.cursor);
+    }
+
+    /// Move the cursor one character to the right. CJK-safe.
+    pub fn move_cursor_right(&mut self) {
+        if self.cursor >= self.input.len() {
+            return;
+        }
+        self.cursor = self.next_char_boundary(self.cursor);
+    }
+
+    /// Move the cursor to the beginning of the input.
+    pub fn move_cursor_home(&mut self) {
+        self.cursor = 0;
+    }
+
+    /// Move the cursor to the end of the input.
+    pub fn move_cursor_end(&mut self) {
+        self.cursor = self.input.len();
+    }
+
+    // ── Private helpers ─────────────────────────────────────────────────
+
+    /// Find the byte offset of the previous character boundary before `pos`.
+    fn prev_char_boundary(&self, pos: usize) -> usize {
+        let mut p = pos.saturating_sub(1);
+        while !self.input.is_char_boundary(p) && p > 0 {
+            p -= 1;
+        }
+        p
+    }
+
+    /// Find the byte offset of the next character boundary after `pos`.
+    fn next_char_boundary(&self, pos: usize) -> usize {
+        let mut p = (pos + 1).min(self.input.len());
+        while !self.input.is_char_boundary(p) && p < self.input.len() {
+            p += 1;
+        }
+        p
+    }
 }
 
 #[cfg(test)]
@@ -167,5 +250,130 @@ mod tests {
         app.chat_lines_for_width(24);
         let (_, cached_revision_after_content) = app.chat_cache_state();
         assert_eq!(cached_revision_after_content, updated_revision);
+    }
+
+    // ── Cursor movement tests ───────────────────────────────────────────
+
+    #[test]
+    fn cursor_inserts_at_position() {
+        let mut app = App::new_for_test();
+        app.input = "helo".to_string();
+        app.cursor = 3;
+        app.insert_at_cursor('l');
+        assert_eq!(app.input, "hello");
+        assert_eq!(app.cursor, 4);
+    }
+
+    #[test]
+    fn cursor_inserts_cjk_at_position() {
+        let mut app = App::new_for_test();
+        app.input = "你好世".to_string();
+        app.cursor = 9;
+        app.insert_at_cursor('界');
+        assert_eq!(app.input, "你好世界");
+        assert_eq!(app.cursor, 12);
+    }
+
+    #[test]
+    fn cursor_delete_before_cursor_works() {
+        let mut app = App::new_for_test();
+        app.input = "hello".to_string();
+        app.cursor = 5;
+        assert!(app.delete_before_cursor());
+        assert_eq!(app.input, "hell");
+        assert_eq!(app.cursor, 4);
+    }
+
+    #[test]
+    fn cursor_delete_before_cursor_noop_at_start() {
+        let mut app = App::new_for_test();
+        app.input = "hi".to_string();
+        app.cursor = 0;
+        assert!(!app.delete_before_cursor());
+        assert_eq!(app.input, "hi");
+    }
+
+    #[test]
+    fn cursor_delete_at_cursor_forward() {
+        let mut app = App::new_for_test();
+        app.input = "abcd".to_string();
+        app.cursor = 1;
+        assert!(app.delete_at_cursor());
+        assert_eq!(app.input, "acd");
+        assert_eq!(app.cursor, 1);
+    }
+
+    #[test]
+    fn cursor_delete_at_cursor_cjk() {
+        let mut app = App::new_for_test();
+        app.input = "你好啊".to_string();
+        app.cursor = 3;
+        assert!(app.delete_at_cursor());
+        assert_eq!(app.input, "你啊");
+        assert_eq!(app.cursor, 3);
+    }
+
+    #[test]
+    fn cursor_moves_left_and_right_on_ascii() {
+        let mut app = App::new_for_test();
+        app.input = "abc".to_string();
+        app.cursor = 3;
+        app.move_cursor_left();
+        assert_eq!(app.cursor, 2);
+        app.move_cursor_left();
+        assert_eq!(app.cursor, 1);
+        app.move_cursor_right();
+        assert_eq!(app.cursor, 2);
+    }
+
+    #[test]
+    fn cursor_moves_left_and_right_on_cjk() {
+        let mut app = App::new_for_test();
+        app.input = "你好".to_string();
+        app.cursor = 6;
+        app.move_cursor_left();
+        assert_eq!(app.cursor, 3);
+        app.move_cursor_left();
+        assert_eq!(app.cursor, 0);
+        app.move_cursor_right();
+        assert_eq!(app.cursor, 3);
+    }
+
+    #[test]
+    fn cursor_home_and_end() {
+        let mut app = App::new_for_test();
+        app.input = "hello".to_string();
+        app.cursor = 3;
+        app.move_cursor_home();
+        assert_eq!(app.cursor, 0);
+        app.move_cursor_end();
+        assert_eq!(app.cursor, 5);
+    }
+
+    #[test]
+    fn cursor_stays_in_bounds_at_edges() {
+        let mut app = App::new_for_test();
+        app.input = "ab".to_string();
+        app.cursor = 0;
+        app.move_cursor_left();
+        assert_eq!(app.cursor, 0);
+        app.cursor = 2;
+        app.move_cursor_right();
+        assert_eq!(app.cursor, 2);
+    }
+
+    #[test]
+    fn empty_input_cursor_operations_are_noops() {
+        let mut app = App::new_for_test();
+        assert!(!app.delete_before_cursor());
+        assert!(!app.delete_at_cursor());
+        app.move_cursor_left();
+        assert_eq!(app.cursor, 0);
+        app.move_cursor_right();
+        assert_eq!(app.cursor, 0);
+        app.move_cursor_home();
+        assert_eq!(app.cursor, 0);
+        app.move_cursor_end();
+        assert_eq!(app.cursor, 0);
     }
 }

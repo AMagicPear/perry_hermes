@@ -2,9 +2,7 @@
 
 > A Rust reimplementation of Nous Research's [hermes-agent](https://github.com/NousResearch/hermes-agent): an AI agent runtime with tool use, streaming, skills, and an interactive CLI.
 
-Current status: **Phases 0-9 are complete**. That includes the core agent loop, OpenAI-compatible and Anthropic-compatible providers, the built-in terminal tool, streaming output, Ctrl-C interruption, TOML-based runtime configuration, runtime skill loading, and Phase 7 context compression.
-
-**In progress: Phase 10** — `hermes-skills` is being renamed to `hermes-skill-loader`, and the `hermes-cli` REPL is being replaced with a `ratatui`-based TUI (the legacy REPL is discarded, no `--tui` toggle). See [the design doc](docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md).
+Current status: **Phases 0-10 are complete**. That includes the core agent loop, OpenAI-compatible and Anthropic-compatible providers, the built-in terminal tool, streaming output, Ctrl-C interruption, TOML-based runtime configuration, runtime skill loading, Phase 7 context compression, and Phase 10 (rename `hermes-skills` → `hermes-skill-loader`; replace the `hermes-cli` REPL with a `ratatui`-based TUI). See [the design doc](docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md).
 
 ## Features
 
@@ -14,7 +12,7 @@ Current status: **Phases 0-9 are complete**. That includes the core agent loop, 
 - **Anthropic-compatible provider support**: supports the Anthropic Messages API and compatible services that require custom API key headers.
 - **TOML runtime configuration**: the CLI resolves config files in this order: `--config`, `~/.perry_hermes/config.toml`, then `./hermes.toml`.
 - **Cooperative cancellation**: a shared `CancellationToken` flows through model calls and tool execution, enabling graceful Ctrl-C interruption.
-- **Interactive TUI** (Phase 10, replacing the original REPL): full-screen `ratatui` interface with multi-turn chat, streaming output, live tool rendering, slash commands, and per-agent toolset filtering.
+- **Interactive TUI** (replacing the original REPL): full-screen `ratatui` interface with multi-turn chat, streaming output, live tool rendering, slash commands, per-agent toolset filtering, and a dynamic-height input box that grows with wrapped text.
 - **Built-in context compression**: compression is enabled by default, can be triggered manually with `/compact [focus]`, and reports completed, skipped, and failed compactions in the TUI status line.
 - **Runtime skill loading**: `SKILL.md` files under `~/.perry_hermes/skills/` are discovered and injected into the system prompt.
 - **Robust terminal tooling**: concurrent stdout/stderr draining avoids pipe deadlocks, and output truncation is aligned with Python Hermes behavior.
@@ -296,7 +294,7 @@ Current integration tests focus on core behavior and module boundaries rather th
 | Phase 7 | Context compression | Done |
 | Phase 8 | Anthropic provider | Done |
 | Phase 9 | Skill loading and prompt injection | Done |
-| Phase 10 | TUI with `ratatui` (replace `hermes-cli` REPL; rename `hermes-skills` → `hermes-skill-loader`) | In progress |
+| Phase 10 | TUI with `ratatui` (replace `hermes-cli` REPL; rename `hermes-skills` → `hermes-skill-loader`) | Done |
 | Phase 11 | Platform gateway integrations | Pending |
 | Phase 12 | Curator and learning loop | Pending |
 

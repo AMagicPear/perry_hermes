@@ -3,7 +3,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Position};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -19,13 +19,24 @@ pub fn render(f: &mut Frame, app: &mut App) {
         0
     };
 
+    // Input block: grows to fit the wrapped input text, up to a maximum
+    // visible content of `MAX_INPUT_CONTENT_LINES`. The minimum is
+    // `MIN_INPUT_CONTENT_LINES` so the box never shrinks below the
+    // legacy 3-line input area.
+    let full_inner_w = f.area().width.saturating_sub(2).max(1);
+    let input_lines = build_input_lines(app, full_inner_w);
+    let content_lines = input_lines.len();
+    let visible_content_lines =
+        content_lines.clamp(MIN_INPUT_CONTENT_LINES, MAX_INPUT_CONTENT_LINES);
+    let input_h: u16 = (visible_content_lines + 2) as u16;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Min(1),             // chat scrollback
             Constraint::Length(activity_h), // activity indicator (busy only)
             Constraint::Length(1),          // status row
-            Constraint::Length(3),          // input block
+            Constraint::Length(input_h),    // input block
         ])
         .split(f.area());
 
@@ -65,21 +76,44 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let input_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded);
-    let input_text = build_input_line(app);
-    let input = Paragraph::new(input_text)
+
+    // Inner area (inside the border).
+    let inner_w = chunks[3].width.saturating_sub(2);
+    let inner_h = chunks[3].height.saturating_sub(2);
+
+    // Scroll the input so the cursor stays visible when the wrapped text
+    // exceeds the visible area.
+    let cursor_row = compute_input_cursor_row(app, inner_w);
+    let scroll_y: u16 = if cursor_row >= inner_h {
+        cursor_row - inner_h + 1
+    } else {
+        0
+    };
+
+    let input = Paragraph::new(input_lines)
         .block(input_block)
-        .wrap(Wrap { trim: false });
+        .scroll((scroll_y, 0));
     f.render_widget(input, chunks[3]);
 
-    // --- Cursor: position it at the end of the typed text inside the input --
-    // The input block is 3 rows tall; the cursor sits on the middle row, just
-    // after the "❯ " prompt and the typed text.
-    let input_x = chunks[3].x;
-    let input_y = chunks[3].y;
-    let cursor_x = input_x + 1 + visible_width("❯ ") as u16 + visible_width(&app.input) as u16;
-    let cursor_y = input_y + 1;
+    // --- Cursor: position at the cursor byte offset, accounting for wrap ----
+    let inner_x = chunks[3].x + 1;
+    let inner_y = chunks[3].y + 1;
+
+    let (cursor_col, visible_cursor_row) = compute_input_cursor_col_row(app, inner_w);
+    let max_visible_row = inner_h.saturating_sub(1);
+    let cursor_y = inner_y + visible_cursor_row.min(max_visible_row);
+    let cursor_x = inner_x + cursor_col.min(inner_w.saturating_sub(1));
+
     f.set_cursor_position(Position::new(cursor_x, cursor_y));
 }
+
+/// Minimum number of content rows visible inside the input block. Default
+/// is one line, since most chat input is short; the block grows as the
+/// wrapped text requires.
+const MIN_INPUT_CONTENT_LINES: usize = 1;
+/// Maximum number of content rows visible inside the input block. When the
+/// wrapped text is longer, the input scrolls so the cursor stays visible.
+const MAX_INPUT_CONTENT_LINES: usize = 8;
 
 /// Build the chat-area `Vec<Line>` from the scrollback. Each line is
 /// pre-wrapped to `width` columns so the line count matches the rendered
@@ -301,24 +335,132 @@ fn build_activity_line(app: &App) -> Line<'static> {
     }
 }
 
-/// Build the input line: `❯ {text_or_placeholder}`.
-fn build_input_line(app: &App) -> Line<'static> {
-    let prompt = Span::styled(
+/// Build the input lines: the first line carries the cyan `❯ ` prompt, and
+/// the rest of the text is hard-wrapped to the inner width so the cursor's
+/// row/col match the rendered position. Returns one `Line` per visual row.
+fn build_input_lines(app: &App, inner_w: u16) -> Vec<Line<'static>> {
+    let prompt_span = Span::styled(
         "❯ ",
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD),
     );
+    let prompt_width = visible_width("❯ ");
+    let inner_w_us = inner_w as usize;
+
     if app.input.is_empty() {
-        Line::from(vec![
-            prompt,
-            Span::styled(
-                "Send a message…",
-                Style::default().add_modifier(Modifier::DIM),
-            ),
-        ])
+        return build_placeholder_lines(prompt_span, inner_w_us, prompt_width);
+    }
+
+    let first_w = inner_w_us.saturating_sub(prompt_width);
+    if first_w == 0 {
+        return vec![Line::from(prompt_span)];
+    }
+
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut remaining: &str = app.input.as_str();
+
+    // First line: prompt + as much text as fits after the prompt.
+    let (first, rest) = split_at_display_width(remaining, first_w);
+    lines.push(Line::from(vec![prompt_span, Span::raw(first.to_string())]));
+    remaining = rest;
+
+    // Subsequent lines: full inner_w of text per row.
+    while !remaining.is_empty() {
+        let (segment, rest) = split_at_display_width(remaining, inner_w_us);
+        lines.push(Line::from(segment.to_string()));
+        remaining = rest;
+    }
+
+    lines
+}
+
+/// Build the placeholder lines shown when the input is empty. The
+/// placeholder is rendered dim and wraps the same way as user input.
+fn build_placeholder_lines(
+    prompt_span: Span<'static>,
+    inner_w: usize,
+    prompt_width: usize,
+) -> Vec<Line<'static>> {
+    const PLACEHOLDER: &str = "Send a message…";
+    let dim = Style::default().add_modifier(Modifier::DIM);
+    let first_w = inner_w.saturating_sub(prompt_width);
+    if first_w == 0 {
+        return vec![Line::from(prompt_span)];
+    }
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut remaining: &str = PLACEHOLDER;
+    let (first, rest) = split_at_display_width(remaining, first_w);
+    lines.push(Line::from(vec![
+        prompt_span,
+        Span::styled(first.to_string(), dim),
+    ]));
+    remaining = rest;
+    while !remaining.is_empty() {
+        let (segment, rest) = split_at_display_width(remaining, inner_w);
+        lines.push(Line::from(Span::styled(segment.to_string(), dim)));
+        remaining = rest;
+    }
+    lines
+}
+
+/// Split `s` so the prefix has display width `<= max_width` and the suffix
+/// holds the rest. Splits at Unicode character boundaries.
+fn split_at_display_width(s: &str, max_width: usize) -> (&str, &str) {
+    if max_width == 0 {
+        return ("", s);
+    }
+    let mut width = 0usize;
+    let mut end = 0usize;
+    for (i, c) in s.char_indices() {
+        let cw = UnicodeWidthChar::width(c).unwrap_or(0);
+        if width + cw > max_width {
+            return (&s[..i], &s[i..]);
+        }
+        width += cw;
+        end = i + c.len_utf8();
+    }
+    (&s[..end], &s[end..])
+}
+
+/// Return the 0-indexed visual row the cursor sits on within the wrapped
+/// input. 0 means the first (prompt) line.
+fn compute_input_cursor_row(app: &App, inner_w: u16) -> u16 {
+    let prompt_width = visible_width("❯ ");
+    let first_w = (inner_w as usize).saturating_sub(prompt_width);
+    if first_w == 0 {
+        return 0;
+    }
+    let text_before = &app.input[..app.cursor.min(app.input.len())];
+    let text_before_width = visible_width(text_before);
+    if text_before_width <= first_w {
+        0
     } else {
-        Line::from(vec![prompt, Span::raw(app.input.clone())])
+        let after_first = text_before_width - first_w;
+        let inner_w_us = inner_w.max(1) as usize;
+        1 + (after_first / inner_w_us) as u16
+    }
+}
+
+/// Return `(col, row)` for the cursor inside the inner input area. `col` is
+/// 0-indexed from the inner left edge; `row` is 0-indexed from the inner
+/// top edge.
+fn compute_input_cursor_col_row(app: &App, inner_w: u16) -> (u16, u16) {
+    let prompt_width = visible_width("❯ ") as u16;
+    let first_w = (inner_w as usize).saturating_sub(prompt_width as usize);
+    if first_w == 0 {
+        return (0, 0);
+    }
+    let text_before = &app.input[..app.cursor.min(app.input.len())];
+    let text_before_width = visible_width(text_before);
+    if text_before_width <= first_w {
+        (prompt_width + text_before_width as u16, 0)
+    } else {
+        let after_first = text_before_width - first_w;
+        let inner_w_us = inner_w.max(1) as usize;
+        let row = 1 + (after_first / inner_w_us);
+        let col = after_first % inner_w_us;
+        (col as u16, row as u16)
     }
 }
 

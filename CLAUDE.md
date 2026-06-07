@@ -2,12 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-当前进度：**Phase 0–9 已完成**（核心循环 + OpenAI/Anthropic 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断 + TOML provider/agent 配置 + Skills 加载 + Phase 7 上下文压缩）。
-
-**正在进行：Phase 10 重构**（[设计文档](docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md)）：
-- `hermes-skills` → `hermes-skill-loader`（只改名字，内容/职责不变）
-- `hermes-cli` 从 REPL 直接重写为 ratatui TUI（原 REPL 代码废弃，不需要 `--tui` 切换）
-- 新增 `hermes-gateway` 留给 Phase 11
+当前进度：**Phase 0–10 已完成**（核心循环 + OpenAI/Anthropic 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断 + TOML provider/agent 配置 + Skills 加载 + Phase 7 上下文压缩 + Phase 10 `hermes-skill-loader` 重命名和 `hermes-cli` ratatui TUI 重写）。
 
 **2026-06-06 重构**：原 `hermes-loop` / `hermes-runtime` / `hermes-tools` 三个 crate 合并为 `hermes-agent`（见 `docs/superpowers/specs/2026-06-06-crate-consolidation-design.md`）。workspace 现在 5 个 crate；旧的 import 路径（`hermes_loop::*`、`hermes_runtime::*`、`hermes_tools::*`）都不再可用。
 

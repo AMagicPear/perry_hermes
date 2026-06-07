@@ -5,12 +5,12 @@ members = [
     "crates/hermes-core",
     "crates/hermes-providers",
     "crates/hermes-skill-loader",  # renamed from hermes-skills in Phase 10
-    "crates/hermes-cli",           # currently REPL, being rewritten as ratatui TUI in Phase 10
+    "crates/hermes-cli",           # ratatui TUI (Phase 10 replaces the legacy REPL)
     # "crates/hermes-gateway",  # phase 11+
 ]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.2"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"

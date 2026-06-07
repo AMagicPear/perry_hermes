@@ -148,11 +148,11 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
 
     assert_eq!(result.metrics.iterations, 2);
     assert!(
-        usage_events.iter().any(|used| *used == 7_030),
+        usage_events.contains(&7_030),
         "expected cached prompt tokens to be included in context usage, got {usage_events:?}"
     );
     assert!(
-        !usage_events.iter().any(|used| *used == 30),
+        !usage_events.contains(&30),
         "display context usage must not use bare Anthropic input_tokens when cache tokens exist: {usage_events:?}"
     );
 }
@@ -220,11 +220,11 @@ async fn loop_emits_context_usage_from_preflight_and_normalized_real_usage() {
         "expected a preflight context usage estimate, got {usage_events:?}"
     );
     assert!(
-        usage_events.iter().any(|used| *used == 1_042),
+        usage_events.contains(&1_042),
         "expected provider context usage to include cached input tokens, got {usage_events:?}"
     );
     assert!(
-        !usage_events.iter().any(|used| *used == 42),
+        !usage_events.contains(&42),
         "display context usage must not use bare input_tokens when cache tokens exist: {usage_events:?}"
     );
 }

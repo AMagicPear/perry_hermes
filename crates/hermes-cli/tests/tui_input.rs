@@ -23,6 +23,7 @@ fn typing_appends_to_input_buffer() {
 fn backspace_removes_last_char() {
     let mut app = App::new_for_test();
     app.input.push_str("hello");
+    app.cursor = 5;
     let ev = handle_key(&mut app, key(KeyCode::Backspace));
     assert!(matches!(ev, AppEvent::Tick));
     assert_eq!(app.input, "hell");
