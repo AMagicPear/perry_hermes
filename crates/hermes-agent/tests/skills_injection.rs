@@ -8,11 +8,9 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use chrono::Utc;
 use futures::stream;
 use perry_hermes_agent::{
-    AIAgent, AgentSession, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind,
-    SessionContext,
+    AIAgent, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind, SessionContext,
 };
 use perry_hermes_core::message::Message;
 use perry_hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
@@ -111,7 +109,7 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
     let mut config = config_for_echo();
     config.agent.system_prompt = Some("ONLY-CUSTOM".into());
     let agent = AIAgent::new(provider, config);
-    let session = AgentSession::new(SessionContext {
+    let session = agent.new_session(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
     });
@@ -125,7 +123,6 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
     let text = system_text(&msgs);
     assert!(text.contains("ONLY-CUSTOM"));
     assert!(text.contains("Current working directory: /tmp"));
-    assert!(text.contains("Conversation started:"));
 }
 
 #[tokio::test]
@@ -138,7 +135,7 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = AgentSession::new(SessionContext {
+    let session = agent.new_session(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
     });
@@ -151,7 +148,6 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
     let text = system_text(&msgs);
     assert!(text.contains("careful assistant"));
     assert!(text.contains("Current working directory: /tmp"));
-    assert!(text.contains("Provider: local"));
     assert!(!text.contains("Available skills"));
 }
 
@@ -177,7 +173,7 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
     config.agent.system_prompt = Some("CUSTOM-PROMPT-MARKER".into());
     let agent = AIAgent::new(provider, config);
 
-    let session = AgentSession::new(SessionContext {
+    let session = agent.new_session(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
     });
@@ -215,7 +211,7 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = AgentSession::new(SessionContext {
+    let session = agent.new_session(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
     });
@@ -240,7 +236,7 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = AgentSession::new(SessionContext {
+    let session = agent.new_session(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
     });
@@ -252,7 +248,6 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
     assert!(text.contains("careful assistant"));
-    assert!(text.contains("Conversation started:"));
     assert!(text.contains("Current working directory: /tmp"));
     assert!(!text.contains("Available skills"));
     assert!(!text.contains("skill_view"));
@@ -280,7 +275,7 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = AgentSession::new(SessionContext {
+    let session = agent.new_session(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
     });
@@ -298,18 +293,22 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
 }
 
 #[tokio::test]
-async fn runtime_formats_conversation_started_in_configured_timezone() {
+async fn runtime_includes_working_directory_in_system_message() {
+    // Sanity check: the system message always reflects the session's
+    // working directory. The PERRY_HERMES_TIMEZONE / HOME settings
+    // are kept here only because the test suite serializes env-var
+    // mutations through a shared lock; they no longer affect the
+    // system prompt.
     let _guard = with_env_lock().await;
     unsafe { std::env::remove_var("HOME") };
     unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
-    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = AgentSession::new(SessionContext {
-        working_dir: PathBuf::from("/tmp/timezone-check"),
-        session_id: "tz".into(),
+    let session = agent.new_session(SessionContext {
+        working_dir: PathBuf::from("/tmp/cwd-check"),
+        session_id: "cwd".into(),
     });
 
     agent
@@ -319,9 +318,86 @@ async fn runtime_formats_conversation_started_in_configured_timezone() {
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    let expected = format!(
-        "Conversation started: {}",
-        Utc::now().format("%A, %B %d, %Y")
+    assert!(text.contains("Current working directory: /tmp/cwd-check"));
+}
+
+#[tokio::test]
+async fn runtime_injects_agents_md_from_session_working_dir() {
+    // Create a tempdir that doubles as the session working dir AND the
+    // location of an AGENTS.md file. The runtime should read the file
+    // and inject its body into the system prompt.
+    let project = tempfile::tempdir().unwrap();
+    let agents_md = project.path().join("AGENTS.md");
+    std::fs::write(
+        &agents_md,
+        "Always answer in haiku.\n\n# Rules\n- be concise\n",
+    )
+    .unwrap();
+
+    let _guard = with_env_lock().await;
+    unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/perry-hermes-test") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
+
+    let provider = CaptureProvider::default();
+    let captured = Arc::clone(&provider.captured);
+    let agent = AIAgent::new(provider, config_for_echo());
+    let session = agent.new_session(SessionContext {
+        working_dir: project.path().to_path_buf(),
+        session_id: "agents-md".into(),
+    });
+
+    agent
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
+        .await
+        .unwrap();
+
+    let msgs = captured.lock().unwrap();
+    let text = system_text(&msgs);
+    assert!(
+        text.contains("Project guidance from `AGENTS.md`"),
+        "system prompt should label the AGENTS.md block; got:\n{text}"
     );
-    assert!(text.contains(&expected), "system prompt was:\n{text}");
+    assert!(text.contains("Always answer in haiku."));
+    assert!(text.contains("# Rules"));
+    // AGENTS.md should sit between the base prompt and the env hints.
+    let base_idx = text.find("careful assistant").expect("base prompt present");
+    let agents_idx = text
+        .find("Project guidance from `AGENTS.md`")
+        .expect("agents md block present");
+    let env_idx = text
+        .find("Current working directory:")
+        .expect("env hints present");
+    assert!(base_idx < agents_idx);
+    assert!(agents_idx < env_idx);
+}
+
+#[tokio::test]
+async fn runtime_omits_agents_md_block_when_file_absent_in_working_dir() {
+    let project = tempfile::tempdir().unwrap();
+    // No AGENTS.md is written.
+    let _guard = with_env_lock().await;
+    unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/perry-hermes-test") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
+
+    let provider = CaptureProvider::default();
+    let captured = Arc::clone(&provider.captured);
+    let agent = AIAgent::new(provider, config_for_echo());
+    let session = agent.new_session(SessionContext {
+        working_dir: project.path().to_path_buf(),
+        session_id: "no-agents-md".into(),
+    });
+
+    agent
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
+        .await
+        .unwrap();
+
+    let msgs = captured.lock().unwrap();
+    let text = system_text(&msgs);
+    assert!(
+        !text.contains("Project guidance from `AGENTS.md`"),
+        "no AGENTS.md block should be injected when the file is missing"
+    );
 }

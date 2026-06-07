@@ -1,8 +1,16 @@
-use std::path::PathBuf;
+//! System-prompt composition for `AIAgent` and `AgentSession`.
+//!
+//! The system prompt is a single immutable `Message` that lives at
+//! the head of a session's message log. It is built exactly once, at
+//! session construction, by `AIAgent::new_session`. There is no
+//! per-turn recomposition, no cache, no "prepend at send time"
+//! injection step: the system message is just the first message in
+//! the conversation log, identical in kind to the user and assistant
+//! messages that follow it.
 
-use chrono::Local;
-use chrono_tz::Tz;
-use perry_hermes_core::message::{Message, Role};
+use std::path::{Path, PathBuf};
+
+use perry_hermes_core::message::Message;
 
 use crate::session::SessionContext;
 
@@ -12,7 +20,7 @@ Use it to inspect the system or run shell commands when needed. When you have en
 to answer, give a concise final response — do not call tools again.";
 
 /// Resolve the local skills directory shared by system-prompt composition
-/// (`compose_system_prompt`) and the runtime tool registry
+/// (`compose_base_system_prompt`) and the runtime tool registry
 /// (`tool_catalog::build_registry`).
 ///
 /// Resolution rules:
@@ -35,6 +43,9 @@ pub fn resolve_skills_dir() -> Option<PathBuf> {
     Some(base.join("skills"))
 }
 
+/// Compose the agent-scoped base prompt: the user-configured
+/// `system_prompt` (or `DEFAULT_SYSTEM_PROMPT`) plus the skills
+/// block, if any. Computed once at `AIAgent` construction.
 pub fn compose_base_system_prompt(user_prompt: Option<&str>) -> Option<String> {
     let base = user_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
     let Some(dir) = resolve_skills_dir() else {
@@ -56,94 +67,85 @@ pub fn compose_base_system_prompt(user_prompt: Option<&str>) -> Option<String> {
     }
 }
 
-pub fn build_runtime_system_prompt(
-    base_prompt: &str,
-    session: &SessionContext,
-    provider_name: Option<&str>,
-) -> String {
-    let mut sections = vec![base_prompt.trim().to_string()];
+/// Filename scanned for project-level agent guidance relative to a
+/// session's working directory. Mirrors the convention used by Claude
+/// Code and friends.
+pub const AGENTS_MD_FILENAME: &str = "AGENTS.md";
 
-    let env_hints = build_environment_hints(session);
-    if !env_hints.is_empty() {
-        sections.push(env_hints);
-    }
-
-    let metadata = build_conversation_metadata(session, provider_name);
-    if !metadata.is_empty() {
-        sections.push(metadata);
-    }
-
-    sections.join("\n\n")
-}
-
-pub fn inject_system_prompt(messages: Vec<Message>, system_prompt: Option<String>) -> Vec<Message> {
-    let Some(system_prompt) = system_prompt else {
-        return messages;
-    };
-    if messages.iter().any(|m| m.role == Role::System) {
-        return messages;
-    }
-    let mut with_system = Vec::with_capacity(messages.len() + 1);
-    with_system.push(Message::system(system_prompt));
-    with_system.extend(messages);
-    with_system
-}
-
-fn build_environment_hints(session: &SessionContext) -> String {
-    let mut lines = Vec::new();
-    let host = if cfg!(target_os = "macos") {
-        "Host: macOS".to_string()
-    } else if cfg!(target_os = "windows") {
-        "Host: Windows".to_string()
-    } else {
-        format!("Host: {}", std::env::consts::OS)
-    };
-    lines.push(host);
-
-    if let Some(home) = std::env::var_os("HOME") {
-        lines.push(format!(
-            "User home directory: {}",
-            PathBuf::from(home).display()
-        ));
-    }
-    lines.push(format!(
-        "Current working directory: {}",
-        session.working_dir.display()
-    ));
-    lines.join("\n")
-}
-
-fn build_conversation_metadata(session: &SessionContext, provider_name: Option<&str>) -> String {
-    let now = perry_hermes_now();
-    let mut lines = vec![format!(
-        "Conversation started: {}",
-        now.format("%A, %B %d, %Y")
-    )];
-    if !session.session_id.is_empty() {
-        lines.push(format!("Session ID: {}", session.session_id));
-    }
-    if let Some(provider) = provider_name {
-        lines.push(format!("Provider: {provider}"));
-    }
-    lines.join("\n")
-}
-
-fn perry_hermes_now() -> chrono::DateTime<chrono::FixedOffset> {
-    if let Some(name) = std::env::var("PERRY_HERMES_TIMEZONE")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-    {
-        if let Ok(tz) = name.parse::<Tz>() {
-            return chrono::Utc::now().with_timezone(&tz).fixed_offset();
+/// Load `<working_dir>/AGENTS.md` and return a system-prompt block
+/// containing its body, or `None` if the file is missing, empty, or
+/// unreadable.
+///
+/// Behavior:
+/// - Missing file -> `None` (silently skipped; absence is normal).
+/// - Read/permission errors -> `None` with a `tracing::warn!` so the
+///   operator can diagnose without crashing the agent.
+/// - The body is trimmed before injection; an empty body yields
+///   `None` so a stray whitespace-only file does not produce an
+///   empty section in the system prompt.
+pub fn load_agents_md_block(working_dir: &Path) -> Option<String> {
+    let path = working_dir.join(AGENTS_MD_FILENAME);
+    match std::fs::read_to_string(&path) {
+        Ok(body) => {
+            let trimmed = body.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(format!(
+                    "Project guidance from `{}`:\n\n{}",
+                    AGENTS_MD_FILENAME, trimmed
+                ))
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            tracing::warn!("failed to read {}: {e}", path.display());
+            None
         }
     }
-    Local::now().fixed_offset()
+}
+
+/// Build the immutable system `Message` for a session, combining the
+/// agent-scoped base prompt (base + skills) with the session-scoped
+/// sections (AGENTS.md block, working directory).
+///
+/// Returns `None` if no base prompt is configured and the session
+/// has no AGENTS.md to inject; the session is then created without
+/// a system message.
+///
+/// Callers should invoke this at most once per session, store the
+/// returned message in the session's log, and treat it as
+/// immutable thereafter.
+pub fn build_system_message(
+    base_prompt: Option<&str>,
+    session: &SessionContext,
+) -> Option<Message> {
+    let mut sections: Vec<String> = Vec::with_capacity(3);
+    if let Some(base) = base_prompt {
+        sections.push(base.trim().to_string());
+    }
+    if let Some(block) = load_agents_md_block(&session.working_dir) {
+        sections.push(block);
+    }
+    sections.push(working_directory_hint(session));
+
+    if sections.is_empty() {
+        None
+    } else {
+        Some(Message::system(sections.join("\n\n")))
+    }
+}
+
+fn working_directory_hint(session: &SessionContext) -> String {
+    format!(
+        "Current working directory: {}",
+        session.working_dir.display()
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
     use std::path::Path;
     use std::sync::Mutex;
 
@@ -193,37 +195,154 @@ mod tests {
         assert_eq!(dir, expected);
     }
 
-    #[test]
-    fn build_runtime_system_prompt_includes_session_metadata() {
-        unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
-        unsafe { std::env::set_var("HOME", "/tmp/perry-home") };
+    fn write_agents_md(dir: &Path, body: &str) {
+        std::fs::write(dir.join(AGENTS_MD_FILENAME), body).unwrap();
+    }
 
-        let prompt = build_runtime_system_prompt(
-            "BASE",
+    #[test]
+    fn load_agents_md_block_returns_none_when_file_is_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(load_agents_md_block(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn load_agents_md_block_returns_none_when_file_is_empty_or_whitespace() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        write_agents_md(tmp.path(), "");
+        assert!(load_agents_md_block(tmp.path()).is_none());
+
+        write_agents_md(tmp.path(), "   \n\n  \t\n");
+        assert!(load_agents_md_block(tmp.path()).is_none());
+    }
+
+    #[test]
+    fn load_agents_md_block_includes_body_with_project_guidance_label() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_agents_md(tmp.path(), "Always run `cargo fmt` before commits.\n");
+
+        let block = load_agents_md_block(tmp.path()).expect("block should load");
+        assert!(
+            block.contains("Project guidance from `AGENTS.md`"),
+            "block should label itself; got: {block}"
+        );
+        assert!(block.contains("Always run `cargo fmt` before commits."));
+    }
+
+    #[test]
+    fn load_agents_md_block_trims_surrounding_whitespace() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_agents_md(tmp.path(), "\n\n  meaningful content  \n\n");
+
+        let block = load_agents_md_block(tmp.path()).expect("block should load");
+        assert!(block.contains("meaningful content"));
+        assert!(!block.contains("  meaningful content  "));
+    }
+
+    #[test]
+    fn build_system_message_includes_working_dir_even_without_base_or_agents() {
+        // The working-directory hint is always present, so the
+        // system message is never empty for a configured session.
+        let msg = build_system_message(
+            None,
+            &SessionContext {
+                working_dir: PathBuf::from("/tmp/no-agents-md"),
+                session_id: "s".into(),
+            },
+        )
+        .expect("message should be Some because of working-dir hint");
+        let text = msg.content.as_text();
+        assert!(text.contains("Current working directory: /tmp/no-agents-md"));
+    }
+
+    #[test]
+    fn build_system_message_includes_base_prompt_and_working_dir() {
+        let msg = build_system_message(
+            Some("BASE"),
             &SessionContext {
                 working_dir: PathBuf::from("/tmp/project"),
                 session_id: "session-123".into(),
             },
-            Some("echo"),
-        );
+        )
+        .expect("message should be Some");
 
-        assert!(prompt.contains("BASE"));
-        assert!(prompt.contains("Current working directory: /tmp/project"));
-        assert!(prompt.contains("User home directory: /tmp/perry-home"));
-        assert!(prompt.contains("Session ID: session-123"));
-        assert!(prompt.contains("Provider: echo"));
-        assert!(prompt.contains(&format!(
-            "Conversation started: {}",
-            Utc::now().format("%A, %B %d, %Y")
-        )));
+        let text = msg.content.as_text();
+        assert!(text.contains("BASE"));
+        assert!(text.contains("Current working directory: /tmp/project"));
+        // Provider and Session ID lines must not leak into the prompt.
+        assert!(!text.contains("Provider:"));
+        assert!(!text.contains("Session ID:"));
     }
 
     #[test]
-    fn inject_system_prompt_is_noop_when_messages_already_have_system_role() {
-        let messages = vec![Message::system("existing")];
+    fn build_system_message_orders_base_agents_md_working_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_agents_md(tmp.path(), "UNIQUE-AGENTS-MARKER-XYZ");
 
-        let injected = inject_system_prompt(messages, Some("new prompt".into()));
-        assert_eq!(injected.len(), 1);
-        assert_eq!(injected[0].content.as_text(), "existing");
+        let msg = build_system_message(
+            Some("BASE-PROMPT"),
+            &SessionContext {
+                working_dir: tmp.path().to_path_buf(),
+                session_id: "s".into(),
+            },
+        )
+        .expect("message should be Some");
+        let text = msg.content.as_text();
+
+        let base_idx = text.find("BASE-PROMPT").expect("base present");
+        let agents_idx = text
+            .find("UNIQUE-AGENTS-MARKER-XYZ")
+            .expect("agents md present");
+        let env_idx = text
+            .find("Current working directory:")
+            .expect("env hints present");
+        // Order: base -> agents.md -> working dir.
+        assert!(base_idx < agents_idx, "agents block should follow base");
+        assert!(
+            agents_idx < env_idx,
+            "agents block should precede working-dir hint"
+        );
+    }
+
+    #[test]
+    fn build_system_message_omits_agents_block_when_file_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let msg = build_system_message(
+            Some("BASE"),
+            &SessionContext {
+                working_dir: tmp.path().to_path_buf(),
+                session_id: "s".into(),
+            },
+        )
+        .expect("message should be Some");
+        let text = msg.content.as_text();
+        assert!(!text.contains("Project guidance from `AGENTS.md`"));
+        assert!(text.contains("BASE"));
+    }
+
+    #[test]
+    fn build_system_message_reads_agents_md_from_session_working_dir_not_process_cwd() {
+        // Session working dir has AGENTS.md; process cwd does not.
+        // The runtime must consult the session working dir, not std::env::current_dir().
+        let session_dir = tempfile::tempdir().unwrap();
+        write_agents_md(session_dir.path(), "FROM-SESSION-DIR");
+
+        // Move the process cwd to a different tempdir that has no AGENTS.md.
+        let other_cwd = tempfile::tempdir().unwrap();
+        let _guard = ENV_LOCK.lock().unwrap();
+        let _cwd = CwdGuard::enter(other_cwd.path());
+
+        let msg = build_system_message(
+            Some("BASE"),
+            &SessionContext {
+                working_dir: session_dir.path().to_path_buf(),
+                session_id: "s".into(),
+            },
+        )
+        .expect("message should be Some");
+        let text = msg.content.as_text();
+        assert!(text.contains("FROM-SESSION-DIR"));
+        // The body must appear exactly once — no double-injection.
+        assert_eq!(text.matches("FROM-SESSION-DIR").count(), 1);
     }
 }

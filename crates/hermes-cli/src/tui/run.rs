@@ -85,7 +85,7 @@ pub async fn run(
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(16));
 
-    let session = AgentSession::new(SessionContext {
+    let session = agent.new_session(SessionContext {
         working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
         session_id: "cli".into(),
     });
@@ -814,10 +814,13 @@ mod tests {
             },
         );
         let agent = Arc::new(AIAgent::from_loop(loop_));
-        let session = AgentSession::new(SessionContext {
-            working_dir: PathBuf::from("."),
-            session_id: "test".into(),
-        });
+        let session = AgentSession::new(
+            SessionContext {
+                working_dir: PathBuf::from("."),
+                session_id: "test".into(),
+            },
+            None,
+        );
         session
             .replace_messages(vec![
                 Message::user("first request"),
@@ -865,10 +868,15 @@ mod tests {
         )
         .expect("compact completion should update app state");
 
-        let history = session.messages().await;
-        assert_eq!(history.len(), 2);
+        // The system message lives in its own session field, so
+        // the business log after compaction is [first_user, summary]
+        // (length 1). The full outbound view reattaches the system
+        // message; here it is absent because this test session
+        // was constructed without one.
+        let log = session.messages().await;
+        assert_eq!(log.len(), 1);
         assert!(matches!(
-            history.get(1),
+            log.first(),
             Some(Message { content, .. }) if content.as_text() == "summary"
         ));
         assert_eq!(app.context_used_tokens, Some(1_002));

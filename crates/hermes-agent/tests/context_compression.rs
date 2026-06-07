@@ -414,10 +414,9 @@ async fn session_compact_rewrites_history_with_summary_message() {
         echo_config_with_compression(),
     );
 
-    let session = AgentSession::new(test_session());
+    let session = AgentSession::new(test_session(), Some(system_message("system")));
     session
         .replace_messages(vec![
-            system_message("system"),
             user_message("first request"),
             assistant_text("first answer"),
             user_message("second request"),
@@ -438,8 +437,24 @@ async fn session_compact_rewrites_history_with_summary_message() {
         perry_hermes_agent::LoopEvent::CompressionCompleted { .. } => {}
         other => panic!("expected CompressionCompleted event, got {other:?}"),
     }
-    let result = session.messages().await;
+    // After manual compaction:
+    //   * `messages` holds only the business log:
+    //     `[first_user, summary]`.
+    //   * `outbound_messages` reattaches the system message that
+    //     was passed in at session construction.
+    let log = session.messages().await;
+    let result = session.outbound_messages().await;
 
+    assert!(
+        matches!(
+            log.as_slice(),
+            [
+                Message { role: Role::User, content: Content::Text(first), .. },
+                Message { role: Role::User, content: Content::Text(summary), .. },
+            ] if first == "first request" && summary.contains("[CONTEXT SUMMARY")
+        ),
+        "compaction should leave business log as first user + summary, got {log:?}"
+    );
     assert!(
         matches!(
             result.as_slice(),
@@ -449,7 +464,7 @@ async fn session_compact_rewrites_history_with_summary_message() {
                 Message { role: Role::User, content: Content::Text(summary), .. },
             ] if first == "first request" && summary.contains("[CONTEXT SUMMARY")
         ),
-        "manual compaction should keep only system + first user + summary, got {result:?}"
+        "outbound view should reattach system + first user + summary, got {result:?}"
     );
 }
 
@@ -467,24 +482,31 @@ async fn session_turn_owns_and_updates_message_history() {
         }]),
         echo_config_with_compression(),
     );
-    let session = AgentSession::new(test_session());
+    // The system message lives in its own field on the session,
+    // not at the head of `messages`. The session exposes it via
+    // `system_message()` and reattaches it in `outbound_messages()`
+    // for the loop.
+    let session = AgentSession::new(test_session(), Some(system_message("system")));
 
     let result = agent
         .run_session_turn("first request", &session, CancellationToken::new(), |_| {})
         .await
         .expect("session turn should succeed");
 
+    // `messages()` returns the business log only — the system
+    // message is in its own field. `outbound_messages()` is what
+    // the loop saw, including the system message.
     let history = session.messages().await;
-    assert_eq!(history.len(), result.messages.len());
+    let outbound = session.outbound_messages().await;
+    assert_eq!(outbound.len(), result.messages.len());
     assert_eq!(
-        messages_to_text(&history),
+        messages_to_text(&outbound),
         messages_to_text(&result.messages),
-        "session history should match the run result"
+        "outbound view should match the run result"
     );
     assert!(matches!(
         history.as_slice(),
         [
-            Message { role: Role::System, .. },
             Message { role: Role::User, content: Content::Text(user), .. },
             Message { role: Role::Assistant, content: Content::Text(answer), .. },
         ] if user == "first request" && answer == "first answer"
@@ -516,10 +538,11 @@ async fn session_compact_rewrites_session_messages() {
         }]),
         echo_config_with_compression(),
     );
-    let session = AgentSession::new(test_session());
+    // System message is supplied via the dedicated field; the
+    // business log contains only user/assistant turns.
+    let session = AgentSession::new(test_session(), Some(system_message("system")));
     session
         .replace_messages(vec![
-            system_message("system"),
             user_message("first request"),
             assistant_text("first answer"),
             user_message("second request"),
@@ -543,9 +566,19 @@ async fn session_compact_rewrites_session_messages() {
         other => panic!("expected CompressionCompleted event, got {other:?}"),
     }
 
-    let history = session.messages().await;
+    let log = session.messages().await;
     assert!(matches!(
-        history.as_slice(),
+        log.as_slice(),
+        [
+            Message { role: Role::User, content: Content::Text(first), .. },
+            Message { role: Role::User, content: Content::Text(summary), .. },
+        ] if first == "first request" && summary.contains("condensed")
+    ));
+    // The system message is preserved in the session's separate
+    // field and reattaches at the head of `outbound_messages`.
+    let outbound = session.outbound_messages().await;
+    assert!(matches!(
+        outbound.as_slice(),
         [
             Message { role: Role::System, .. },
             Message { role: Role::User, content: Content::Text(first), .. },
@@ -566,10 +599,9 @@ async fn session_compact_reports_summary_failure() {
         echo_config_with_compression(),
     );
 
-    let session = AgentSession::new(test_session());
+    let session = AgentSession::new(test_session(), Some(system_message("system")));
     session
         .replace_messages(vec![
-            system_message("system"),
             user_message("first request"),
             assistant_text("first answer"),
             user_message("second request"),
@@ -609,10 +641,9 @@ async fn session_compact_compresses_medium_history_instead_of_skipping() {
         echo_config_with_compression(),
     );
 
-    let session = AgentSession::new(test_session());
+    let session = AgentSession::new(test_session(), Some(system_message("system")));
     session
         .replace_messages(vec![
-            system_message("system"),
             user_message("first request"),
             assistant_text("first answer"),
             user_message("second request"),

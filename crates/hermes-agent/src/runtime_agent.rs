@@ -8,12 +8,9 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{PerryHermesConfig, ResolvedProviderConfig};
-use crate::prompting::{
-    build_runtime_system_prompt, compose_base_system_prompt, inject_system_prompt,
-    resolve_skills_dir,
-};
+use crate::prompting::{build_system_message, compose_base_system_prompt, resolve_skills_dir};
 use crate::provider_factory::build_provider;
-use crate::session::AgentSession;
+use crate::session::{AgentSession, SessionContext};
 use crate::tool_catalog::build_registry;
 use crate::{
     AgentLoop, AgentRunError, CompactorConfig, ContextWindow, LoopConfig, LoopEvent, RunResult,
@@ -22,8 +19,12 @@ use crate::{
 
 pub struct AIAgent {
     loop_: AgentLoop,
+    /// Agent-scoped base system prompt (user-configured prompt +
+    /// skills block). Computed once at construction. Per-session
+    /// additions (AGENTS.md, working directory) are folded in by
+    /// `new_session` when the session is created; the result is
+    /// stored as the session's first message and never recomputed.
     base_system_prompt: Option<String>,
-    provider_name: Option<String>,
 }
 
 impl AIAgent {
@@ -34,13 +35,11 @@ impl AIAgent {
     #[allow(clippy::needless_pass_by_value)]
     pub fn from_config(config: PerryHermesConfig) -> anyhow::Result<Self> {
         let selected_provider = config.resolve_provider()?;
-        let provider_name = Some(selected_provider.name.clone());
         let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
         let provider = build_provider(&selected_provider)?;
         Ok(Self {
             loop_: build_loop(Arc::from(provider), &config, &selected_provider),
             base_system_prompt,
-            provider_name,
         })
     }
 
@@ -49,9 +48,6 @@ impl AIAgent {
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(provider: impl Provider + 'static, config: PerryHermesConfig) -> Self {
         let selected_provider = config.resolve_provider().ok();
-        let provider_name = selected_provider
-            .as_ref()
-            .map(|provider| provider.name.clone());
         let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
         Self {
             loop_: build_loop_for_custom_provider(
@@ -60,7 +56,6 @@ impl AIAgent {
                 selected_provider.as_ref(),
             ),
             base_system_prompt,
-            provider_name,
         }
     }
 
@@ -68,8 +63,17 @@ impl AIAgent {
         Self {
             loop_,
             base_system_prompt: None,
-            provider_name: None,
         }
+    }
+
+    /// Construct a new `AgentSession` for `context`, computing the
+    /// immutable system message from this agent's base prompt and the
+    /// session's working directory. The system message is stored at
+    /// the head of the session's message log and never recomposed on
+    /// subsequent turns.
+    pub fn new_session(&self, context: SessionContext) -> AgentSession {
+        let system_message = build_system_message(self.base_system_prompt.as_deref(), &context);
+        AgentSession::new(context, system_message)
     }
 
     pub async fn run_session_turn(
@@ -89,16 +93,23 @@ impl AIAgent {
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
-        let messages = session.messages().await;
+        // The loop sees the full outbound stream: system message
+        // (if any) followed by the business message log.
+        let messages = session.outbound_messages().await;
         let result = self
             .run_messages_for_session(messages, session, cancel, on_event)
             .await;
         match &result {
             Ok(run_result) => {
-                session.replace_messages(run_result.messages.clone()).await;
+                // Strip the system message back out — it lives in
+                // its own field on the session. The remaining log
+                // is the new business message history.
+                let business = strip_system_message(&run_result.messages);
+                session.replace_messages(business).await;
             }
             Err(AgentRunError::FailedTurn { failed_turn, .. }) => {
-                session.replace_messages(failed_turn.messages.clone()).await;
+                let business = strip_system_message(&failed_turn.messages);
+                session.replace_messages(business).await;
             }
             Err(_) => {}
         }
@@ -117,12 +128,6 @@ impl AIAgent {
             working_dir: session.context.working_dir.clone(),
             permissions: ToolPermissions { subprocess: true },
         };
-        let messages = inject_system_prompt(
-            messages,
-            self.base_system_prompt.as_deref().map(|base| {
-                build_runtime_system_prompt(base, &session.context, self.provider_name.as_deref())
-            }),
-        );
         self.loop_
             .run(messages, ctx, Arc::clone(&session.state), cancel, on_event)
             .await
@@ -134,12 +139,6 @@ impl AIAgent {
         focus_topic: Option<&str>,
         session: &AgentSession,
     ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
-        let messages = inject_system_prompt(
-            messages,
-            self.base_system_prompt.as_deref().map(|base| {
-                build_runtime_system_prompt(base, &session.context, self.provider_name.as_deref())
-            }),
-        );
         self.loop_
             .compact_messages(messages, focus_topic, Arc::clone(&session.state))
             .await
@@ -150,12 +149,18 @@ impl AIAgent {
         session: &AgentSession,
         focus_topic: Option<&str>,
     ) -> Result<LoopEvent, AgentRunError> {
-        let messages = session.messages().await;
+        // The compactor sees the full outbound stream so it can
+        // preserve the system message and first user message as
+        // anchors. After compaction, the system message is
+        // reattached by the session and only the business portion
+        // is written back to the log.
+        let messages = session.outbound_messages().await;
         let (messages, event) = self
             .compact_messages_for_session(messages, focus_topic, session)
             .await?;
         if matches!(event, LoopEvent::CompressionCompleted { .. }) {
-            session.replace_messages(messages).await;
+            let business = strip_system_message(&messages);
+            session.replace_messages(business).await;
         }
         Ok(event)
     }
@@ -164,6 +169,19 @@ impl AIAgent {
     fn has_compaction_strategy(&self) -> bool {
         self.loop_.has_compaction_strategy()
     }
+}
+
+/// Drop any leading system message(s) from a list of messages.
+/// Used by the session to translate between the loop's outbound
+/// representation (which always includes the system message) and
+/// the session's storage representation (where the system message
+/// lives in its own field).
+fn strip_system_message(messages: &[Message]) -> Vec<Message> {
+    messages
+        .iter()
+        .filter(|m| m.role != perry_hermes_core::message::Role::System)
+        .cloned()
+        .collect()
 }
 
 fn build_loop(
@@ -519,13 +537,15 @@ mod tests {
         let agent = AIAgent {
             loop_,
             base_system_prompt: None,
-            provider_name: None,
         };
 
-        let session = AgentSession::new(SessionContext {
-            working_dir: std::path::PathBuf::from("/tmp/perry-hermes-test-cwd"),
-            session_id: "session-xyz".into(),
-        });
+        let session = AgentSession::new(
+            SessionContext {
+                working_dir: std::path::PathBuf::from("/tmp/perry-hermes-test-cwd"),
+                session_id: "session-xyz".into(),
+            },
+            None,
+        );
 
         let cancel = CancellationToken::new();
         agent
