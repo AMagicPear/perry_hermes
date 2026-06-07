@@ -1,277 +1,39 @@
-//! `OpenAiProvider` — real OpenAI Chat Completions adapter.
+//! SSE parser for the OpenAI Chat Completions stream.
 //!
-//! Phase 2 minimum: POST `{base_url}/chat/completions` with the
-//! serialized request, parse the response, and map the `finish_reason`
-//! string to our `FinishReason` enum. Tool-call parsing, streaming,
-//! retries, and richer error mapping land in later phases.
+//! Splits the byte stream on `\n\n` event boundaries, parses each
+//! `data: ...` line as JSON, and yields `CompletionDelta`s.
+//!
+//! `split_think_tag_content` reclassifies content that arrives between
+//! `<think>...</think>` tags as reasoning. This is non-standard for
+//! OpenAI (only some reasoning models emit it) but matches the
+//! `OpenAiStreamState` invariant used in the tests.
 
-use std::time::Duration;
-
-use async_trait::async_trait;
 use bytes::Bytes;
-use futures::Stream;
-use futures::StreamExt;
-use serde::Serialize;
-use tokio_util::sync::CancellationToken;
+use futures::{Stream, StreamExt};
 
-use hermes_core::message::{Content, ContentPart, Message};
-use hermes_core::provider::{CompletionDelta, FinishReason, Provider};
-use hermes_core::registry::ToolSchema;
-use hermes_core::{CompletionStream, ProviderError};
+use hermes_core::provider::{CompletionDelta, FinishReason, ToolCallDelta};
+use hermes_core::ProviderError;
 
-pub struct OpenAiProvider {
-    api_key: String,
-    base_url: String,
-    model: String,
-    client: reqwest::Client,
+/// Strip the `data: ` prefix and surrounding whitespace; return the
+/// payload, or `None` if the line is a comment or a control line.
+pub(super) fn parse_sse_data_line(line: &str) -> Option<&str> {
+    line.strip_prefix("data: ").map(str::trim)
 }
 
-impl OpenAiProvider {
-    pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self {
-            api_key: api_key.into(),
-            base_url: "https://api.openai.com/v1".into(),
-            model: model.into(),
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(120))
-                .build()
-                .expect("reqwest client"),
-        }
-    }
-
-    /// Override the API base URL. Tests point this at a local mock
-    /// server; users can use it to talk to Azure / Together / a proxy.
-    pub fn with_base_url(mut self, base_url: impl Into<String>) -> Self {
-        self.base_url = base_url.into();
-        self
-    }
+/// Per-stream state carried across delta yields.
+#[derive(Default)]
+pub(super) struct OpenaiStreamState {
+    /// `true` after a `<think>` tag has been seen but before the
+    /// matching `</think>` arrives; used by `split_think_tag_content`.
+    pub in_think_tag: bool,
 }
 
-#[derive(Serialize)]
-struct StreamOptions {
-    include_usage: bool,
-}
-
-#[derive(Serialize)]
-struct ChatRequest<'a> {
-    model: &'a str,
-    messages: Vec<OaiMessage<'a>>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    tools: Vec<OaiTool<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<&'static str>,
-    stream: bool,
-    /// Ask OpenAI to include token usage in the stream's final chunk
-    /// (otherwise `in`/`out` metrics stay at 0).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    stream_options: Option<StreamOptions>,
-}
-
-#[derive(Serialize)]
-struct OaiMessage<'a> {
-    role: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    content: Option<OaiMessageContent<'a>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_call_id: Option<&'a str>,
-    /// Round-trip the LLM's `tool_calls` so the next request
-    /// remembers which tools it invoked. OpenAI expects each entry as
-    /// `{ id, type: "function", function: { name, arguments } }`.
-    /// `arguments` is sent as a JSON *string* (matching how OpenAI
-    /// returns it), not a nested object.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_calls: Option<Vec<OaiToolCallRef<'a>>>,
-}
-
-#[derive(Serialize)]
-#[serde(untagged)]
-enum OaiMessageContent<'a> {
-    Text(&'a str),
-    Parts(Vec<OaiContentPart<'a>>),
-}
-
-#[derive(Serialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-enum OaiContentPart<'a> {
-    Text { text: &'a str },
-    ImageUrl { image_url: OaiImageUrl<'a> },
-}
-
-#[derive(Serialize)]
-struct OaiImageUrl<'a> {
-    url: &'a str,
-}
-
-#[derive(Serialize)]
-struct OaiToolCallRef<'a> {
-    id: &'a str,
-    r#type: &'static str, // "function"
-    function: OaiFunctionCallRef<'a>,
-}
-
-#[derive(Serialize)]
-struct OaiFunctionCallRef<'a> {
-    name: &'a str,
-    arguments: String,
-}
-
-#[derive(Serialize)]
-struct OaiTool<'a> {
-    r#type: &'static str,
-    function: OaiFunctionDef<'a>,
-}
-
-#[derive(Serialize)]
-struct OaiFunctionDef<'a> {
-    name: &'a str,
-    description: &'a str,
-    parameters: &'a serde_json::Value,
-}
-
-fn build_request_body<'a>(
-    model: &'a str,
-    messages: &'a [Message],
-    tools: &'a [ToolSchema],
-    stream: bool,
-) -> Result<ChatRequest<'a>, ProviderError> {
-    let oai_msgs: Vec<OaiMessage> = messages
-        .iter()
-        .map(|m| {
-            let tool_calls = m.tool_calls.as_ref().map(|calls| {
-                calls
-                    .iter()
-                    .map(|c| {
-                        let arguments =
-                            serde_json::to_string(&c.arguments).unwrap_or_else(|_| "null".into());
-                        OaiToolCallRef {
-                            id: &c.id,
-                            r#type: "function",
-                            function: OaiFunctionCallRef {
-                                name: &c.name,
-                                arguments,
-                            },
-                        }
-                    })
-                    .collect()
-            });
-            OaiMessage {
-                role: m.role.as_str(),
-                content: match &m.content {
-                    Content::Text(s) => Some(OaiMessageContent::Text(s.as_str())),
-                    Content::Parts(parts) => Some(OaiMessageContent::Parts(
-                        parts
-                            .iter()
-                            .map(|p| match p {
-                                ContentPart::Text { text } => OaiContentPart::Text {
-                                    text: text.as_str(),
-                                },
-                                ContentPart::ImageUrl { url } => OaiContentPart::ImageUrl {
-                                    image_url: OaiImageUrl { url: url.as_str() },
-                                },
-                            })
-                            .collect(),
-                    )),
-                },
-                tool_call_id: m.tool_call_id.as_deref(),
-                tool_calls,
-            }
-        })
-        .collect();
-
-    let oai_tools: Vec<OaiTool> = tools
-        .iter()
-        .map(|t| OaiTool {
-            r#type: "function",
-            function: OaiFunctionDef {
-                name: &t.name,
-                description: &t.description,
-                parameters: &t.parameters,
-            },
-        })
-        .collect();
-
-    let has_tools = !oai_tools.is_empty();
-    Ok(ChatRequest {
-        model,
-        messages: oai_msgs,
-        tools: oai_tools,
-        tool_choice: if has_tools { Some("auto") } else { None },
-        stream,
-        stream_options: Some(StreamOptions {
-            include_usage: true,
-        }),
-    })
-}
-
-#[async_trait]
-impl Provider for OpenAiProvider {
-    async fn stream(
-        &self,
-        messages: &[Message],
-        tools: &[ToolSchema],
-        cancel: CancellationToken,
-    ) -> Result<CompletionStream, ProviderError> {
-        let body = build_request_body(&self.model, messages, tools, true)?;
-        let url = format!("{}/chat/completions", self.base_url);
-
-        // Pre-flight: send request, race against cancel
-        let resp = tokio::select! {
-            biased;
-            _ = cancel.cancelled() => {
-                return Err(ProviderError::Cancelled);
-            }
-            r = self.client.post(&url)
-                .bearer_auth(&self.api_key)
-                .json(&body)
-                .send() => r.map_err(|e| ProviderError::Transport(e.to_string()))?,
-        };
-
-        // Pre-flight: status check
-        if resp.status() == 401 {
-            return Err(ProviderError::Auth(resp.text().await.unwrap_or_default()));
-        }
-        if resp.status() == 429 {
-            return Err(ProviderError::RateLimited {
-                retry_after_secs: 1,
-            });
-        }
-        if !resp.status().is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            return Err(ProviderError::InvalidResponse(body));
-        }
-
-        // Hand the byte stream to the SSE parser.
-        Ok(Box::pin(parse_sse_chunks(resp.bytes_stream())))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// SSE parser
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-pub(crate) fn parse_sse_for_test(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
-    use futures::stream;
-    // stream::iter on a Vec yields a Unpin stream — needed for Box::pin inside
-    // parse_sse_chunks.
-    let stream = stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::copy_from_slice(input))]);
-    let s = parse_sse_chunks(stream);
-    futures::executor::block_on(async move {
-        let mut v = Vec::new();
-        futures::pin_mut!(s);
-        while let Some(item) = s.next().await {
-            v.push(item?);
-        }
-        Ok(v)
-    })
-}
-
-fn parse_sse_chunks(
+pub(super) fn parse_sse_chunks(
     bytes: impl Stream<Item = reqwest::Result<Bytes>> + Unpin,
 ) -> impl Stream<Item = Result<CompletionDelta, ProviderError>> {
     async_stream::stream! {
         let mut buffer = String::new();
-        let mut state = OpenAiStreamState::default();
+        let mut state = OpenaiStreamState::default();
         let mut bytes = Box::pin(bytes);
         while let Some(chunk) = bytes.next().await {
             match chunk {
@@ -281,8 +43,7 @@ fn parse_sse_chunks(
             while let Some(pos) = buffer.find("\n\n") {
                 let event: String = buffer.drain(..pos + 2).collect();
                 for line in event.lines() {
-                    let Some(rest) = line.strip_prefix("data: ") else { continue };
-                    let payload = rest.trim();
+                    let Some(payload) = parse_sse_data_line(line) else { continue };
                     if payload == "[DONE]" { return; }
                     match parse_sse_data_payload(payload, &mut state) {
                         Ok(d) => yield Ok(d),
@@ -294,14 +55,9 @@ fn parse_sse_chunks(
     }
 }
 
-#[derive(Default)]
-struct OpenAiStreamState {
-    in_think_tag: bool,
-}
-
 fn parse_sse_data_payload(
     payload: &str,
-    state: &mut OpenAiStreamState,
+    state: &mut OpenaiStreamState,
 ) -> Result<CompletionDelta, ProviderError> {
     #[derive(serde::Deserialize)]
     struct SseChunk {
@@ -337,8 +93,8 @@ fn parse_sse_data_payload(
         .map_err(|e| ProviderError::InvalidResponse(format!("sse json: {e}")))?;
 
     // OpenAI sends a final chunk with empty `choices` and a populated
-    // `usage` when `stream_options.include_usage=true`. Handle by returning
-    // a delta carrying only the usage.
+    // `usage` when `stream_options.include_usage=true`. Surface just the
+    // usage; the consumer's accumulator merges it into the next delta.
     let Some(choice) = chunk.choices.into_iter().next() else {
         return Ok(CompletionDelta {
             content_delta: None,
@@ -350,15 +106,12 @@ fn parse_sse_data_payload(
     };
 
     let tool_call_delta = choice.delta.tool_calls.and_then(|calls| {
-        calls
-            .into_iter()
-            .next()
-            .map(|c| hermes_core::provider::ToolCallDelta {
-                index: c.index,
-                id: c.id,
-                name: c.function.name,
-                arguments_fragment: c.function.arguments,
-            })
+        calls.into_iter().next().map(|c| ToolCallDelta {
+            index: c.index,
+            id: c.id,
+            name: c.function.name,
+            arguments_fragment: c.function.arguments,
+        })
     });
 
     let (content_delta, reasoning_delta) = match choice.delta.reasoning_content {
@@ -378,9 +131,13 @@ fn parse_sse_data_payload(
     })
 }
 
+/// Split a content chunk along `<think>...</think>` boundaries.
+/// Content inside the tags is reported as `reasoning`; everything else
+/// stays in `content`. The state flag persists across calls so tags can
+/// open and close across chunk boundaries.
 fn split_think_tag_content(
     content: Option<String>,
-    state: &mut OpenAiStreamState,
+    state: &mut OpenaiStreamState,
 ) -> (Option<String>, Option<String>) {
     let Some(content) = content else {
         return (None, None);
@@ -410,18 +167,35 @@ fn split_think_tag_content(
         }
     }
 
-    (
-        if visible.is_empty() {
-            None
-        } else {
-            Some(visible)
-        },
-        if reasoning.is_empty() {
-            None
-        } else {
-            Some(reasoning)
-        },
-    )
+    let content = if visible.is_empty() {
+        None
+    } else {
+        Some(visible)
+    };
+    let reasoning = if reasoning.is_empty() {
+        None
+    } else {
+        Some(reasoning)
+    };
+    (content, reasoning)
+}
+
+/// Test helper: drive the parser over a single byte chunk and collect
+/// every delta. Used by the unit tests below and by `tool_call_roundtrip.rs`.
+#[cfg(test)]
+pub(crate) fn parse_sse_for_test(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
+    // stream::iter on a Vec yields a Unpin stream — needed for Box::pin
+    // inside `parse_sse_chunks`.
+    let stream = futures::stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::copy_from_slice(input))]);
+    let s = parse_sse_chunks(stream);
+    futures::executor::block_on(async move {
+        let mut v = Vec::new();
+        futures::pin_mut!(s);
+        while let Some(item) = s.next().await {
+            v.push(item?);
+        }
+        Ok(v)
+    })
 }
 
 // ---------------------------------------------------------------------------
