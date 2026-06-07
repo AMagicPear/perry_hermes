@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures::stream;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use futures::stream;
 use hermes_agent::AgentRunError;
-use hermes_core::message::{Content, Message, Role};
 use hermes_core::error::LoopError;
+use hermes_core::message::{Content, Message, Role};
 use hermes_core::provider::{
     Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta,
 };

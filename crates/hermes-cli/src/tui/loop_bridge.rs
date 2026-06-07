@@ -43,7 +43,10 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
         }
         LoopEvent::ToolCallFinished { call, result } => {
             let (output, ok) = match result {
-                Ok(tool_output) => (summarize_tool_output(&call.name, &tool_output.content), true),
+                Ok(tool_output) => (
+                    summarize_tool_output(&call.name, &tool_output.content),
+                    true,
+                ),
                 Err(e) => (e.to_string(), false),
             };
             app.push_line(RenderedLine::ToolResult {

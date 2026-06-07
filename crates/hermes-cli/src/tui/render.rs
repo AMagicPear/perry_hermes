@@ -190,11 +190,7 @@ fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
     let title = " ⚕ Hermes ✦ ";
     let top_prefix = "╭─";
     let top_suffix = "╮";
-    let top = fit_line_to_width(
-        format!("{top_prefix}{title}{top_suffix}"),
-        w,
-        top_suffix,
-    );
+    let top = fit_line_to_width(format!("{top_prefix}{title}{top_suffix}"), w, top_suffix);
     let bot_prefix = "╰─";
     let bot_suffix = "╯";
     let bot = fit_line_to_width(format!("{bot_prefix}{bot_suffix}"), w, bot_suffix);
@@ -206,7 +202,11 @@ fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
     for segment in normalized.split('\n') {
         let wrapped = wrap_to_width(segment, inner_w as u16);
         for line in wrapped {
-            let content = line.spans.first().map(|span| span.content.as_ref()).unwrap_or("");
+            let content = line
+                .spans
+                .first()
+                .map(|span| span.content.as_ref())
+                .unwrap_or("");
             out.push(Line::from(format!("{body_indent}{content}")));
         }
     }
@@ -222,7 +222,11 @@ fn reasoning_block(text: &str, width: u16) -> Vec<Line<'static>> {
         let prefix = if idx == 0 { "… " } else { "  " };
         let wrapped = wrap_to_width(segment, width.saturating_sub(prefix.len() as u16));
         for (line_idx, line) in wrapped.into_iter().enumerate() {
-            let content = line.spans.first().map(|span| span.content.as_ref()).unwrap_or("");
+            let content = line
+                .spans
+                .first()
+                .map(|span| span.content.as_ref())
+                .unwrap_or("");
             let head = if line_idx == 0 { prefix } else { "  " };
             out.push(Line::from(format!("{head}{content}")).dim());
         }

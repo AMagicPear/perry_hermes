@@ -3,8 +3,8 @@
 use hermes_cli::tui::app::App;
 use hermes_cli::tui::event::{AppMode, RenderedLine};
 use hermes_cli::tui::render::render;
-use ratatui::layout::Position;
 use ratatui::backend::TestBackend;
+use ratatui::layout::Position;
 use ratatui::style::{Color, Modifier};
 use ratatui::Terminal;
 use std::time::{Duration, Instant};
@@ -111,8 +111,7 @@ fn assistant_render_preserves_explicit_newlines() {
         rows.join("\n")
     );
     assert!(
-        rows.iter()
-            .any(|row| row.contains("╭─ ⚕ Hermes")),
+        rows.iter().any(|row| row.contains("╭─ ⚕ Hermes")),
         "expected framed assistant header; rows:\n{}",
         rows.join("\n")
     );
@@ -144,9 +143,18 @@ fn tool_result_render_preserves_multiline_preview() {
         text.push_str(&row_at(&buffer, y));
         text.push('\n');
     }
-    assert!(text.contains("1|first"), "expected first preview line: {text}");
-    assert!(text.contains("2|second"), "expected second preview line: {text}");
-    assert!(text.contains("3|third"), "expected third preview line: {text}");
+    assert!(
+        text.contains("1|first"),
+        "expected first preview line: {text}"
+    );
+    assert!(
+        text.contains("2|second"),
+        "expected second preview line: {text}"
+    );
+    assert!(
+        text.contains("3|third"),
+        "expected third preview line: {text}"
+    );
 }
 
 #[test]
@@ -214,7 +222,10 @@ fn reasoning_rows_are_dimmed_and_prefixed() {
         .find(|y| row_at(&buffer, *y).contains("thinking step"))
         .expect("expected reasoning row");
     let row = row_at(&buffer, row_y);
-    assert!(row.contains("… thinking step"), "expected reasoning prefix: {row:?}");
+    assert!(
+        row.contains("… thinking step"),
+        "expected reasoning prefix: {row:?}"
+    );
 
     let cell = buffer.cell((0, row_y)).expect("cell");
     assert_eq!(cell.fg, Color::Reset, "expected no explicit fg override");
