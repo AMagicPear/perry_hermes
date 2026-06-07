@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-06
 **Status:** Proposed
-**Supersedes:** the "SkillActivationTool is a Phase 12 deliverable" wording in `2026-06-05-phase-9-skills-loading-design.md` (we deliver four new built-in tools now and keep the existing terminal tool aligned with Python naming) and the placeholders in `hermes-skills` `render_system_prompt_block` that reference a `skill_view` tool that did not yet exist
+**Supersedes:** the "SkillActivationTool is a Phase 12 deliverable" wording in `2026-06-05-phase-9-skills-loading-design.md` (we deliver four new built-in tools now and keep the existing terminal tool aligned with Python naming) and the placeholders in `hermes-skill-loader` `render_system_prompt_block` that reference a `skill_view` tool that did not yet exist
 **Reference implementation:** `/Users/amagicpear/.hermes/hermes-agent/tools/{terminal_tool.py,file_tools.py,file_operations.py,skills_tool.py}` (Python source of truth for naming, schema, toolset categorization, and externally visible behavior)
 
 ## 1. Goal
@@ -85,7 +85,7 @@ We keep the shell implementation in `bash.rs` for now to avoid churn, but from t
 ```text
 tools/bash.rs    → hermes-core
 tools/files.rs   → hermes-core
-tools/skills.rs  → hermes-core, hermes-skills
+tools/skills.rs  → hermes-core, hermes-skill-loader
 tool_catalog.rs  → tools/*, hermes-core
 ```
 
@@ -347,7 +347,7 @@ User-input-driven failures should remain tool-result errors rather than crashing
 | `crates/hermes-agent/src/prompting.rs` | reuse shared `resolve_skills_dir()` helper |
 | `crates/hermes-agent/src/lib.rs` | export the new tool types |
 | `crates/hermes-agent/tests/*` | extend for schema + behavior parity |
-| `hermes-skills` | may need small API additions if Rust tools require richer frontmatter/linked-file helpers |
+| `hermes-skill-loader` | may need small API additions if Rust tools require richer frontmatter/linked-file helpers |
 
 ## 10. Follow-Up Backlog
 

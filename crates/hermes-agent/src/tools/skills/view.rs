@@ -84,7 +84,7 @@ impl Tool for SkillViewTool {
             });
         }
 
-        let skills = match hermes_skills::load_all(&self.skills_dir) {
+        let skills = match hermes_skill_loader::load_all(&self.skills_dir) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(ToolOutput {
@@ -94,7 +94,7 @@ impl Tool for SkillViewTool {
             }
         };
 
-        let mut candidates: Vec<&hermes_skills::Skill> = skills
+        let mut candidates: Vec<&hermes_skill_loader::Skill> = skills
             .iter()
             .filter(|s| s.name == name || s.qualified_name == name)
             .collect();
@@ -177,7 +177,7 @@ impl Tool for SkillViewTool {
 }
 
 fn read_linked_file(
-    skill: &hermes_skills::Skill,
+    skill: &hermes_skill_loader::Skill,
     skill_root: &Path,
     file_path: &str,
 ) -> ToolOutput {

@@ -119,8 +119,12 @@ fn build_loop(provider: Arc<dyn Provider>, config: &HermesConfig) -> AgentLoop {
             .clone()
             .unwrap_or_else(|| provider_name(&config.provider).to_string());
         Some(Arc::new(TokioMutex::new(
-            ContextCompressor::new(compressor_config, model_name)
-                .with_summary_provider(Arc::clone(&provider)),
+            ContextCompressor::new(
+                compressor_config,
+                model_name,
+                config.agent.context_window_size,
+            )
+            .with_summary_provider(Arc::clone(&provider)),
         ))
             as Arc<TokioMutex<dyn hermes_core::ContextEngine>>)
     } else {

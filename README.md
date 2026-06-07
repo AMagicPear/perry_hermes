@@ -4,6 +4,8 @@
 
 Current status: **Phases 0-9 are complete**. That includes the core agent loop, OpenAI-compatible and Anthropic-compatible providers, the built-in terminal tool, streaming output, Ctrl-C interruption, TOML-based runtime configuration, runtime skill loading, and Phase 7 context compression.
 
+**In progress: Phase 10** — `hermes-skills` is being renamed to `hermes-skill-loader`, and the `hermes-cli` REPL is being replaced with a `ratatui`-based TUI (the legacy REPL is discarded, no `--tui` toggle). See [the design doc](docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md).
+
 ## Features
 
 - **ReAct-style agent loop**: the model decides, calls tools, receives results, and continues until the task is complete.
@@ -12,21 +14,23 @@ Current status: **Phases 0-9 are complete**. That includes the core agent loop, 
 - **Anthropic-compatible provider support**: supports the Anthropic Messages API and compatible services that require custom API key headers.
 - **TOML runtime configuration**: the CLI resolves config files in this order: `--config`, `~/.perry_hermes/config.toml`, then `./hermes.toml`.
 - **Cooperative cancellation**: a shared `CancellationToken` flows through model calls and tool execution, enabling graceful Ctrl-C interruption.
-- **Interactive REPL CLI**: multi-turn chat, streaming output, live tool rendering, slash commands, and per-agent toolset filtering.
-- **Built-in context compression**: compression is enabled by default, can be triggered manually with `/compact [focus]`, and reports completed, skipped, and failed compactions in the REPL.
+- **Interactive TUI** (Phase 10, replacing the original REPL): full-screen `ratatui` interface with multi-turn chat, streaming output, live tool rendering, slash commands, and per-agent toolset filtering.
+- **Built-in context compression**: compression is enabled by default, can be triggered manually with `/compact [focus]`, and reports completed, skipped, and failed compactions in the TUI status line.
 - **Runtime skill loading**: `SKILL.md` files under `~/.perry_hermes/skills/` are discovered and injected into the system prompt.
 - **Robust terminal tooling**: concurrent stdout/stderr draining avoids pipe deadlocks, and output truncation is aligned with Python Hermes behavior.
-- **Clear crate boundaries**: `hermes-core` stays transport-agnostic, while runtime orchestration lives in `hermes-agent` and the product shell lives in `hermes-cli`.
+- **Clear crate boundaries**: `hermes-core` stays transport-agnostic, while runtime orchestration lives in `hermes-agent` and the product shell lives in `hermes-cli` (TUI). Phase 11 will add `hermes-gateway` as a peer adapter of `hermes-agent` for Slack/Discord/Telegram.
 
 ## Architecture
 
 ```text
-hermes-cli
+hermes-cli (ratatui TUI)
   └─ hermes-agent
        ├─ hermes-core
        ├─ hermes-providers
-       └─ hermes-skills
+       └─ hermes-skill-loader
 ```
+
+> Note: `hermes-skills` was renamed to `hermes-skill-loader` in Phase 10 to make its data-only scope explicit (see [the design doc](docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md)). Future MCP support will live in its own `hermes-mcp-*` crate, not as a "utilities" catch-all.
 
 ### Crates
 
@@ -35,8 +39,8 @@ hermes-cli
 | `hermes-core` | Shared types, traits, and errors with no IO concerns | `Provider`, `Tool`, `Message`, `Completion`, `FinishReason` |
 | `hermes-providers` | Provider implementations and streaming protocol adapters | `OpenAiProvider`, `AnthropicProvider`, `EchoProvider` |
 | `hermes-agent` | Runtime assembly, loop execution, session context, and built-in tools | `AIAgent`, `AgentLoop`, `SessionContext`, built-in tool registry |
-| `hermes-skills` | Skill discovery, parsing, validation, and prompt-ready metadata | `SKILL.md` loading and validation |
-| `hermes-cli` | Interactive terminal entrypoint | config resolution, REPL loop, event rendering |
+| `hermes-skill-loader` | Skill data loading, validation, and prompt-ready metadata | `SKILL.md` frontmatter/layout/validate, `render_system_prompt_block` |
+| `hermes-cli` | Interactive TUI entrypoint (ratatui) | config resolution, TUI event loop, event rendering |
 
 ### Runtime boundaries
 
@@ -154,15 +158,15 @@ disabled_toolsets = []
 # context_compression_threshold_percent = 0.50
 ```
 
-### REPL controls
+### TUI controls
 
 - Type any message to send it to the agent.
-- `/quit` or `/exit` exits the REPL.
+- `/quit` or `/exit` exits the TUI.
 - `/compact` runs a manual context compaction pass.
 - `/compact <focus>` runs a manual compaction pass while prioritizing that topic in the generated summary.
 - `Ctrl-C` once cancels the current turn.
-- `Ctrl-C` twice exits the REPL.
-- `Ctrl-D` exits the REPL.
+- `Ctrl-C` twice exits the TUI.
+- `Ctrl-D` exits the TUI.
 
 ### Examples
 
@@ -227,6 +231,7 @@ Current integration tests focus on core behavior and module boundaries rather th
 | [docs/history/hermes-comparison.md](/Users/amagicpear/projects/perry_hermes/docs/history/hermes-comparison.md) | Comparison notes between the Rust implementation and Python Hermes |
 | [docs/superpowers/specs/2026-06-06-builtin-tools-expansion-design.md](/Users/amagicpear/projects/perry_hermes/docs/superpowers/specs/2026-06-06-builtin-tools-expansion-design.md) | Built-in tools expansion design |
 | [docs/superpowers/specs/2026-06-06-architecture-cohesion-refactor-design.md](/Users/amagicpear/projects/perry_hermes/docs/superpowers/specs/2026-06-06-architecture-cohesion-refactor-design.md) | Architecture cleanup and cohesion refactor |
+| [docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md](/Users/amagicpear/projects/perry_hermes/docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md) | Phase 10: rename `hermes-skills` → `hermes-skill-loader` + replace `hermes-cli` REPL with `ratatui` TUI |
 | [CLAUDE.md](/Users/amagicpear/projects/perry_hermes/CLAUDE.md) | Development guidance for in-repo agent workflows |
 
 ## Roadmap
@@ -243,7 +248,7 @@ Current integration tests focus on core behavior and module boundaries rather th
 | Phase 7 | Context compression | Done |
 | Phase 8 | Anthropic provider | Done |
 | Phase 9 | Skill loading and prompt injection | Done |
-| Phase 10 | TUI with `ratatui` | Pending |
+| Phase 10 | TUI with `ratatui` (replace `hermes-cli` REPL; rename `hermes-skills` → `hermes-skill-loader`) | In progress |
 | Phase 11 | Platform gateway integrations | Pending |
 | Phase 12 | Curator and learning loop | Pending |
 

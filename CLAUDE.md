@@ -4,6 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 当前进度：**Phase 0–9 已完成**（核心循环 + OpenAI/Anthropic 适配器 + BashTool + 运行时门面 + 交互式 CLI + 流式输出 + Ctrl-C 中断 + TOML provider/agent 配置 + Skills 加载 + Phase 7 上下文压缩）。
 
+**正在进行：Phase 10 重构**（[设计文档](docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md)）：
+- `hermes-skills` → `hermes-skill-loader`（只改名字，内容/职责不变）
+- `hermes-cli` 从 REPL 直接重写为 ratatui TUI（原 REPL 代码废弃，不需要 `--tui` 切换）
+- 新增 `hermes-gateway` 留给 Phase 11
+
 **2026-06-06 重构**：原 `hermes-loop` / `hermes-runtime` / `hermes-tools` 三个 crate 合并为 `hermes-agent`（见 `docs/superpowers/specs/2026-06-06-crate-consolidation-design.md`）。workspace 现在 5 个 crate；旧的 import 路径（`hermes_loop::*`、`hermes_runtime::*`、`hermes_tools::*`）都不再可用。
 
 ## Build & Test
@@ -31,14 +36,14 @@ direnv auto-loads `.envrc` on `cd` — no manual env var exports needed once set
 Dependency direction is strictly downward — no reverse edges between crates. Workspace members (see root `Cargo.toml`):
 
 ```
-hermes-cli (interactive REPL)
+hermes-cli (ratatui TUI — 正在替换原 REPL)
   └─ hermes-agent (AIAgent + AgentLoop + built-in tools + config + skills wiring)
        ├─ hermes-core (types, traits, errors — no IO)
        ├─ hermes-providers (OpenAI / Anthropic adapters, Echo mock)
-       └─ hermes-skills (SKILL.md loading + system-prompt block)
+       └─ hermes-skill-loader (SKILL.md data loading + system-prompt block)
 ```
 
-`hermes-providers` and `hermes-skills` are independent leaves — adding a tool or skill never touches a provider, and vice versa. `hermes-core` is also a leaf.
+`hermes-providers` and `hermes-skill-loader` are independent leaves — adding a tool or skill never touches a provider, and vice versa. `hermes-core` is also a leaf. Phase 11 计划新增 `hermes-gateway`（Slack/Discord/Telegram 适配器），与 `hermes-cli` 并列消费 `AIAgent`。
 
 ### Inside `hermes-agent`
 
@@ -68,7 +73,7 @@ Integration tests live in `crates/hermes-agent/tests/`: `echo_loop`, `tool_dispa
 
 **The agent loop** (`hermes-agent/src/loop_engine.rs`): `AgentLoop` holds `Arc<dyn Provider>` plus an `Arc<InMemoryRegistry>` and a `LoopConfig`. The `run()` method is a state machine — on `FinishReason::ToolUse` it dispatches tools sequentially, appends `role: tool` messages, and calls the provider again. `on_event` callback is the only side-channel (CLI uses it for spinner/activity feed; tests collect event strings). **`run()` takes a `ToolContext`** so runtime/gateway controls `session_id`, `working_dir`, and permissions.
 
-**Runtime + CLI** (`hermes-agent/src/runtime_agent.rs`, `crates/hermes-cli/src/main.rs`): the runtime is the shared composition point for CLI and future gateway. `AIAgent::from_config(HermesConfig)` and `AIAgent::new(provider, HermesConfig)` are the two constructors. Per-run `working_dir` / `session_id` travel in a `SessionContext` passed to `run_turn` / `run_messages` (the runtime is reusable across sessions). CLI only parses args, resolves the config path (`--config` → `~/.perry_hermes/config.toml` → `./hermes.toml`, error if none), maintains REPL history, and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's history. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the loop. Slash commands: `/quit`, `/exit`, `/compact [focus]`. Provider-specific things (`OPENAI_API_KEY` etc.) live in `[provider]` of the TOML file; the runtime never reads the environment for defaults except for the single key named by `api_key_env`. Skills live in `~/.perry_hermes/skills/`; the runtime loads them when `compose_system_prompt` is called (during `AIAgent::from_config`) and injects a name+description index into the system prompt. Context compression is enabled by default unless `[agent].context_compression_enabled = false`.
+**Runtime + CLI/TUI** (`hermes-agent/src/runtime_agent.rs`, `crates/hermes-cli/src/main.rs`): the runtime is the shared composition point for CLI/TUI and future gateway. `AIAgent::from_config(HermesConfig)` and `AIAgent::new(provider, HermesConfig)` are the two constructors. Per-run `working_dir` / `session_id` travel in a `SessionContext` passed to `run_turn` / `run_messages` (the runtime is reusable across sessions). The CLI binary only parses args, resolves the config path (`--config` → `~/.perry_hermes/config.toml` → `./hermes.toml`, error if none), and hands off to a `ratatui` event loop that drives the agent and renders `LoopEvent`s. Multi-turn: `run_result.messages` becomes the next turn's history. Ctrl-C: first cancels the current turn via `CancellationToken`, second exits the TUI. Slash commands (`/quit`, `/exit`, `/compact [focus]`) live inside the TUI's input handler. Provider-specific things (`OPENAI_API_KEY` etc.) live in `[provider]` of the TOML file; the runtime never reads the environment for defaults except for the single key named by `api_key_env`. Skills live in `~/.perry_hermes/skills/`; the runtime loads them when `compose_system_prompt` is called (during `AIAgent::from_config`) and injects a name+description index into the system prompt. Context compression is enabled by default unless `[agent].context_compression_enabled = false`.
 
 **OpenAI adapter** (`hermes-providers/src/openai.rs`): `OpenAiProvider::with_base_url()` lets it talk to any OpenAI-compatible endpoint (DeepSeek, MiniMax, Ollama, vLLM). The `tool_calls` field round-trips: assistant's `tool_calls` are serialized back into the next request body so the LLM remembers which tools it called. OpenAI sends `arguments` as a JSON **string** (not object) — must `serde_json::from_str` on parse and `to_string` on serialize. `tool_choice: "auto"` is **omitted** when the tool list is empty (some providers reject it). `stream_options.include_usage = true` is sent so `in`/`out` metrics populate. `finish_reason` is parsed via `FinishReason::from_provider_str` (renamed from `from_str` to avoid colliding with the std `FromStr` trait).
 
@@ -82,7 +87,7 @@ Strict RED→GREEN→REFACTOR. No production code without a failing test first.
 - **GREEN**: minimal code to pass, `cargo test` again, all green
 - **REFACTOR**: clean up, tests still green
 
-For loop tests, `ScriptedProvider` (in `crates/hermes-agent/tests/support/`) returns a fixed sequence of `Completion`s — use it for multi-iteration scenarios. For OpenAI provider HTTP tests, `httpmock` mocks the server. For request body inspection, use a raw `tokio::net::TcpListener` (httpmock 0.7 doesn't expose captured bodies). When tests mutate process-wide state (e.g. `HOME` for CLI config resolution), serialize them with a static `Mutex<()>` (see `hermes-cli/src/main.rs` and `hermes-cli/tests/cli_smoke.rs` for the pattern).
+For loop tests, `ScriptedProvider` (in `crates/hermes-agent/tests/support/`) returns a fixed sequence of `Completion`s — use it for multi-iteration scenarios. For OpenAI provider HTTP tests, `httpmock` mocks the server. For request body inspection, use a raw `tokio::net::TcpListener` (httpmock 0.7 doesn't expose captured bodies). When tests mutate process-wide state (e.g. `HOME` for CLI config resolution), serialize them with a static `Mutex<()>` (see `hermes-cli/src/main.rs` and `hermes-cli/tests/cli_smoke.rs` for the pattern). For TUI tests (Phase 10+), drive the `ratatui` `App` through a fixed-size `TestBackend` and assert on rendered `Buffer` content — no real terminal required.
 
 ## Design Docs
 
@@ -93,6 +98,7 @@ Current code is authoritative. Design docs live in `docs/superpowers/specs/` and
 | `2026-06-06-crate-consolidation-design.md` | 5-crate layout after merging `hermes-loop`/`hermes-runtime`/`hermes-tools` |
 | `2026-06-06-architecture-cohesion-refactor-design.md` | Architecture cleanup and cohesion refactor |
 | `2026-06-06-builtin-tools-expansion-design.md` | Built-in tools expansion design |
+| `2026-06-06-phase-10-rename-and-tui-design.md` | Phase 10: `hermes-skills` → `hermes-skill-loader` + `hermes-cli` → ratatui TUI |
 | `2026-06-06-phase-12-skill-view-tool-design.md` | SkillView tool design (Phase 12) |
 
 `docs/history/hermes-comparison.md` tracks divergence from the Python Hermes source.
