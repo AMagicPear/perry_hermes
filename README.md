@@ -1,13 +1,39 @@
 # Perry Hermes
 
 Perry Hermes (`perry_hermes`) is an AI agent runtime with streaming model
-calls, tool use, skills, context compaction, and a terminal TUI. The codebase is
-intentionally shaped so the CLI is only one adapter: the same runtime/session
-model should work for a future gateway, Telegram bot, or other platform.
+calls, tool use, skills, context compaction, and a terminal TUI. It is inspired
+by Nous Research's [Hermes Agent][hermes-agent] and keeps one explicit long-term
+goal from that project: reproduce the self-learning mechanism while keeping
+Perry Hermes' own runtime, session model, and platform adapters cleanly
+separated.
 
-## Design
+## Features
 
-The central design rule is that a conversation is owned by a session, not by a
+- **ReAct-style agent loop**: the model can reason, call tools, receive tool
+  results, and continue until the turn is complete.
+- **Session-owned conversation state**: `AgentSession` owns model history,
+  context-window facts, and compaction state; platform adapters only own
+  presentation and session lookup.
+- **Provider-reported context accounting**: context usage comes from provider
+  usage data, not character/token estimates.
+- **Simple context compaction**: manual or threshold-triggered compaction keeps
+  the system prompt, first user message, and one LLM-generated summary.
+- **OpenAI-compatible and Anthropic-compatible providers**: provider adapters
+  live below the agent runtime and share the transport-free core contracts.
+- **Runtime skills**: `SKILL.md` files are loaded into the system prompt, and
+  built-in skill tools let the model inspect available local skills.
+- **Terminal and file tools**: built-in tools expose shell execution, file
+  reads/writes, and skill discovery through one registry.
+- **Ratatui TUI**: the CLI is an adapter around the shared runtime/session
+  model, with slash commands, streaming output, cancellation, and compact status
+  events.
+- **Self-learning target**: the roadmap points toward Hermes Agent-style
+  learning from experience, skill generation, and skill refinement; comparison
+  notes live in [docs/history/hermes-comparison.md][hermes-comparison].
+
+## Architecture
+
+The central design rule is that a conversation is owned by a session, not by the
 UI and not by the agent runtime.
 
 ```text
@@ -43,28 +69,38 @@ The platform renders `LoopEvent`s. It should not keep a second copy of the
 prompt history. In the current CLI, the TUI owns scrollback only; `AgentSession`
 owns the actual model context.
 
-## Crates
-
 ```text
-perry-hermes-cli crate
-  Perry Hermes CLI / ratatui TUI adapter
+crates/hermes-cli
+  package: perry-hermes-cli
+  binary: perry-hermes
+  owns: TUI, config lookup, platform presentation
 
-perry-hermes-agent crate
-  runtime service, sessions, agent loop, tools, config, compaction
+crates/hermes-agent
+  package: perry-hermes-agent
+  owns: AIAgent, AgentSession, AgentLoop, tools, config, compaction
 
-perry-hermes-core crate
-  transport-free shared traits/types/errors
+crates/hermes-core
+  package: perry-hermes-core
+  owns: transport-free Provider / Tool / Message / Usage / errors
 
-perry-hermes-providers crate
-  OpenAI-compatible, Anthropic-compatible, and Echo providers
+crates/hermes-providers
+  package: perry-hermes-providers
+  owns: OpenAI-compatible / Anthropic-compatible / Echo providers
 
-perry-hermes-skill-loader crate
-  SKILL.md discovery, validation, and prompt rendering
+crates/hermes-skill-loader
+  package: perry-hermes-skill-loader
+  owns: SKILL.md discovery, validation, and prompt rendering
 ```
 
-`perry-hermes-core` has no IO concerns. Provider protocol details stay in
-`perry-hermes-providers`. Product/platform behavior stays outside providers. Runtime
-assembly lives in `perry-hermes-agent`.
+| Layer | Key files | Boundary |
+|---|---|---|
+| CLI adapter | [crates/hermes-cli/src/main.rs][cli-main], [crates/hermes-cli/src/tui/][tui] | Owns presentation and creates/uses an `AgentSession`; does not own prompt history. |
+| Agent runtime | [crates/hermes-agent/src/runtime_agent.rs][runtime-agent], [crates/hermes-agent/src/session.rs][session] | Owns runtime assembly and session APIs shared by CLI and future gateways. |
+| Loop engine | [crates/hermes-agent/src/loop_engine/][loop-engine] | Runs one turn, streams provider deltas, dispatches tools, and triggers compaction. |
+| Compaction | [crates/hermes-agent/src/compaction.rs][compaction] | Encodes the summary prompt and the current "anchors plus one summary" policy. |
+| Core contracts | [crates/hermes-core/src/][core] | Defines shared traits/types without provider, CLI, or filesystem policy. |
+| Providers | [crates/hermes-providers/src/][providers] | Translates external provider protocols into core streaming types. |
+| Skills | [crates/hermes-skill-loader/src/][skill-loader] | Loads and validates `SKILL.md`, then renders the prompt block. |
 
 ## Context And Compaction
 
@@ -211,3 +247,15 @@ Testing guidance:
 ## License
 
 MIT
+
+[hermes-agent]: https://github.com/NousResearch/hermes-agent
+[hermes-comparison]: docs/history/hermes-comparison.md
+[cli-main]: crates/hermes-cli/src/main.rs
+[tui]: crates/hermes-cli/src/tui/
+[runtime-agent]: crates/hermes-agent/src/runtime_agent.rs
+[session]: crates/hermes-agent/src/session.rs
+[loop-engine]: crates/hermes-agent/src/loop_engine/
+[compaction]: crates/hermes-agent/src/compaction.rs
+[core]: crates/hermes-core/src/
+[providers]: crates/hermes-providers/src/
+[skill-loader]: crates/hermes-skill-loader/src/
