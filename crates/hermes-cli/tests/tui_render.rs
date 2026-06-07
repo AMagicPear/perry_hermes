@@ -5,6 +5,7 @@ use hermes_cli::tui::event::{AppMode, RenderedLine};
 use hermes_cli::tui::render::render;
 use ratatui::layout::Position;
 use ratatui::backend::TestBackend;
+use ratatui::style::{Color, Modifier};
 use ratatui::Terminal;
 use std::time::{Duration, Instant};
 
@@ -24,8 +25,8 @@ fn empty_app_renders_input_box_with_arrow_prompt() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let app = App::new_for_test();
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    let mut app = App::new_for_test();
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
 
@@ -45,8 +46,6 @@ fn empty_app_renders_input_box_with_arrow_prompt() {
 
 #[test]
 fn chat_scrolls_to_show_most_recent_message() {
-    // Build a long scrollback (more lines than the chat area can hold) and
-    // assert the bottom of the scrollback is visible after rendering.
     let backend = TestBackend::new(80, 10);
     let mut terminal = Terminal::new(backend).expect("terminal");
     let mut app = App::new_for_test();
@@ -55,9 +54,8 @@ fn chat_scrolls_to_show_most_recent_message() {
     }
     app.push_line(RenderedLine::Assistant("LATEST REPLY".to_string()));
 
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
-    // Concatenate every row and check the latest reply is rendered.
     let buffer = terminal.backend().buffer().clone();
     let mut text = String::new();
     for y in 0..buffer.area.height {
@@ -76,7 +74,7 @@ fn cursor_uses_display_width_for_cjk_input() {
 
     let mut app = App::new_for_test();
     app.input = "你好".to_string();
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     terminal
         .backend_mut()
@@ -92,7 +90,7 @@ fn assistant_render_preserves_explicit_newlines() {
     app.push_line(RenderedLine::Assistant(
         "first line wraps\n\nthird line wraps".to_string(),
     ));
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
     let mut rows = Vec::new();
@@ -138,7 +136,7 @@ fn tool_result_render_preserves_multiline_preview() {
         output: "1|first\n2|second\n3|third".to_string(),
         ok: true,
     });
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
     let mut text = String::new();
@@ -160,7 +158,7 @@ fn assistant_body_is_indented_without_vertical_borders() {
     app.push_line(RenderedLine::Assistant(
         "Hey, 我在～ 🌊✨ 有什么需要帮忙的吗？".to_string(),
     ));
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
     let mut rows = Vec::new();
@@ -183,6 +181,51 @@ fn assistant_body_is_indented_without_vertical_borders() {
 }
 
 #[test]
+fn assistant_header_keeps_right_border_with_unicode_title() {
+    let backend = TestBackend::new(40, 8);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.push_line(RenderedLine::Assistant("hello".to_string()));
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let header_row = (0..buffer.area.height)
+        .map(|y| row_at(&buffer, y))
+        .find(|row| row.contains("⚕ Hermes ✦"))
+        .expect("expected assistant header row");
+    assert!(
+        header_row.trim_end().ends_with('╮'),
+        "expected assistant header to end with right border: {header_row:?}"
+    );
+}
+
+#[test]
+fn reasoning_rows_are_dimmed_and_prefixed() {
+    let backend = TestBackend::new(40, 8);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+
+    let mut app = App::new_for_test();
+    app.push_line(RenderedLine::Reasoning("thinking step".to_string()));
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
+
+    let buffer = terminal.backend().buffer().clone();
+    let row_y = (0..buffer.area.height)
+        .find(|y| row_at(&buffer, *y).contains("thinking step"))
+        .expect("expected reasoning row");
+    let row = row_at(&buffer, row_y);
+    assert!(row.contains("… thinking step"), "expected reasoning prefix: {row:?}");
+
+    let cell = buffer.cell((0, row_y)).expect("cell");
+    assert_eq!(cell.fg, Color::Reset, "expected no explicit fg override");
+    assert!(
+        cell.modifier.contains(Modifier::DIM),
+        "expected reasoning row to be dimmed; modifier={:?}",
+        cell.modifier
+    );
+}
+
+#[test]
 fn awaiting_state_renders_interrupt_hint_without_needing_full_phrase() {
     let backend = TestBackend::new(40, 8);
     let mut terminal = Terminal::new(backend).expect("terminal");
@@ -190,7 +233,7 @@ fn awaiting_state_renders_interrupt_hint_without_needing_full_phrase() {
     let mut app = App::new_for_test();
     app.mode = AppMode::AwaitingModel;
     app.turn_started_at = Some(Instant::now() - Duration::from_secs(2));
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
     let mut text = String::new();
@@ -213,7 +256,7 @@ fn cancelling_state_renders_activity_line() {
     let mut app = App::new_for_test();
     app.mode = AppMode::Cancelling;
     app.turn_started_at = Some(Instant::now() - Duration::from_secs(1));
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
     let activity_row_y = buffer.area.height.saturating_sub(5);
@@ -229,8 +272,8 @@ fn idle_state_has_no_activity_row() {
     let backend = TestBackend::new(50, 8);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let app = App::new_for_test();
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    let mut app = App::new_for_test();
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
     let status_row_y = buffer.area.height.saturating_sub(4);
@@ -249,7 +292,7 @@ fn awaiting_state_uses_activity_row_without_duplicate_status_label() {
     let mut app = App::new_for_test();
     app.mode = AppMode::AwaitingModel;
     app.turn_started_at = Some(Instant::now() - Duration::from_secs(2));
-    terminal.draw(|f| render(f, &app)).expect("draw");
+    terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
     let activity_row_y = buffer.area.height.saturating_sub(5);

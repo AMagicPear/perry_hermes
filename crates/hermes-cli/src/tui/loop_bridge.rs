@@ -12,6 +12,7 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
         LoopEvent::ContentDelta(text) => {
             if let Some(RenderedLine::Assistant(existing)) = app.scrollback.last_mut() {
                 existing.push_str(&text);
+                app.mark_scrollback_dirty();
             } else {
                 app.push_line(RenderedLine::Assistant(text));
             }
@@ -20,6 +21,7 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
         LoopEvent::ReasoningDelta(text) => {
             if let Some(RenderedLine::Reasoning(existing)) = app.scrollback.last_mut() {
                 existing.push_str(&text);
+                app.mark_scrollback_dirty();
             } else {
                 app.push_line(RenderedLine::Reasoning(text));
             }

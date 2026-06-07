@@ -30,6 +30,22 @@ fn content_delta_appends_assistant_text() {
 }
 
 #[test]
+fn content_delta_invalidates_cached_wrapping() {
+    let mut app = app_with_mode(AppMode::AwaitingModel);
+    app.push_line(RenderedLine::Assistant("hello".to_string()));
+    let initial_lines = app.chat_lines_for_width(12).len();
+
+    let _ = apply_loop_event(&mut app, LoopEvent::ContentDelta(" world".to_string()));
+    let updated_lines = app.chat_lines_for_width(12).len();
+
+    assert!(updated_lines >= initial_lines);
+    match app.scrollback.last() {
+        Some(RenderedLine::Assistant(text)) => assert_eq!(text, "hello world"),
+        other => panic!("expected assistant line after delta; got {other:?}"),
+    }
+}
+
+#[test]
 fn reasoning_delta_appends_reasoning_text() {
     let mut app = app_with_mode(AppMode::AwaitingModel);
     let ev = LoopEvent::ReasoningDelta("thinking...".to_string());

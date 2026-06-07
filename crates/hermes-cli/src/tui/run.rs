@@ -90,7 +90,7 @@ pub async fn run(
     let result: Result<(), RunError> = async {
         loop {
             terminal
-                .draw(|f| render(f, &app))
+                .draw(|f| render(f, &mut app))
                 .map_err(|e| RunError::Tui(e.to_string()))?;
 
             tokio::select! {
@@ -198,7 +198,7 @@ pub async fn run_with_backend(
 
     loop {
         terminal
-            .draw(|f| render(f, &app))
+            .draw(|f| render(f, &mut app))
             .map_err(|e| RunError::Tui(e.to_string()))?;
 
         tokio::select! {
@@ -273,9 +273,8 @@ fn dispatch_event(
             Ok(false)
         }
         AppEvent::Clear => {
-            app.scrollback.clear();
+            app.clear_scrollback();
             app.session_history.clear();
-            app.chat_scroll = 0;
             Ok(false)
         }
         AppEvent::Append(line) => {

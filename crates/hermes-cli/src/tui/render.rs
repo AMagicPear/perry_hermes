@@ -12,7 +12,7 @@ use crate::tui::app::App;
 use crate::tui::event::{AppMode, RenderedLine};
 
 /// Paint one frame.
-pub fn render(f: &mut Frame, app: &App) {
+pub fn render(f: &mut Frame, app: &mut App) {
     let activity_h = if matches!(app.mode, AppMode::AwaitingModel | AppMode::Cancelling) {
         1
     } else {
@@ -31,19 +31,16 @@ pub fn render(f: &mut Frame, app: &App) {
 
     // --- Chat scrollback ----------------------------------------------------
     let chat_area = chunks[0];
-    let chat_lines = build_chat_lines(&app.scrollback, chat_area.width);
+    let chat_scroll = app.chat_scroll;
+    let chat_lines = app.chat_lines_for_width(chat_area.width);
     let total_lines = chat_lines.len() as u16;
     let visible_h = chat_area.height;
-    // `chat_scroll` is the offset from the bottom (0 = at bottom, larger = scrolled up).
-    // It's clamped so the top of the scrollback is the max.
     let max_scroll = total_lines.saturating_sub(visible_h);
-    let effective_scroll = app.chat_scroll.min(max_scroll);
-    // The Paragraph's scroll y is "how many lines from the top to start showing".
-    // We want to show lines [total - visible - chat_scroll .. total - chat_scroll].
+    let effective_scroll = chat_scroll.min(max_scroll);
     let scroll_y = total_lines
         .saturating_sub(visible_h)
         .saturating_sub(effective_scroll);
-    let chat = Paragraph::new(chat_lines)
+    let chat = Paragraph::new(chat_lines.to_vec())
         .block(Block::default().borders(Borders::NONE))
         .scroll((scroll_y, 0));
     f.render_widget(chat, chat_area);
@@ -88,7 +85,7 @@ pub fn render(f: &mut Frame, app: &App) {
 /// pre-wrapped to `width` columns so the line count matches the rendered
 /// row count exactly. The assistant content lives inside a rounded
 /// `╭─ Hermes ─...─╮` block (also pre-wrapped by `assistant_block`).
-fn build_chat_lines(scrollback: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
+pub(crate) fn build_chat_lines(scrollback: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     for line in scrollback {
         match line {
@@ -100,8 +97,7 @@ fn build_chat_lines(scrollback: &[RenderedLine], width: u16) -> Vec<Line<'static
                 out.extend(assistant_block(s, width));
             }
             RenderedLine::Reasoning(s) => {
-                let raw = format!("… {s}");
-                out.extend(wrap_multiline_text(&raw, width));
+                out.extend(reasoning_block(s, width));
             }
             RenderedLine::ToolCall { name, args_preview } => {
                 let raw = format!("⚙ {name}({args_preview})");
@@ -186,20 +182,22 @@ fn wrap_to_width(text: &str, width: u16) -> Vec<Line<'static>> {
 }
 
 /// Render assistant text with a framed header/footer and plain indented body.
-/// Top: `╭─ ⚕ Hermes ─...─╮`, body: `  <wrapped text>`, bottom: `╰─...─╯`.
+/// Top: `╭─ ⚕ Hermes ✦ ─...─╮`, body: `  <wrapped text>`, bottom: `╰─...─╯`.
 fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
-    let w = width.max(20) as usize;
+    let w = width.max(1) as usize;
     let body_indent = "  ";
-    let inner_w = w.saturating_sub(body_indent.len()).max(1);
-    let title = " ⚕ Hermes ";
+    let inner_w = w.saturating_sub(visible_width(body_indent)).max(1);
+    let title = " ⚕ Hermes ✦ ";
     let top_prefix = "╭─";
     let top_suffix = "╮";
-    let top_filler_dashes = w.saturating_sub(top_prefix.len() + title.len() + top_suffix.len());
-    let top = format!("{top_prefix}{title}{}", "─".repeat(top_filler_dashes));
+    let top = fit_line_to_width(
+        format!("{top_prefix}{title}{top_suffix}"),
+        w,
+        top_suffix,
+    );
     let bot_prefix = "╰─";
     let bot_suffix = "╯";
-    let bot_filler_dashes = w.saturating_sub(bot_prefix.len() + bot_suffix.len());
-    let bot = format!("{bot_prefix}{}{bot_suffix}", "─".repeat(bot_filler_dashes));
+    let bot = fit_line_to_width(format!("{bot_prefix}{bot_suffix}"), w, bot_suffix);
 
     let mut out: Vec<Line<'static>> = Vec::new();
     out.push(Line::from(top).bold().cyan());
@@ -209,14 +207,29 @@ fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
         let wrapped = wrap_to_width(segment, inner_w as u16);
         for line in wrapped {
             let content = line.spans.first().map(|span| span.content.as_ref()).unwrap_or("");
-            out.push(Line::from(format!(
-                "{body_indent}{}",
-                pad_to_width(content, inner_w)
-            )));
+            out.push(Line::from(format!("{body_indent}{content}")));
         }
     }
 
     out.push(Line::from(bot).cyan());
+    out
+}
+
+fn reasoning_block(text: &str, width: u16) -> Vec<Line<'static>> {
+    let normalized = text.replace("\r\n", "\n");
+    let mut out = Vec::new();
+    for (idx, segment) in normalized.split('\n').enumerate() {
+        let prefix = if idx == 0 { "… " } else { "  " };
+        let wrapped = wrap_to_width(segment, width.saturating_sub(prefix.len() as u16));
+        for (line_idx, line) in wrapped.into_iter().enumerate() {
+            let content = line.spans.first().map(|span| span.content.as_ref()).unwrap_or("");
+            let head = if line_idx == 0 { prefix } else { "  " };
+            out.push(Line::from(format!("{head}{content}")).dim());
+        }
+    }
+    if out.is_empty() {
+        out.push(Line::from("…").dim());
+    }
     out
 }
 
@@ -335,6 +348,15 @@ fn visible_width(text: &str) -> usize {
     UnicodeWidthStr::width(text)
 }
 
+fn fit_line_to_width(mut base: String, width: usize, right_edge: &str) -> String {
+    let edge_width = visible_width(right_edge);
+    while visible_width(&base) + 1 + edge_width <= width {
+        let insert_at = base.len().saturating_sub(right_edge.len());
+        base.insert(insert_at, '─');
+    }
+    base
+}
+
 fn spinner_frame() -> &'static str {
     const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let idx = SystemTime::now()
@@ -342,11 +364,6 @@ fn spinner_frame() -> &'static str {
         .map(|elapsed| ((elapsed.as_millis() / 80) % FRAMES.len() as u128) as usize)
         .unwrap_or(0);
     FRAMES[idx]
-}
-
-fn pad_to_width(text: &str, width: usize) -> String {
-    let padding = width.saturating_sub(visible_width(text));
-    format!("{text}{}", " ".repeat(padding))
 }
 
 #[cfg(test)]

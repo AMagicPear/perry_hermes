@@ -157,3 +157,15 @@ fn arrow_down_scrolls_chat_toward_bottom_when_idle() {
     assert!(matches!(ev, AppEvent::Tick));
     assert_eq!(app.chat_scroll, 2);
 }
+
+#[test]
+fn clear_event_resets_scrollback_and_cache() {
+    let mut app = App::new_for_test();
+    app.push_line(RenderedLine::Assistant("hello".to_string()));
+    assert!(!app.chat_lines_for_width(20).is_empty());
+
+    app.clear_scrollback();
+    assert!(app.scrollback.is_empty());
+    assert!(app.chat_lines_for_width(20).is_empty());
+    assert_eq!(app.chat_scroll, 0);
+}

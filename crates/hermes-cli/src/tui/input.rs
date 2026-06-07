@@ -38,8 +38,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) -> AppEvent {
             _ => AppEvent::Tick,
         };
     }
-    // Chat scroll keys (only when not awaiting — while streaming we always
-    // auto-scroll to bottom so the user can watch the reply).
+    // Chat scroll keys (only when idle).
     if app.mode == AppMode::Idle {
         match key.code {
             KeyCode::Up => {
