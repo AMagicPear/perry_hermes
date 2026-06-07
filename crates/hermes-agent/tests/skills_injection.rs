@@ -11,7 +11,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream;
 use hermes_agent::{
-    AIAgent, HermesConfig, ModelConfig, ProviderConfig, ProviderKind, SessionContext,
+    AIAgent, AgentSession, HermesConfig, ModelConfig, ProviderConfig, ProviderKind, SessionContext,
 };
 use hermes_core::message::Message;
 use hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
@@ -110,13 +110,13 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
     let mut config = config_for_echo();
     config.agent.system_prompt = Some("ONLY-CUSTOM".into());
     let agent = AIAgent::new(provider, config);
-    let session = SessionContext {
+    let session = AgentSession::new(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
-    };
+    });
 
     agent
-        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
         .unwrap();
 
@@ -137,12 +137,12 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = SessionContext {
+    let session = AgentSession::new(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
-    };
+    });
     agent
-        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
         .unwrap();
 
@@ -176,12 +176,12 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
     config.agent.system_prompt = Some("CUSTOM-PROMPT-MARKER".into());
     let agent = AIAgent::new(provider, config);
 
-    let session = SessionContext {
+    let session = AgentSession::new(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
-    };
+    });
     agent
-        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
         .unwrap();
 
@@ -214,12 +214,12 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = SessionContext {
+    let session = AgentSession::new(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
-    };
+    });
     agent
-        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
         .unwrap();
 
@@ -239,12 +239,12 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = SessionContext {
+    let session = AgentSession::new(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
-    };
+    });
     agent
-        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
         .unwrap();
 
@@ -279,12 +279,12 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = SessionContext {
+    let session = AgentSession::new(SessionContext {
         working_dir: PathBuf::from("/tmp"),
         session_id: "t".into(),
-    };
+    });
     agent
-        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
         .unwrap();
 
@@ -306,13 +306,13 @@ async fn runtime_formats_conversation_started_in_configured_timezone() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AIAgent::new(provider, config_for_echo());
-    let session = SessionContext {
+    let session = AgentSession::new(SessionContext {
         working_dir: PathBuf::from("/tmp/timezone-check"),
         session_id: "tz".into(),
-    };
+    });
 
     agent
-        .run_turn("hi", &session, CancellationToken::new(), |_| {})
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
         .unwrap();
 

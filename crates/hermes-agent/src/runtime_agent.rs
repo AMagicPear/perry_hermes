@@ -13,7 +13,7 @@ use crate::prompting::{
     resolve_skills_dir,
 };
 use crate::provider_factory::build_provider;
-use crate::session::{AgentSession, SessionContext};
+use crate::session::AgentSession;
 use crate::tool_catalog::build_registry;
 use crate::{
     AgentLoop, AgentRunError, CompactorConfig, ContextWindow, LoopConfig, LoopEvent, RunResult,
@@ -72,18 +72,6 @@ impl AIAgent {
         }
     }
 
-    pub async fn run_turn(
-        &self,
-        user_text: &str,
-        session: &SessionContext,
-        cancel: CancellationToken,
-        on_event: impl FnMut(LoopEvent) + Send,
-    ) -> Result<RunResult, AgentRunError> {
-        let session = AgentSession::new(session.clone());
-        self.run_session_turn(user_text, &session, cancel, on_event)
-            .await
-    }
-
     pub async fn run_session_turn(
         &self,
         user_text: &str,
@@ -91,23 +79,33 @@ impl AIAgent {
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
-        self.run_session_messages(vec![Message::user(user_text)], session, cancel, on_event)
-            .await
+        session.append_message(Message::user(user_text)).await;
+        self.run_current_session(session, cancel, on_event).await
     }
 
-    pub async fn run_messages(
+    pub async fn run_current_session(
         &self,
-        messages: Vec<Message>,
-        session: &SessionContext,
+        session: &AgentSession,
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
-        let session = AgentSession::new(session.clone());
-        self.run_session_messages(messages, &session, cancel, on_event)
-            .await
+        let messages = session.messages().await;
+        let result = self
+            .run_messages_for_session(messages, session, cancel, on_event)
+            .await;
+        match &result {
+            Ok(run_result) => {
+                session.replace_messages(run_result.messages.clone()).await;
+            }
+            Err(AgentRunError::FailedTurn { failed_turn, .. }) => {
+                session.replace_messages(failed_turn.messages.clone()).await;
+            }
+            Err(_) => {}
+        }
+        result
     }
 
-    pub async fn run_session_messages(
+    async fn run_messages_for_session(
         &self,
         messages: Vec<Message>,
         session: &AgentSession,
@@ -130,18 +128,7 @@ impl AIAgent {
             .await
     }
 
-    pub async fn run_compact(
-        &self,
-        messages: Vec<Message>,
-        focus_topic: Option<&str>,
-        session: &SessionContext,
-    ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
-        let session = AgentSession::new(session.clone());
-        self.run_session_compact(messages, focus_topic, &session)
-            .await
-    }
-
-    pub async fn run_session_compact(
+    async fn compact_messages_for_session(
         &self,
         messages: Vec<Message>,
         focus_topic: Option<&str>,
@@ -156,6 +143,21 @@ impl AIAgent {
         self.loop_
             .compact_messages(messages, focus_topic, Arc::clone(&session.state))
             .await
+    }
+
+    pub async fn compact_session(
+        &self,
+        session: &AgentSession,
+        focus_topic: Option<&str>,
+    ) -> Result<LoopEvent, AgentRunError> {
+        let messages = session.messages().await;
+        let (messages, event) = self
+            .compact_messages_for_session(messages, focus_topic, session)
+            .await?;
+        if matches!(event, LoopEvent::CompressionCompleted { .. }) {
+            session.replace_messages(messages).await;
+        }
+        Ok(event)
     }
 
     #[cfg(test)]
@@ -231,6 +233,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use crate::config::{ModelConfig, ProviderConfig, ProviderKind};
+    use crate::session::SessionContext;
 
     fn echo_config() -> HermesConfig {
         HermesConfig {
@@ -519,14 +522,14 @@ mod tests {
             provider_name: None,
         };
 
-        let session = SessionContext {
+        let session = AgentSession::new(SessionContext {
             working_dir: std::path::PathBuf::from("/tmp/hermes-test-cwd"),
             session_id: "session-xyz".into(),
-        };
+        });
 
         let cancel = CancellationToken::new();
         agent
-            .run_turn("hi", &session, cancel, |_| {})
+            .run_session_turn("hi", &session, cancel, |_| {})
             .await
             .expect("run should succeed");
 

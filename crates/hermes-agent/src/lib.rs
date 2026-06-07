@@ -1,5 +1,6 @@
 //! Runtime engine shared by CLI and future gateways.
 
+mod compaction;
 mod config;
 mod loop_engine;
 mod prompting;
@@ -9,10 +10,11 @@ mod session;
 mod tool_catalog;
 pub mod tools;
 
+pub use compaction::{CompactorConfig, SummaryCompactor};
 pub use config::{AgentConfig, HermesConfig, ModelConfig, ProviderConfig, ProviderKind};
 pub use loop_engine::{
-    AgentLoop, AgentRunError, CompactorConfig, ContextWindow, FailedTurn, LoopConfig, LoopEvent,
-    LoopMetrics, RunResult, SummaryCompactor,
+    AgentLoop, AgentRunError, ContextWindow, FailedTurn, LoopConfig, LoopEvent, LoopMetrics,
+    RunResult,
 };
 pub use runtime_agent::AIAgent;
 pub use session::{AgentSession, SessionContext, SessionState};

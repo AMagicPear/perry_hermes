@@ -1,7 +1,6 @@
 //! Internal event types flowing through the TUI's main loop.
 
 use hermes_agent::{AgentRunError, LoopEvent, RunResult};
-use hermes_core::message::Message;
 
 /// A single event consumed by the `App` from any of its event sources.
 #[derive(Debug)]
@@ -29,13 +28,13 @@ pub enum AppEvent {
     /// `Cancelling`. The second Ctrl-C in `Cancelling` mode becomes `Quit`.
     CancelInFlight,
     /// A spawned agent turn completed. Sent by the background task spawned
-    /// in response to a `Submit`. The main loop updates `session_history`
-    /// and resets the App to `Idle`.
+    /// in response to a `Submit`. The `AgentSession` already owns the
+    /// updated message history; the TUI only resets presentation state.
     TurnCompleted(Result<RunResult, AgentRunError>),
-    /// A spawned manual compaction completed. The main loop replaces
-    /// `session_history` with the compacted messages and applies the
-    /// compression event to update user-facing status.
-    CompactCompleted(Result<(Vec<Message>, LoopEvent), AgentRunError>),
+    /// A spawned manual compaction completed. The `AgentSession` already
+    /// owns the compacted message history; the TUI applies the event to
+    /// update user-facing status.
+    CompactCompleted(Result<LoopEvent, AgentRunError>),
 }
 
 /// A single line in the chat scrollback.

@@ -27,8 +27,6 @@ mod compaction;
 mod metrics;
 mod run;
 
-pub use compaction::{CompactorConfig, SummaryCompactor};
-
 pub struct AgentLoop {
     pub(crate) provider: Arc<dyn Provider>,
     pub(crate) registry: Arc<InMemoryRegistry>,
@@ -40,7 +38,7 @@ pub struct LoopConfig {
     pub max_iterations: u32,
     pub max_duration: Duration,
     pub system_prompt: Option<String>,
-    /// Optional context compression engine. None = no compression.
+    /// Optional context compaction strategy. None = no compaction.
     pub compaction_strategy: Option<Arc<TokioMutex<dyn CompactionStrategy>>>,
     /// Model context window and compression threshold used with real
     /// provider usage.

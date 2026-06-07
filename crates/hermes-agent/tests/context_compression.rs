@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use hermes_agent::{
-    AIAgent, AgentLoop, CompactorConfig, ContextWindow, HermesConfig, LoopConfig, ModelConfig,
-    ProviderConfig, ProviderKind, SessionContext, SessionState, SummaryCompactor,
+    AIAgent, AgentLoop, AgentSession, CompactorConfig, ContextWindow, HermesConfig, LoopConfig,
+    ModelConfig, ProviderConfig, ProviderKind, SessionContext, SessionState, SummaryCompactor,
 };
 use hermes_core::message::{Content, Message, Role, ToolCall};
 use hermes_core::provider::{Completion, FinishReason};
@@ -402,7 +402,7 @@ async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
 }
 
 #[tokio::test]
-async fn manual_compact_rewrites_history_with_summary_message() {
+async fn session_compact_rewrites_history_with_summary_message() {
     let agent = AIAgent::new(
         ScriptedProvider::new(vec![Completion {
             message: assistant_text("condensed"),
@@ -412,27 +412,31 @@ async fn manual_compact_rewrites_history_with_summary_message() {
         echo_config_with_compression(),
     );
 
-    let history = vec![
-        system_message("system"),
-        user_message("first request"),
-        assistant_text("first answer"),
-        user_message("second request"),
-        assistant_text("second answer"),
-        user_message(&"B".repeat(180_000)),
-        assistant_text("large answer"),
-        user_message("follow-up request"),
-        assistant_text("follow-up answer"),
-        user_message("latest request"),
-    ];
+    let session = AgentSession::new(test_session());
+    session
+        .replace_messages(vec![
+            system_message("system"),
+            user_message("first request"),
+            assistant_text("first answer"),
+            user_message("second request"),
+            assistant_text("second answer"),
+            user_message(&"B".repeat(180_000)),
+            assistant_text("large answer"),
+            user_message("follow-up request"),
+            assistant_text("follow-up answer"),
+            user_message("latest request"),
+        ])
+        .await;
 
-    let (result, event) = agent
-        .run_compact(history, Some("task-X"), &test_session())
+    let event = agent
+        .compact_session(&session, Some("task-X"))
         .await
         .expect("manual compact should succeed");
     match event {
         hermes_agent::LoopEvent::CompressionCompleted { .. } => {}
         other => panic!("expected CompressionCompleted event, got {other:?}"),
     }
+    let result = session.messages().await;
 
     assert!(
         matches!(
@@ -448,7 +452,108 @@ async fn manual_compact_rewrites_history_with_summary_message() {
 }
 
 #[tokio::test]
-async fn manual_compact_reports_summary_failure() {
+async fn session_turn_owns_and_updates_message_history() {
+    let agent = AIAgent::new(
+        ScriptedProvider::new(vec![Completion {
+            message: assistant_text("first answer"),
+            usage: Usage {
+                input_tokens: 1_000,
+                output_tokens: 20,
+                cached_input_tokens: 0,
+            },
+            finish_reason: FinishReason::Stop,
+        }]),
+        echo_config_with_compression(),
+    );
+    let session = AgentSession::new(test_session());
+
+    let result = agent
+        .run_session_turn("first request", &session, CancellationToken::new(), |_| {})
+        .await
+        .expect("session turn should succeed");
+
+    let history = session.messages().await;
+    assert_eq!(history.len(), result.messages.len());
+    assert_eq!(
+        messages_to_text(&history),
+        messages_to_text(&result.messages),
+        "session history should match the run result"
+    );
+    assert!(matches!(
+        history.as_slice(),
+        [
+            Message { role: Role::System, .. },
+            Message { role: Role::User, content: Content::Text(user), .. },
+            Message { role: Role::Assistant, content: Content::Text(answer), .. },
+        ] if user == "first request" && answer == "first answer"
+    ));
+    assert_eq!(
+        session.state.first_prompt_context_tokens().await,
+        Some(1_000)
+    );
+}
+
+fn messages_to_text(messages: &[Message]) -> Vec<(&Role, String)> {
+    messages
+        .iter()
+        .map(|message| (&message.role, message.content.as_text()))
+        .collect()
+}
+
+#[tokio::test]
+async fn session_compact_rewrites_session_messages() {
+    let agent = AIAgent::new(
+        ScriptedProvider::new(vec![Completion {
+            message: assistant_text("condensed"),
+            usage: Usage {
+                input_tokens: 10,
+                output_tokens: 33,
+                cached_input_tokens: 0,
+            },
+            finish_reason: FinishReason::Stop,
+        }]),
+        echo_config_with_compression(),
+    );
+    let session = AgentSession::new(test_session());
+    session
+        .replace_messages(vec![
+            system_message("system"),
+            user_message("first request"),
+            assistant_text("first answer"),
+            user_message("second request"),
+            assistant_text("second answer"),
+        ])
+        .await;
+    session
+        .state
+        .remember_first_prompt_context_tokens(1_000)
+        .await;
+
+    let event = agent
+        .compact_session(&session, Some("second request"))
+        .await
+        .expect("session compact should succeed");
+
+    match event {
+        hermes_agent::LoopEvent::CompressionCompleted {
+            compacted_tokens, ..
+        } => assert_eq!(compacted_tokens, Some(1_033)),
+        other => panic!("expected CompressionCompleted event, got {other:?}"),
+    }
+
+    let history = session.messages().await;
+    assert!(matches!(
+        history.as_slice(),
+        [
+            Message { role: Role::System, .. },
+            Message { role: Role::User, content: Content::Text(first), .. },
+            Message { role: Role::User, content: Content::Text(summary), .. },
+        ] if first == "first request" && summary.contains("condensed")
+    ));
+}
+
+#[tokio::test]
+async fn session_compact_reports_summary_failure() {
     let agent = AIAgent::new(
         ScriptedProvider::from_steps(vec![
             support::ScriptedStep::Error(ProviderError::Transport("summary provider down".into())),
@@ -459,21 +564,24 @@ async fn manual_compact_reports_summary_failure() {
         echo_config_with_compression(),
     );
 
-    let history = vec![
-        system_message("system"),
-        user_message("first request"),
-        assistant_text("first answer"),
-        user_message("second request"),
-        assistant_text("second answer"),
-        user_message(&"B".repeat(180_000)),
-        assistant_text("large answer"),
-        user_message("follow-up request"),
-        assistant_text("follow-up answer"),
-        user_message("latest request"),
-    ];
+    let session = AgentSession::new(test_session());
+    session
+        .replace_messages(vec![
+            system_message("system"),
+            user_message("first request"),
+            assistant_text("first answer"),
+            user_message("second request"),
+            assistant_text("second answer"),
+            user_message(&"B".repeat(180_000)),
+            assistant_text("large answer"),
+            user_message("follow-up request"),
+            assistant_text("follow-up answer"),
+            user_message("latest request"),
+        ])
+        .await;
 
-    let (_, event) = agent
-        .run_compact(history, Some("task-X"), &test_session())
+    let event = agent
+        .compact_session(&session, Some("task-X"))
         .await
         .expect("manual compact should return a failure event, not a hard error");
 
@@ -489,7 +597,7 @@ async fn manual_compact_reports_summary_failure() {
 }
 
 #[tokio::test]
-async fn manual_compact_compresses_medium_history_instead_of_skipping() {
+async fn session_compact_compresses_medium_history_instead_of_skipping() {
     let agent = AIAgent::new(
         ScriptedProvider::new(vec![Completion {
             message: assistant_text("condensed"),
@@ -499,21 +607,24 @@ async fn manual_compact_compresses_medium_history_instead_of_skipping() {
         echo_config_with_compression(),
     );
 
-    let history = vec![
-        system_message("system"),
-        user_message("first request"),
-        assistant_text("first answer"),
-        user_message("second request"),
-        assistant_text("second answer"),
-        user_message("third request"),
-        assistant_text("third answer"),
-        user_message("follow-up request"),
-        assistant_text("follow-up answer"),
-        user_message("latest request"),
-    ];
+    let session = AgentSession::new(test_session());
+    session
+        .replace_messages(vec![
+            system_message("system"),
+            user_message("first request"),
+            assistant_text("first answer"),
+            user_message("second request"),
+            assistant_text("second answer"),
+            user_message("third request"),
+            assistant_text("third answer"),
+            user_message("follow-up request"),
+            assistant_text("follow-up answer"),
+            user_message("latest request"),
+        ])
+        .await;
 
-    let (result, event) = agent
-        .run_compact(history, Some("latest request"), &test_session())
+    let event = agent
+        .compact_session(&session, Some("latest request"))
         .await
         .expect("manual compact should succeed");
 
@@ -522,6 +633,7 @@ async fn manual_compact_compresses_medium_history_instead_of_skipping() {
         other => panic!("expected CompressionCompleted event, got {other:?}"),
     }
 
+    let result = session.messages().await;
     assert!(
         result
             .iter()

@@ -9,7 +9,6 @@ use std::time::Instant;
 use futures::StreamExt;
 use hermes_agent::{AIAgent, AgentRunError, AgentSession, SessionContext};
 use hermes_core::error::LoopError;
-use hermes_core::message::Message;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::Terminal;
 use tokio::sync::mpsc;
@@ -241,7 +240,6 @@ fn dispatch_event(
         AppEvent::Tick => Ok(false),
         AppEvent::Submit(text) => {
             app.push_line(RenderedLine::User(text.clone()));
-            app.session_history.push(Message::user(&text));
             app.mode = AppMode::AwaitingModel;
             app.turn_started_at = Some(Instant::now());
             if app.active_turn_cancel.is_none() {
@@ -252,12 +250,11 @@ fn dispatch_event(
                 let on_event = make_on_event(ctx.input_tx.clone());
                 let agent = Arc::clone(ctx.agent);
                 let session = ctx.session.clone();
-                let messages = app.session_history.clone();
                 let result_tx = ctx.input_tx.clone();
                 app.active_turn_cancel = Some(turn_cancel.clone());
                 tokio::spawn(async move {
                     let res = agent
-                        .run_session_messages(messages, &session, turn_cancel, on_event)
+                        .run_session_turn(&text, &session, turn_cancel, on_event)
                         .await;
                     let _ = result_tx.send(AppEvent::TurnCompleted(res));
                 });
@@ -276,12 +273,9 @@ fn dispatch_event(
                 app.turn_started_at = Some(Instant::now());
                 let agent = Arc::clone(ctx.agent);
                 let session = ctx.session.clone();
-                let messages = app.session_history.clone();
                 let result_tx = ctx.input_tx.clone();
                 tokio::spawn(async move {
-                    let res = agent
-                        .run_session_compact(messages, focus.as_deref(), &session)
-                        .await;
+                    let res = agent.compact_session(&session, focus.as_deref()).await;
                     let _ = result_tx.send(AppEvent::CompactCompleted(res));
                 });
             } else {
@@ -291,11 +285,10 @@ fn dispatch_event(
         }
         AppEvent::Clear => {
             app.clear_scrollback();
-            app.session_history.clear();
             if let Some(ctx) = run_ctx {
                 let session = ctx.session.clone();
                 tokio::spawn(async move {
-                    session.state.reset().await;
+                    session.reset().await;
                 });
             }
             Ok(false)
@@ -323,12 +316,8 @@ fn dispatch_event(
             app.turn_started_at = None;
             app.active_turn_cancel = None;
             match res {
-                Ok(run_result) => {
-                    app.session_history = run_result.messages;
-                }
-                Err(AgentRunError::Loop(LoopError::CancelledWith(partial))) => {
-                    app.session_history.push(partial);
-                }
+                Ok(_) => {}
+                Err(AgentRunError::Loop(LoopError::CancelledWith(_))) => {}
                 Err(AgentRunError::Loop(LoopError::Cancelled)) => {}
                 Err(e) => {
                     app.push_line(RenderedLine::System(format!("error: {e}")));
@@ -341,18 +330,11 @@ fn dispatch_event(
             app.turn_started_at = None;
             app.active_turn_cancel = None;
             match res {
-                Ok((messages, event)) => {
-                    let compacted =
-                        matches!(event, hermes_agent::LoopEvent::CompressionCompleted { .. });
+                Ok(event) => {
                     let next = apply_loop_event(app, event);
                     let _ = dispatch_event(app, next, cancel, None)?;
-                    if compacted {
-                        app.session_history = messages;
-                    }
                 }
-                Err(AgentRunError::Loop(LoopError::CancelledWith(partial))) => {
-                    app.session_history.push(partial);
-                }
+                Err(AgentRunError::Loop(LoopError::CancelledWith(_))) => {}
                 Err(AgentRunError::Loop(LoopError::Cancelled)) => {}
                 Err(e) => {
                     app.push_line(RenderedLine::System(format!("error: {e}")));
@@ -470,21 +452,14 @@ mod tests {
         }
     }
 
-    fn app_with_history() -> App {
+    fn app_with_context_usage() -> App {
         let mut app = App::new_for_test();
-        app.session_history = vec![
-            Message::user("first request"),
-            Message::assistant("first answer"),
-            Message::user("middle request"),
-            Message::assistant("middle answer"),
-            Message::user("latest request"),
-        ];
         app.context_used_tokens = Some(90_000);
         app
     }
 
     #[tokio::test]
-    async fn compact_event_runs_agent_and_replaces_session_history() {
+    async fn compact_event_runs_agent_and_replaces_session_messages() {
         let loop_ = AgentLoop::new(
             NoopProvider,
             Arc::new(InMemoryRegistry::new()),
@@ -499,12 +474,21 @@ mod tests {
             session_id: "test".into(),
         });
         session
+            .replace_messages(vec![
+                Message::user("first request"),
+                Message::assistant("first answer"),
+                Message::user("middle request"),
+                Message::assistant("middle answer"),
+                Message::user("latest request"),
+            ])
+            .await;
+        session
             .state
             .remember_first_prompt_context_tokens(1_000)
             .await;
         let (input_tx, mut input_rx) = mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
-        let mut app = app_with_history();
+        let mut app = app_with_context_usage();
 
         dispatch_event(
             &mut app,
@@ -529,9 +513,10 @@ mod tests {
         dispatch_event(&mut app, AppEvent::CompactCompleted(result), &cancel, None)
             .expect("compact completion should update app state");
 
-        assert_eq!(app.session_history.len(), 2);
+        let history = session.messages().await;
+        assert_eq!(history.len(), 2);
         assert!(matches!(
-            app.session_history.get(1),
+            history.get(1),
             Some(Message { content, .. }) if content.as_text() == "summary"
         ));
         assert_eq!(app.context_used_tokens, Some(1_002));
@@ -542,7 +527,7 @@ mod tests {
     #[test]
     fn compact_without_agent_does_not_enter_busy_state() {
         let cancel = CancellationToken::new();
-        let mut app = app_with_history();
+        let mut app = app_with_context_usage();
 
         dispatch_event(&mut app, AppEvent::Compact(None), &cancel, None)
             .expect("compact without run context should be handled");

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use hermes_agent::{AIAgent, AgentRunError, HermesConfig, LoopEvent, SessionContext};
+use hermes_agent::{AIAgent, AgentRunError, AgentSession, HermesConfig, LoopEvent};
 use hermes_core::message::Content;
 use hermes_core::LoopError;
 use tokio_util::sync::CancellationToken;
@@ -52,48 +52,43 @@ async fn main() {
         }
     };
 
-    let session = SessionContext::current_shell();
+    let session = AgentSession::current_shell();
     let cancel = CancellationToken::new();
     let prompts = [
         "Please remember this live context probe marker: perry-hermes-context-usage. Reply in one short sentence.",
         "Reply with exactly this marker and nothing else: perry-hermes-context-usage",
     ];
-    let mut messages = Vec::new();
 
     for (idx, prompt) in prompts.iter().enumerate() {
-        messages.push(hermes_core::message::Message::user(*prompt));
         eprintln!("\nturn={} prompt_chars={}", idx + 1, prompt.len());
 
         let started = std::time::Instant::now();
-        let result =
-            tokio::time::timeout(
-                Duration::from_secs(180),
-                agent.run_messages(messages.clone(), &session, cancel.clone(), move |event| {
-                    match event {
-                        LoopEvent::Thinking => {}
-                        LoopEvent::ContextUsageUpdated { used_tokens } => {
-                            eprintln!("\ncontext_usage[provider]={used_tokens}");
-                        }
-                        LoopEvent::ContentDelta(s) => eprint!("{s}"),
-                        LoopEvent::ReasoningDelta(_) => {}
-                        LoopEvent::ToolCallStarted { call, .. } => {
-                            eprintln!("\ntool_started name={} args={}", call.name, call.arguments);
-                        }
-                        LoopEvent::ToolCallFinished { result, .. } => {
-                            eprintln!("tool_finished ok={}", result.is_ok());
-                        }
-                        LoopEvent::AssistantMessage(_)
-                        | LoopEvent::ToolCallPartial(_)
-                        | LoopEvent::LengthLimit
-                        | LoopEvent::IterationsExhausted
-                        | LoopEvent::Cancelled
-                        | LoopEvent::CompressionCompleted { .. }
-                        | LoopEvent::CompressionSkipped { .. }
-                        | LoopEvent::CompressionFailed { .. } => {}
-                    }
-                }),
-            )
-            .await;
+        let result = tokio::time::timeout(
+            Duration::from_secs(180),
+            agent.run_session_turn(prompt, &session, cancel.clone(), move |event| match event {
+                LoopEvent::Thinking => {}
+                LoopEvent::ContextUsageUpdated { used_tokens } => {
+                    eprintln!("\ncontext_usage[provider]={used_tokens}");
+                }
+                LoopEvent::ContentDelta(s) => eprint!("{s}"),
+                LoopEvent::ReasoningDelta(_) => {}
+                LoopEvent::ToolCallStarted { call, .. } => {
+                    eprintln!("\ntool_started name={} args={}", call.name, call.arguments);
+                }
+                LoopEvent::ToolCallFinished { result, .. } => {
+                    eprintln!("tool_finished ok={}", result.is_ok());
+                }
+                LoopEvent::AssistantMessage(_)
+                | LoopEvent::ToolCallPartial(_)
+                | LoopEvent::LengthLimit
+                | LoopEvent::IterationsExhausted
+                | LoopEvent::Cancelled
+                | LoopEvent::CompressionCompleted { .. }
+                | LoopEvent::CompressionSkipped { .. }
+                | LoopEvent::CompressionFailed { .. } => {}
+            }),
+        )
+        .await;
 
         let run_result = match result {
             Err(_) => {
@@ -127,7 +122,6 @@ async fn main() {
             run_result.metrics.output_tokens,
             started.elapsed().as_millis()
         );
-        messages = run_result.messages;
     }
 }
 

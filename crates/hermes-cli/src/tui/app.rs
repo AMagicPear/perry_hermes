@@ -2,7 +2,6 @@
 
 use std::time::Instant;
 
-use hermes_core::message::Message;
 use ratatui::text::Line;
 use tokio_util::sync::CancellationToken;
 
@@ -31,8 +30,6 @@ pub struct App {
     pub max_iterations: u32,
     /// Display hint shown briefly after a compression event.
     pub compression_hint: Option<String>,
-    /// Conversation history accumulated across turns.
-    pub session_history: Vec<Message>,
     /// `Some(Instant)` while a turn is in flight (`AppMode::AwaitingModel`).
     /// `None` when idle or cancelling. Drives the elapsed-time readout in
     /// the status bar.
@@ -74,7 +71,6 @@ impl App {
             iteration: 0,
             max_iterations: 0,
             compression_hint: None,
-            session_history: Vec::new(),
             turn_started_at: None,
             chat_scroll: 0,
             context_window_size: None,
