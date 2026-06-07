@@ -1,5 +1,5 @@
 [package]
-name = "hermes-agent"
+name = "perry-hermes-agent"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,9 +7,9 @@ license.workspace = true
 description = "Consolidated agent runtime engine and built-in tools"
 
 [dependencies]
-hermes-core.workspace = true
-hermes-providers.workspace = true
-hermes-skill-loader = { path = "../hermes-skill-loader" }
+perry-hermes-core.workspace = true
+perry-hermes-providers.workspace = true
+perry-hermes-skill-loader = { path = "../hermes-skill-loader" }
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true

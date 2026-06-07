@@ -9,25 +9,25 @@ use std::time::Duration;
 use async_trait::async_trait;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use futures::stream;
-use hermes_agent::AgentRunError;
-use hermes_core::error::LoopError;
-use hermes_core::message::{Content, Message, Role};
-use hermes_core::provider::{
+use perry_hermes_agent::AgentRunError;
+use perry_hermes_core::error::LoopError;
+use perry_hermes_core::message::{Content, Message, Role};
+use perry_hermes_core::provider::{
     Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta,
 };
-use hermes_core::registry::ToolSchema;
-use hermes_core::usage::Usage;
-use hermes_core::ProviderError;
+use perry_hermes_core::registry::ToolSchema;
+use perry_hermes_core::usage::Usage;
+use perry_hermes_core::ProviderError;
 use ratatui::backend::TestBackend;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use hermes_cli::tui::event::AppEvent;
-use hermes_cli::tui::run::run_with_backend;
+use perry_hermes_cli::tui::event::AppEvent;
+use perry_hermes_cli::tui::run::run_with_backend;
 
-/// An inline `ScriptedProvider` for use in hermes-cli integration tests.
-/// Unlike the support version in hermes-agent/tests (which is not public),
-/// this one is defined locally so it can be used from hermes-cli/tests/.
+/// An inline `ScriptedProvider` for use in perry-hermes-cli integration tests.
+/// Unlike the support version in perry-hermes-agent/tests (which is not public),
+/// this one is defined locally so it can be used from perry-hermes-cli/tests/.
 struct ScriptedProvider {
     script: std::sync::Mutex<Vec<Vec<CompletionDelta>>>,
     call_count: AtomicUsize,
@@ -251,7 +251,7 @@ async fn compact_command_emits_compress_request() {
 
     // The test only asserts the TUI accepts and dispatches the event without
     // panicking; the actual compression call lives in `AIAgent::run_compact`
-    // and is exercised by `hermes-agent`'s context-compression tests.
+    // and is exercised by `perry-hermes-agent`'s context-compression tests.
     let result = run_with_backend(
         backend,
         input_rx,

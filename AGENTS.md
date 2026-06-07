@@ -5,9 +5,10 @@ the code, not with historical phase plans.
 
 ## Project Intent
 
-Hermes Rust is moving toward a platform-neutral agent runtime. The CLI is only
-one adapter. Future gateway/Telegram-style integrations should share the same
-runtime and session model instead of reimplementing context management.
+Perry Hermes (`perry_hermes`) is moving toward a platform-neutral agent
+runtime. The CLI is only one adapter. Future gateway/Telegram-style
+integrations should share the same runtime and session model instead of
+reimplementing context management.
 
 This project is experimental and has no compatibility promise. When a cleaner
 architecture conflicts with older API shape, prefer the cleaner architecture
@@ -22,8 +23,8 @@ unless the current task explicitly asks for compatibility.
 - `AgentSession` owns message history and token facts.
 - Context compaction is session behavior driven by provider-reported usage.
 - The TUI owns scrollback only; it must not own prompt history.
-- Provider protocol details stay in `hermes-providers`.
-- Shared traits/data stay in `hermes-core`, without IO concerns.
+- Provider protocol details stay in `perry-hermes-providers`.
+- Shared traits/data stay in `perry-hermes-core`, without IO concerns.
 
 The important call shape is:
 
@@ -38,23 +39,23 @@ own conversation store. That recreates split-brain context ownership.
 ## Architecture
 
 ```text
-hermes-cli
-  ratatui platform adapter
+perry-hermes-cli crate
+  Perry Hermes CLI / ratatui platform adapter
 
-hermes-agent
+perry-hermes-agent crate
   AIAgent
   AgentSession
   AgentLoop
   SummaryCompactor
   built-in tools
 
-hermes-core
+perry-hermes-core crate
   Provider / Tool / Message / Usage / errors
 
-hermes-providers
+perry-hermes-providers crate
   OpenAI-compatible / Anthropic-compatible / Echo
 
-hermes-skill-loader
+perry-hermes-skill-loader crate
   SKILL.md loading and prompt block rendering
 ```
 
@@ -163,9 +164,9 @@ cargo doc --no-deps
 Use focused commands while iterating:
 
 ```bash
-cargo test -p hermes-agent --test context_compression
-cargo test -p hermes-agent --test tool_dispatch
-cargo test -p hermes-cli tui
+cargo test -p perry-hermes-agent --test context_compression
+cargo test -p perry-hermes-agent --test tool_dispatch
+cargo test -p perry-hermes-cli tui
 ```
 
 Testing patterns:
@@ -181,16 +182,16 @@ Testing patterns:
 
 ```bash
 cargo build
-cargo run -p hermes-cli
-cargo run -p hermes-cli -- --config /path/to/hermes.toml
-cargo run -p hermes-agent --example live_tool_use -- "what time is it?"
-cargo run -p hermes-agent --example live_context_usage -- ~/.perry_hermes/config.toml
+cargo run -p perry-hermes-cli
+cargo run -p perry-hermes-cli -- --config /path/to/perry_hermes.toml
+cargo run -p perry-hermes-agent --example live_tool_use -- "what time is it?"
+cargo run -p perry-hermes-agent --example live_context_usage -- ~/.perry_hermes/config.toml
 ```
 
 Offline CLI smoke:
 
 ```bash
-cat > /tmp/hermes-smoke.toml <<'TOML'
+cat > /tmp/perry-hermes-smoke.toml <<'TOML'
 [[providers]]
 name = "local"
 kind = "echo"
@@ -204,5 +205,5 @@ default_provider = "local"
 default_model = "echo"
 TOML
 
-echo "hello" | cargo run -p hermes-cli --quiet -- --config /tmp/hermes-smoke.toml
+echo "hello" | cargo run -p perry-hermes-cli --quiet -- --config /tmp/perry-hermes-smoke.toml
 ```

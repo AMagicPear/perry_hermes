@@ -20,10 +20,10 @@ pub(super) fn sensitive_write_path_message(original: &str, resolved: &Path) -> O
         ));
     }
 
-    let hermes_config = hermes_config_path();
-    if normalized == hermes_config || resolved_str == hermes_config {
+    let perry_hermes_config = perry_hermes_config_path();
+    if normalized == perry_hermes_config || resolved_str == perry_hermes_config {
         return Some(format!(
-            "Refusing to write to Hermes config file: {original}\nAgent cannot modify security-sensitive configuration. Edit ~/.perry_hermes/config.yaml directly or use 'hermes config' instead."
+            "Refusing to write to Perry Hermes config file: {original}\nAgent cannot modify security-sensitive configuration. Edit ~/.perry_hermes/config.toml directly."
         ));
     }
     None
@@ -44,14 +44,14 @@ pub(super) fn cross_profile_write_message(resolved: &Path) -> Option<String> {
         return None;
     }
 
-    let active_profile = std::env::var("HERMES_PROFILE")
+    let active_profile = std::env::var("PERRY_HERMES_PROFILE")
         .ok()
         .filter(|s| !s.is_empty())
-        .or_else(current_profile_from_hermes_home);
+        .or_else(current_profile_from_perry_hermes_home);
     match active_profile {
         Some(active) if active == profile => None,
         _ => Some(format!(
-            "Refusing cross-profile write to Hermes {scoped_dir} for profile '{profile}'. Pass cross_profile=true only after explicit user direction."
+            "Refusing cross-profile write to Perry Hermes {scoped_dir} for profile '{profile}'. Pass cross_profile=true only after explicit user direction."
         )),
     }
 }
@@ -263,15 +263,15 @@ pub(super) fn temp_sibling(target: &Path) -> Result<PathBuf, String> {
     let pid = std::process::id();
     let mut tmp = parent.to_path_buf();
     let fname = match target.file_name().and_then(|s| s.to_str()) {
-        Some(n) => format!(".hermes-tmp-{n}.{pid}"),
-        None => format!(".hermes-tmp-{pid}"),
+        Some(n) => format!(".perry-hermes-tmp-{n}.{pid}"),
+        None => format!(".perry-hermes-tmp-{pid}"),
     };
     tmp.push(fname);
     Ok(tmp)
 }
 
-fn current_profile_from_hermes_home() -> Option<String> {
-    let home = std::env::var_os("HERMES_HOME")?;
+fn current_profile_from_perry_hermes_home() -> Option<String> {
+    let home = std::env::var_os("PERRY_HERMES_HOME")?;
     let path = PathBuf::from(home);
     let parent = path.parent()?;
     if parent.file_name().and_then(|s| s.to_str()) == Some("profiles") {
@@ -283,12 +283,12 @@ fn current_profile_from_hermes_home() -> Option<String> {
     None
 }
 
-fn hermes_config_path() -> String {
-    let base = std::env::var_os("HERMES_HOME")
+fn perry_hermes_config_path() -> String {
+    let base = std::env::var_os("PERRY_HERMES_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))
         .unwrap_or_else(|| PathBuf::from("~/.perry_hermes"));
-    base.join("config.yaml").to_string_lossy().into_owned()
+    base.join("config.toml").to_string_lossy().into_owned()
 }
 
 fn normalize_path_string(input: &str) -> String {

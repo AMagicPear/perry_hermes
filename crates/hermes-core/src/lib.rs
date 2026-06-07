@@ -1,4 +1,4 @@
-//! Core types and traits for the Hermes agent loop.
+//! Core types and traits for the Perry Hermes agent loop.
 //!
 //! This crate has no IO, no async (beyond trait method signatures), and no
 //! dependencies beyond serde, tokio-util, async-trait, and thiserror. It is

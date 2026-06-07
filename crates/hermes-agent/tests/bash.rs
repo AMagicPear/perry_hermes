@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use hermes_agent::tools::BashTool;
-use hermes_core::tool::{Tool, ToolContext, ToolPermissions};
+use perry_hermes_agent::tools::BashTool;
+use perry_hermes_core::tool::{Tool, ToolContext, ToolPermissions};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 

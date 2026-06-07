@@ -11,7 +11,7 @@ mod tool_catalog;
 pub mod tools;
 
 pub use compaction::{CompactorConfig, SummaryCompactor};
-pub use config::{AgentConfig, HermesConfig, ModelConfig, ProviderConfig, ProviderKind};
+pub use config::{AgentConfig, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind};
 pub use loop_engine::{
     AgentLoop, AgentRunError, ContextWindow, FailedTurn, LoopConfig, LoopEvent, LoopMetrics,
     RunResult,

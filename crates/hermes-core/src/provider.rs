@@ -118,7 +118,6 @@ pub struct CompletionDelta {
     pub finish_reason: Option<FinishReason>,
 }
 
-// Re-exported to preserve the `hermes_core::provider::StreamAccumulator`
-// import path used by `hermes-loop`. The implementation lives in
-// `crate::accumulator`; `provider.rs` keeps the trait + delta types only.
+// Re-exported so provider callers have one stable import path while the
+// implementation stays in `crate::accumulator`.
 pub use crate::accumulator::{accumulate_stream, StreamAccumulator};

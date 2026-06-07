@@ -10,15 +10,16 @@ use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream;
-use hermes_agent::{
-    AIAgent, AgentSession, HermesConfig, ModelConfig, ProviderConfig, ProviderKind, SessionContext,
+use perry_hermes_agent::{
+    AIAgent, AgentSession, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind,
+    SessionContext,
 };
-use hermes_core::message::Message;
-use hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
+use perry_hermes_core::message::Message;
+use perry_hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
-/// Serialize tests that mutate process-wide state (HOME/HERMES_HOME).
+/// Serialize tests that mutate process-wide state (HOME/PERRY_HERMES_HOME).
 ///
 ///
 /// The runtime reads those vars during `run_turn`, so the guard must stay
@@ -38,15 +39,15 @@ impl Provider for CaptureProvider {
     async fn stream(
         &self,
         messages: &[Message],
-        _tools: &[hermes_core::registry::ToolSchema],
+        _tools: &[perry_hermes_core::registry::ToolSchema],
         _cancel: CancellationToken,
-    ) -> Result<CompletionStream, hermes_core::ProviderError> {
+    ) -> Result<CompletionStream, perry_hermes_core::ProviderError> {
         *self.captured.lock().unwrap() = messages.to_vec();
         Ok(Box::pin(stream::iter(vec![Ok(CompletionDelta {
             content_delta: Some("ok".into()),
             reasoning_delta: None,
             tool_call_delta: None,
-            usage: Some(hermes_core::Usage::default()),
+            usage: Some(perry_hermes_core::Usage::default()),
             finish_reason: Some(FinishReason::Stop),
         })])))
     }
@@ -65,8 +66,8 @@ fn skills_dir_for(home: &std::path::Path) -> PathBuf {
     home.join(".perry_hermes").join("skills")
 }
 
-fn config_for_echo() -> HermesConfig {
-    HermesConfig {
+fn config_for_echo() -> PerryHermesConfig {
+    PerryHermesConfig {
         providers: vec![ProviderConfig {
             name: "local".into(),
             kind: ProviderKind::Echo,
@@ -79,7 +80,7 @@ fn config_for_echo() -> HermesConfig {
             api_key_header: None,
             thinking: None,
         }],
-        agent: hermes_agent::AgentConfig {
+        agent: perry_hermes_agent::AgentConfig {
             default_provider: "local".into(),
             default_model: "echo".into(),
             ..Default::default()
@@ -90,10 +91,10 @@ fn config_for_echo() -> HermesConfig {
 fn system_text(messages: &[Message]) -> String {
     let system = messages
         .iter()
-        .find(|m| m.role == hermes_core::message::Role::System)
+        .find(|m| m.role == perry_hermes_core::message::Role::System)
         .expect("a System message should have been injected");
     match &system.content {
-        hermes_core::message::Content::Text(s) => s.clone(),
+        perry_hermes_core::message::Content::Text(s) => s.clone(),
         _ => panic!("system message should be text"),
     }
 }
@@ -102,8 +103,8 @@ fn system_text(messages: &[Message]) -> String {
 async fn runtime_new_preserves_user_prompt_without_skills_dir() {
     let _guard = with_env_lock().await;
     unsafe { std::env::remove_var("HOME") };
-    unsafe { std::env::remove_var("HERMES_HOME") };
-    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -130,9 +131,9 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
 #[tokio::test]
 async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_absent() {
     let _guard = with_env_lock().await;
-    unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/hermes-test") };
-    unsafe { std::env::remove_var("HERMES_HOME") };
-    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+    unsafe { std::env::set_var("HOME", "/definitely/does/not/exist/perry-hermes-test") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -167,8 +168,8 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
     );
     let _guard = with_env_lock().await;
     unsafe { std::env::set_var("HOME", home.path()) };
-    unsafe { std::env::remove_var("HERMES_HOME") };
-    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -208,8 +209,8 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
     );
     let _guard = with_env_lock().await;
     unsafe { std::env::set_var("HOME", home.path()) };
-    unsafe { std::env::remove_var("HERMES_HOME") };
-    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -233,8 +234,8 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
 async fn runtime_uses_default_system_prompt_when_home_is_unset() {
     let _guard = with_env_lock().await;
     unsafe { std::env::remove_var("HOME") };
-    unsafe { std::env::remove_var("HERMES_HOME") };
-    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -273,8 +274,8 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
     );
     let _guard = with_env_lock().await;
     unsafe { std::env::set_var("HOME", home.path()) };
-    unsafe { std::env::remove_var("HERMES_HOME") };
-    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
@@ -300,8 +301,8 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
 async fn runtime_formats_conversation_started_in_configured_timezone() {
     let _guard = with_env_lock().await;
     unsafe { std::env::remove_var("HOME") };
-    unsafe { std::env::remove_var("HERMES_HOME") };
-    unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);

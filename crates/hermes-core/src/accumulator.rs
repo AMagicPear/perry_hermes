@@ -16,7 +16,7 @@ use crate::usage::Usage;
 
 /// Accumulates `CompletionDelta` items from a stream into a final `Completion`.
 ///
-/// Pure data — no async, no I/O. Lives in `hermes-core` so both the trait
+/// Pure data — no async, no I/O. Lives in `perry-hermes-core` so both the trait
 /// default `complete()` and `AgentLoop::run` can share it.
 pub struct StreamAccumulator {
     content: String,

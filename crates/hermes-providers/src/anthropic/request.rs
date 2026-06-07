@@ -3,12 +3,12 @@
 //!
 //! DTO names are prefixed `Anthropic*` (not `Wire*`) so they read as
 //! "the Anthropic thing" at a glance. The `to_anthropic_*` free
-//! functions translate from `hermes_core` types.
+//! functions translate from `perry_hermes_core` types.
 
 use serde::Serialize;
 
-use hermes_core::message::{Content, ContentPart, Message, Role};
-use hermes_core::registry::ToolSchema;
+use perry_hermes_core::message::{Content, ContentPart, Message, Role};
+use perry_hermes_core::registry::ToolSchema;
 
 use crate::anthropic::AnthropicThinking;
 

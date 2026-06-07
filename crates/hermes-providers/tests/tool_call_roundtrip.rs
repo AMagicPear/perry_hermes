@@ -19,9 +19,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::message::{Content, ContentPart, Message, Role, ToolCall};
-use hermes_core::provider::Provider;
-use hermes_providers::OpenAiProvider;
+use perry_hermes_core::message::{Content, ContentPart, Message, Role, ToolCall};
+use perry_hermes_core::provider::Provider;
+use perry_hermes_providers::OpenAiProvider;
 
 /// Minimal HTTP/1.1 server that records POST bodies and returns the
 /// same canned response every time. Parses `Content-Length` to know

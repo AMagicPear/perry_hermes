@@ -20,11 +20,11 @@ use std::time::Instant;
 use futures::StreamExt;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::compaction_strategy::CompressionTrigger;
-use hermes_core::error::{LoopError, ProviderError, ToolError};
-use hermes_core::message::{Message, Role, ToolCall};
-use hermes_core::provider::{Completion, FinishReason, StreamAccumulator};
-use hermes_core::tool::ToolContext;
+use perry_hermes_core::compaction_strategy::CompressionTrigger;
+use perry_hermes_core::error::{LoopError, ProviderError, ToolError};
+use perry_hermes_core::message::{Message, Role, ToolCall};
+use perry_hermes_core::provider::{Completion, FinishReason, StreamAccumulator};
+use perry_hermes_core::tool::ToolContext;
 
 use super::compaction::{try_compact, CompactOutcome};
 use super::metrics::{prompt_context_tokens_from_usage, validate_args};
@@ -133,7 +133,7 @@ pub(crate) struct DriveError {
 pub(crate) async fn drive_turn(
     engine: &AgentLoop,
     messages: &[Message],
-    tools: &[hermes_core::registry::ToolSchema],
+    tools: &[perry_hermes_core::registry::ToolSchema],
     cancel: &CancellationToken,
     on_event: &mut impl FnMut(LoopEvent),
     _started: Instant,
@@ -264,7 +264,7 @@ async fn dispatch_tool(
     call: &ToolCall,
     ctx: &ToolContext,
     cancel: CancellationToken,
-) -> Result<hermes_core::tool::ToolOutput, ToolError> {
+) -> Result<perry_hermes_core::tool::ToolOutput, ToolError> {
     let tool = engine
         .registry
         .get(&call.name)

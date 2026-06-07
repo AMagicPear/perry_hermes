@@ -1,23 +1,24 @@
 use std::sync::{Arc, Mutex};
 
-use hermes_agent::{
-    AIAgent, AgentLoop, AgentSession, CompactorConfig, ContextWindow, HermesConfig, LoopConfig,
-    ModelConfig, ProviderConfig, ProviderKind, SessionContext, SessionState, SummaryCompactor,
+use perry_hermes_agent::{
+    AIAgent, AgentLoop, AgentSession, CompactorConfig, ContextWindow, LoopConfig, ModelConfig,
+    PerryHermesConfig, ProviderConfig, ProviderKind, SessionContext, SessionState,
+    SummaryCompactor,
 };
-use hermes_core::message::{Content, Message, Role, ToolCall};
-use hermes_core::provider::{Completion, FinishReason};
-use hermes_core::registry::InMemoryRegistry;
-use hermes_core::tool::ToolContext;
-use hermes_core::ProviderError;
-use hermes_core::Usage;
+use perry_hermes_core::message::{Content, Message, Role, ToolCall};
+use perry_hermes_core::provider::{Completion, FinishReason};
+use perry_hermes_core::registry::InMemoryRegistry;
+use perry_hermes_core::tool::ToolContext;
+use perry_hermes_core::ProviderError;
+use perry_hermes_core::Usage;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 mod support;
 use support::ScriptedProvider;
 
-fn echo_config_with_compression() -> HermesConfig {
-    HermesConfig {
+fn echo_config_with_compression() -> PerryHermesConfig {
+    PerryHermesConfig {
         providers: vec![ProviderConfig {
             name: "local".into(),
             kind: ProviderKind::Echo,
@@ -30,7 +31,7 @@ fn echo_config_with_compression() -> HermesConfig {
             api_key_header: None,
             thinking: None,
         }],
-        agent: hermes_agent::AgentConfig {
+        agent: perry_hermes_agent::AgentConfig {
             default_provider: "local".into(),
             default_model: "echo".into(),
             context_compression_enabled: true,
@@ -81,7 +82,7 @@ fn test_ctx() -> ToolContext {
     ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: hermes_core::tool::ToolPermissions { subprocess: true },
+        permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     }
 }
 
@@ -236,9 +237,10 @@ async fn loop_does_not_compress_until_real_context_usage_reaches_threshold() {
         .expect("loop should succeed");
 
     assert!(
-        !events
-            .iter()
-            .any(|event| matches!(event, hermes_agent::LoopEvent::CompressionCompleted { .. })),
+        !events.iter().any(|event| matches!(
+            event,
+            perry_hermes_agent::LoopEvent::CompressionCompleted { .. }
+        )),
         "compression must wait for real provider usage to reach threshold"
     );
 }
@@ -300,8 +302,8 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
         events.iter().any(|event| {
             matches!(
                 event,
-                hermes_agent::LoopEvent::CompressionCompleted {
-                    trigger: hermes_core::compaction_strategy::CompressionTrigger::PostTurn,
+                perry_hermes_agent::LoopEvent::CompressionCompleted {
+                    trigger: perry_hermes_core::compaction_strategy::CompressionTrigger::PostTurn,
                     context_tokens: Some(64_000),
                     ..
                 }
@@ -386,7 +388,7 @@ async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
             test_session_state(),
             CancellationToken::new(),
             |event| {
-                if let hermes_agent::LoopEvent::ContextUsageUpdated { used_tokens } = event {
+                if let perry_hermes_agent::LoopEvent::ContextUsageUpdated { used_tokens } = event {
                     usage_events.push(used_tokens);
                 }
             },
@@ -433,7 +435,7 @@ async fn session_compact_rewrites_history_with_summary_message() {
         .await
         .expect("manual compact should succeed");
     match event {
-        hermes_agent::LoopEvent::CompressionCompleted { .. } => {}
+        perry_hermes_agent::LoopEvent::CompressionCompleted { .. } => {}
         other => panic!("expected CompressionCompleted event, got {other:?}"),
     }
     let result = session.messages().await;
@@ -535,7 +537,7 @@ async fn session_compact_rewrites_session_messages() {
         .expect("session compact should succeed");
 
     match event {
-        hermes_agent::LoopEvent::CompressionCompleted {
+        perry_hermes_agent::LoopEvent::CompressionCompleted {
             compacted_tokens, ..
         } => assert_eq!(compacted_tokens, Some(1_033)),
         other => panic!("expected CompressionCompleted event, got {other:?}"),
@@ -586,7 +588,7 @@ async fn session_compact_reports_summary_failure() {
         .expect("manual compact should return a failure event, not a hard error");
 
     match event {
-        hermes_agent::LoopEvent::CompressionFailed { error, .. } => {
+        perry_hermes_agent::LoopEvent::CompressionFailed { error, .. } => {
             assert!(
                 error.contains("summary failed") || error.contains("summary provider down"),
                 "unexpected error text: {error}"
@@ -629,7 +631,7 @@ async fn session_compact_compresses_medium_history_instead_of_skipping() {
         .expect("manual compact should succeed");
 
     match event {
-        hermes_agent::LoopEvent::CompressionCompleted { .. } => {}
+        perry_hermes_agent::LoopEvent::CompressionCompleted { .. } => {}
         other => panic!("expected CompressionCompleted event, got {other:?}"),
     }
 

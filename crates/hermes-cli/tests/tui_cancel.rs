@@ -5,9 +5,9 @@
 //! - Ctrl-D in `Idle` mode produces `AppEvent::Quit`.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use hermes_cli::tui::app::App;
-use hermes_cli::tui::event::{AppEvent, AppMode};
-use hermes_cli::tui::input::handle_key;
+use perry_hermes_cli::tui::app::App;
+use perry_hermes_cli::tui::event::{AppEvent, AppMode};
+use perry_hermes_cli::tui::input::handle_key;
 
 fn ctrl_c() -> KeyEvent {
     KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)

@@ -1,9 +1,9 @@
-//! Skill data loading and system-prompt injection for the Hermes agent.
+//! Skill data loading and system-prompt injection for the Perry Hermes agent.
 //!
 //! This crate is a leaf: it parses `SKILL.md` files, validates them, and renders
 //! the prompt-injection metadata block. The LLM-callable runtime tools that
 //! explore loaded skills (`SkillListTool`, `SkillViewTool`, ...) live in
-//! `hermes-agent::tools::skills`.
+//! `perry-hermes-agent::tools::skills`.
 //!
 //! See `docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md`
 //! for the rename context.
@@ -355,7 +355,7 @@ mod tests {
 
     #[test]
     fn returns_empty_vec_when_skills_dir_does_not_exist() {
-        let p = std::path::Path::new("/definitely/does/not/exist/hermes-skills-test");
+        let p = std::path::Path::new("/definitely/does/not/exist/perry-hermes-skills-test");
         let skills = load_all(p).unwrap();
         assert!(skills.is_empty());
     }

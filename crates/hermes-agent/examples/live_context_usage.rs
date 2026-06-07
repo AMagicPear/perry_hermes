@@ -1,9 +1,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use hermes_agent::{AIAgent, AgentRunError, AgentSession, HermesConfig, LoopEvent};
-use hermes_core::message::Content;
-use hermes_core::LoopError;
+use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, LoopEvent, PerryHermesConfig};
+use perry_hermes_core::message::Content;
+use perry_hermes_core::LoopError;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -13,11 +13,13 @@ async fn main() {
         .map(PathBuf::from)
         .or_else(default_config_path)
         .unwrap_or_else(|| {
-            eprintln!("usage: cargo run -p hermes-agent --example live_context_usage -- <config>");
+            eprintln!(
+                "usage: cargo run -p perry-hermes-agent --example live_context_usage -- <config>"
+            );
             std::process::exit(2);
         });
 
-    let config = match HermesConfig::from_path(&config_path) {
+    let config = match PerryHermesConfig::from_path(&config_path) {
         Ok(config) => config,
         Err(err) => {
             eprintln!("error: failed to load {}: {err}", config_path.display());

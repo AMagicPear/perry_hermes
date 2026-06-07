@@ -20,18 +20,18 @@ pub(crate) fn resolve_config_path(explicit: Option<&Path>) -> anyhow::Result<Pat
             return Ok(p);
         }
     }
-    let cwd_default = PathBuf::from("hermes.toml");
+    let cwd_default = PathBuf::from("perry_hermes.toml");
     tried.push(cwd_default.clone());
     if cwd_default.exists() {
         return Ok(cwd_default);
     }
 
-    let mut msg = String::from("no hermes config found. Looked for:\n");
+    let mut msg = String::from("no Perry Hermes config found. Looked for:\n");
     for p in &tried {
         msg.push_str(&format!("  - {}\n", p.display()));
     }
     msg.push_str(
-        "Pass --config <path> or create one of these. See examples/config/hermes.toml for a starter.",
+        "Pass --config <path> or create one of these. See examples/config/perry_hermes.toml for a starter.",
     );
     bail!(msg);
 }

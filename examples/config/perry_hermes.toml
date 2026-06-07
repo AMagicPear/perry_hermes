@@ -1,9 +1,9 @@
-# Sample Hermes configuration.
+# Sample Perry Hermes configuration.
 #
 # The CLI will look for config files in this order:
 #   --config <path>                (explicit)
 #   ~/.perry_hermes/config.toml    (user-global)
-#   ./hermes.toml                  (project-local)
+#   ./perry_hermes.toml                  (project-local)
 #
 # Copy this file to one of those locations and adjust the provider fields.
 

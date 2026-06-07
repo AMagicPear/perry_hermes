@@ -9,25 +9,25 @@
 //!
 //! ```bash
 //! # OpenAI (defaults work as-is if OPENAI_API_KEY is set)
-//! OPENAI_API_KEY=sk-... cargo run -p hermes-providers --example live_smoke
+//! OPENAI_API_KEY=sk-... cargo run -p perry-hermes-providers --example live_smoke
 //!
 //! # DeepSeek
 //! OPENAI_API_KEY=sk-... \
 //! OPENAI_BASE_URL=https://api.deepseek.com/v1 \
 //! OPENAI_MODEL=deepseek-chat \
-//! cargo run -p hermes-providers --example live_smoke
+//! cargo run -p perry-hermes-providers --example live_smoke
 //!
 //! # Ollama (locally running)
 //! OPENAI_API_KEY=ollama \
 //! OPENAI_BASE_URL=http://localhost:11434/v1 \
 //! OPENAI_MODEL=llama3.2 \
-//! cargo run -p hermes-providers --example live_smoke
+//! cargo run -p perry-hermes-providers --example live_smoke
 //! ```
 //!
 //! Optional positional argument overrides the user message:
 //!
 //! ```bash
-//! cargo run -p hermes-providers --example live_smoke -- "explain monads in one sentence"
+//! cargo run -p perry-hermes-providers --example live_smoke -- "explain monads in one sentence"
 //! ```
 //!
 //! # Convenience: `direnv` + `.envrc`
@@ -47,17 +47,17 @@
 //! Then just:
 //!
 //! ```bash
-//! cargo run -p hermes-providers --example live_smoke
-//! cargo run -p hermes-providers --example live_smoke -- "explain monads"
+//! cargo run -p perry-hermes-providers --example live_smoke
+//! cargo run -p perry-hermes-providers --example live_smoke -- "explain monads"
 //! ```
 
 use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::message::{Content, Message, Role};
-use hermes_core::provider::Provider;
-use hermes_providers::OpenAiProvider;
+use perry_hermes_core::message::{Content, Message, Role};
+use perry_hermes_core::provider::Provider;
+use perry_hermes_providers::OpenAiProvider;
 
 #[tokio::main]
 async fn main() {

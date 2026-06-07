@@ -3,12 +3,12 @@
 //!
 //! The DTO names are prefixed `Openai*` (not `Oai*`) so they match the
 //! brand and read as "the OpenAI thing" at a glance. The `to_openai_*`
-//! free functions translate from `hermes_core` types.
+//! free functions translate from `perry_hermes_core` types.
 
 use serde::Serialize;
 
-use hermes_core::message::{Content, ContentPart, Message};
-use hermes_core::registry::ToolSchema;
+use perry_hermes_core::message::{Content, ContentPart, Message};
+use perry_hermes_core::registry::ToolSchema;
 
 /// The full Chat Completions request body, serialized as JSON.
 #[derive(Serialize)]

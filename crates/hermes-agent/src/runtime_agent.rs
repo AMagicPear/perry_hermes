@@ -1,13 +1,13 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hermes_core::message::Message;
-use hermes_core::provider::Provider;
-use hermes_core::tool::{ToolContext, ToolPermissions};
+use perry_hermes_core::message::Message;
+use perry_hermes_core::provider::Provider;
+use perry_hermes_core::tool::{ToolContext, ToolPermissions};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::config::{HermesConfig, ResolvedProviderConfig};
+use crate::config::{PerryHermesConfig, ResolvedProviderConfig};
 use crate::prompting::{
     build_runtime_system_prompt, compose_base_system_prompt, inject_system_prompt,
     resolve_skills_dir,
@@ -27,12 +27,12 @@ pub struct AIAgent {
 }
 
 impl AIAgent {
-    // Public constructor: takes HermesConfig by value so callers can
+    // Public constructor: takes PerryHermesConfig by value so callers can
     // move their config in. This is the public API — changing the
     // signature would break every CLI and test caller. The clippy
-    // suggestion to take &HermesConfig is rejected intentionally.
+    // suggestion to take &PerryHermesConfig is rejected intentionally.
     #[allow(clippy::needless_pass_by_value)]
-    pub fn from_config(config: HermesConfig) -> anyhow::Result<Self> {
+    pub fn from_config(config: PerryHermesConfig) -> anyhow::Result<Self> {
         let selected_provider = config.resolve_provider()?;
         let provider_name = Some(selected_provider.name.clone());
         let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
@@ -44,10 +44,10 @@ impl AIAgent {
         })
     }
 
-    // Public constructor: takes HermesConfig by value so callers can
+    // Public constructor: takes PerryHermesConfig by value so callers can
     // move their config in (public API; see from_config comment).
     #[allow(clippy::needless_pass_by_value)]
-    pub fn new(provider: impl Provider + 'static, config: HermesConfig) -> Self {
+    pub fn new(provider: impl Provider + 'static, config: PerryHermesConfig) -> Self {
         let selected_provider = config.resolve_provider().ok();
         let provider_name = selected_provider
             .as_ref()
@@ -168,7 +168,7 @@ impl AIAgent {
 
 fn build_loop(
     provider: Arc<dyn Provider>,
-    config: &HermesConfig,
+    config: &PerryHermesConfig,
     selected_provider: &ResolvedProviderConfig,
 ) -> AgentLoop {
     build_loop_for_custom_provider(provider, config, Some(selected_provider))
@@ -176,7 +176,7 @@ fn build_loop(
 
 fn build_loop_for_custom_provider(
     provider: Arc<dyn Provider>,
-    config: &HermesConfig,
+    config: &PerryHermesConfig,
     selected_provider: Option<&ResolvedProviderConfig>,
 ) -> AgentLoop {
     let skills_dir = resolve_skills_dir().unwrap_or_else(|| {
@@ -191,7 +191,7 @@ fn build_loop_for_custom_provider(
         Some(Arc::new(TokioMutex::new(
             SummaryCompactor::new(compactor_config).with_summary_provider(Arc::clone(&provider)),
         ))
-            as Arc<TokioMutex<dyn hermes_core::CompactionStrategy>>)
+            as Arc<TokioMutex<dyn perry_hermes_core::CompactionStrategy>>)
     } else {
         None
     };
@@ -222,21 +222,21 @@ mod tests {
 
     use async_trait::async_trait;
     use futures::stream;
-    use hermes_core::message::Message;
-    use hermes_core::provider::{
+    use perry_hermes_core::message::Message;
+    use perry_hermes_core::provider::{
         CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta,
     };
-    use hermes_core::registry::{InMemoryRegistry, ToolSchema};
-    use hermes_core::tool::{Tool, ToolContext, ToolOutput};
-    use hermes_core::{ProviderError, ToolError, Usage};
+    use perry_hermes_core::registry::{InMemoryRegistry, ToolSchema};
+    use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
+    use perry_hermes_core::{ProviderError, ToolError, Usage};
     use serde_json::{json, Value};
     use tokio_util::sync::CancellationToken;
 
     use crate::config::{ModelConfig, ProviderConfig, ProviderKind};
     use crate::session::SessionContext;
 
-    fn echo_config() -> HermesConfig {
-        HermesConfig {
+    fn echo_config() -> PerryHermesConfig {
+        PerryHermesConfig {
             providers: vec![provider_config(
                 "local",
                 ProviderKind::Echo,
@@ -271,7 +271,7 @@ mod tests {
         }
     }
 
-    fn echo_config_with_compression() -> HermesConfig {
+    fn echo_config_with_compression() -> PerryHermesConfig {
         let mut config = echo_config();
         config.agent.context_compression_enabled = true;
         config
@@ -296,7 +296,7 @@ mod tests {
 
     #[test]
     fn from_config_errors_on_missing_model() {
-        let config = HermesConfig {
+        let config = PerryHermesConfig {
             providers: vec![ProviderConfig {
                 name: "openai-main".into(),
                 kind: ProviderKind::Openai,
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn from_config_errors_on_missing_base_url() {
-        let config = HermesConfig {
+        let config = PerryHermesConfig {
             providers: vec![ProviderConfig {
                 name: "openai-main".into(),
                 kind: ProviderKind::Openai,
@@ -358,11 +358,11 @@ mod tests {
 
     #[test]
     fn from_config_errors_on_missing_api_key_env() {
-        let config = HermesConfig {
+        let config = PerryHermesConfig {
             providers: vec![ProviderConfig {
                 name: "openai-main".into(),
                 kind: ProviderKind::Openai,
-                api_key_env: Some("HERMES_TEST_DEFINITELY_NOT_SET_98765".into()),
+                api_key_env: Some("PERRY_HERMES_TEST_DEFINITELY_NOT_SET_98765".into()),
                 models: vec![ModelConfig {
                     name: "gpt-4o-mini".into(),
                     context_window_size: 128_000,
@@ -382,14 +382,14 @@ mod tests {
             .expect("expected from_config to fail");
         let msg = format!("{err:#}");
         assert!(
-            msg.contains("HERMES_TEST_DEFINITELY_NOT_SET_98765"),
+            msg.contains("PERRY_HERMES_TEST_DEFINITELY_NOT_SET_98765"),
             "error should name the missing env var: {msg}"
         );
     }
 
     #[test]
     fn from_config_errors_on_missing_anthropic_model() {
-        let config = HermesConfig {
+        let config = PerryHermesConfig {
             providers: vec![ProviderConfig {
                 name: "anthropic-main".into(),
                 kind: ProviderKind::Anthropic,
@@ -418,8 +418,8 @@ mod tests {
 
     #[test]
     fn new_with_custom_provider_and_default_config() {
-        use hermes_providers::EchoProvider;
-        let agent = AIAgent::new(EchoProvider::new(), HermesConfig::default());
+        use perry_hermes_providers::EchoProvider;
+        let agent = AIAgent::new(EchoProvider::new(), PerryHermesConfig::default());
         drop(agent);
     }
 
@@ -523,7 +523,7 @@ mod tests {
         };
 
         let session = AgentSession::new(SessionContext {
-            working_dir: std::path::PathBuf::from("/tmp/hermes-test-cwd"),
+            working_dir: std::path::PathBuf::from("/tmp/perry-hermes-test-cwd"),
             session_id: "session-xyz".into(),
         });
 
@@ -536,7 +536,7 @@ mod tests {
         let ctx = captured.lock().unwrap().clone().expect("tool was called");
         assert_eq!(
             ctx.working_dir,
-            std::path::PathBuf::from("/tmp/hermes-test-cwd")
+            std::path::PathBuf::from("/tmp/perry-hermes-test-cwd")
         );
         assert_eq!(ctx.session_id, "session-xyz");
     }

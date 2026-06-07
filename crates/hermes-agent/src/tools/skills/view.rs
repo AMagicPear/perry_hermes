@@ -1,8 +1,8 @@
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
-use hermes_core::error::ToolError;
-use hermes_core::tool::{Tool, ToolContext, ToolOutput};
+use perry_hermes_core::error::ToolError;
+use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
@@ -84,7 +84,7 @@ impl Tool for SkillViewTool {
             });
         }
 
-        let skills = match hermes_skill_loader::load_all(&self.skills_dir) {
+        let skills = match perry_hermes_skill_loader::load_all(&self.skills_dir) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(ToolOutput {
@@ -94,7 +94,7 @@ impl Tool for SkillViewTool {
             }
         };
 
-        let mut candidates: Vec<&hermes_skill_loader::Skill> = skills
+        let mut candidates: Vec<&perry_hermes_skill_loader::Skill> = skills
             .iter()
             .filter(|s| s.name == name || s.qualified_name == name)
             .collect();
@@ -177,7 +177,7 @@ impl Tool for SkillViewTool {
 }
 
 fn read_linked_file(
-    skill: &hermes_skill_loader::Skill,
+    skill: &perry_hermes_skill_loader::Skill,
     skill_root: &Path,
     file_path: &str,
 ) -> ToolOutput {

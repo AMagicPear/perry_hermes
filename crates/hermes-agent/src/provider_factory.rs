@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context};
-use hermes_core::Provider;
-use hermes_providers::{
+use perry_hermes_core::Provider;
+use perry_hermes_providers::{
     AnthropicProvider, AnthropicRequestOptions, AnthropicThinking, EchoProvider, OpenAiProvider,
 };
 

@@ -1,10 +1,10 @@
 [package]
-name = "hermes-skill-loader"
+name = "perry-hermes-skill-loader"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Skill loading and system-prompt injection for Hermes"
+description = "Skill loading and system-prompt injection for Perry Hermes"
 
 [dependencies]
 anyhow.workspace = true

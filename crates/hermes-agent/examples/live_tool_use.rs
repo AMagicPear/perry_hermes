@@ -1,9 +1,9 @@
 use std::time::Duration;
 
-use hermes_agent::{AIAgent, AgentRunError, AgentSession, HermesConfig, LoopEvent};
-use hermes_core::message::Content;
-use hermes_core::LoopError;
-use hermes_providers::OpenAiProvider;
+use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, LoopEvent, PerryHermesConfig};
+use perry_hermes_core::message::Content;
+use perry_hermes_core::LoopError;
+use perry_hermes_providers::OpenAiProvider;
 use tokio_util::sync::CancellationToken;
 
 #[tokio::main]
@@ -21,7 +21,7 @@ async fn main() {
         .unwrap_or_else(|| "what's my kernel version? use bash.".into());
 
     let provider = OpenAiProvider::new(&api_key, &model).with_base_url(&base_url);
-    let agent = AIAgent::new(provider, HermesConfig::default());
+    let agent = AIAgent::new(provider, PerryHermesConfig::default());
     let session = AgentSession::current_shell();
     let cancel = CancellationToken::new();
 

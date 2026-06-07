@@ -11,15 +11,15 @@
 use httpmock::prelude::*;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::message::{Message, Role};
-use hermes_core::Provider;
-use hermes_core::ProviderError;
-use hermes_providers::OpenAiProvider;
+use perry_hermes_core::message::{Message, Role};
+use perry_hermes_core::Provider;
+use perry_hermes_core::ProviderError;
+use perry_hermes_providers::OpenAiProvider;
 
 fn user_message(text: &str) -> Message {
     Message {
         role: Role::User,
-        content: hermes_core::message::Content::Text(text.into()),
+        content: perry_hermes_core::message::Content::Text(text.into()),
         reasoning: None,
         tool_call_id: None,
         tool_calls: None,

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hermes_core::message::Message;
+use perry_hermes_core::message::Message;
 use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]

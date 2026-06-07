@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use hermes_core::error::ToolError;
-use hermes_core::tool::{Tool, ToolContext, ToolOutput};
+use perry_hermes_core::error::ToolError;
+use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 

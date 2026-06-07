@@ -1,11 +1,11 @@
 use std::sync::{Arc, Mutex};
 
-use hermes_agent::tools::BashTool;
-use hermes_agent::{AgentLoop, AgentRunError, LoopConfig};
-use hermes_core::message::{Content, Message, Role, ToolCall};
-use hermes_core::provider::{Completion, FinishReason};
-use hermes_core::registry::InMemoryRegistry;
-use hermes_core::tool::ToolContext;
+use perry_hermes_agent::tools::BashTool;
+use perry_hermes_agent::{AgentLoop, AgentRunError, LoopConfig};
+use perry_hermes_core::message::{Content, Message, Role, ToolCall};
+use perry_hermes_core::provider::{Completion, FinishReason};
+use perry_hermes_core::registry::InMemoryRegistry;
+use perry_hermes_core::tool::ToolContext;
 use tokio_util::sync::CancellationToken;
 
 mod support;
@@ -53,12 +53,12 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
                 serde_json::json!({ "command": "echo from-bash" }),
             )]),
         },
-        usage: hermes_core::Usage::default(),
+        usage: perry_hermes_core::Usage::default(),
         finish_reason: FinishReason::ToolUse,
     };
     let second = Completion {
         message: assistant_text("done"),
-        usage: hermes_core::Usage::default(),
+        usage: perry_hermes_core::Usage::default(),
         finish_reason: FinishReason::Stop,
     };
 
@@ -79,14 +79,14 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: hermes_core::tool::ToolPermissions { subprocess: true },
+        permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
     let result = loop_
         .run(
             vec![user_message("please run something")],
             ctx,
-            Arc::new(hermes_agent::SessionState::default()),
+            Arc::new(perry_hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |e| {
                 events_for_cb.lock().unwrap().push(format!("{e:?}"));
@@ -121,7 +121,7 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
 
 #[tokio::test]
 async fn loop_routes_read_file_tool_call() {
-    use hermes_agent::tools::ReadFileTool;
+    use perry_hermes_agent::tools::ReadFileTool;
     use tempfile::TempDir;
 
     let dir = TempDir::new().unwrap();
@@ -140,12 +140,12 @@ async fn loop_routes_read_file_tool_call() {
                 serde_json::json!({ "path": path.to_str().unwrap() }),
             )]),
         },
-        usage: hermes_core::Usage::default(),
+        usage: perry_hermes_core::Usage::default(),
         finish_reason: FinishReason::ToolUse,
     };
     let second = Completion {
         message: assistant_text("ok"),
-        usage: hermes_core::Usage::default(),
+        usage: perry_hermes_core::Usage::default(),
         finish_reason: FinishReason::Stop,
     };
 
@@ -162,13 +162,13 @@ async fn loop_routes_read_file_tool_call() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: dir.path().to_path_buf(),
-        permissions: hermes_core::tool::ToolPermissions { subprocess: false },
+        permissions: perry_hermes_core::tool::ToolPermissions { subprocess: false },
     };
     let result = loop_
         .run(
             vec![user_message("read it")],
             ctx,
-            Arc::new(hermes_agent::SessionState::default()),
+            Arc::new(perry_hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )
@@ -195,13 +195,13 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
                 serde_json::json!({ "command": "echo retained-output" }),
             )]),
         },
-        usage: hermes_core::Usage::default(),
+        usage: perry_hermes_core::Usage::default(),
         finish_reason: FinishReason::ToolUse,
     };
 
     let provider = ScriptedProvider::from_steps(vec![
         ScriptedStep::Deltas(support::completion_to_deltas(&first)),
-        ScriptedStep::Error(hermes_core::ProviderError::InvalidResponse(
+        ScriptedStep::Error(perry_hermes_core::ProviderError::InvalidResponse(
             "context window exceeds limit".into(),
         )),
     ]);
@@ -218,14 +218,14 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: hermes_core::tool::ToolPermissions { subprocess: true },
+        permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
     let err = loop_
         .run(
             vec![user_message("please run something")],
             ctx,
-            Arc::new(hermes_agent::SessionState::default()),
+            Arc::new(perry_hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )
@@ -240,7 +240,7 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
             let messages = failed_turn.messages;
             assert!(matches!(
                 source,
-                hermes_core::ProviderError::InvalidResponse(_)
+                perry_hermes_core::ProviderError::InvalidResponse(_)
             ));
             assert_eq!(messages.len(), 4);
             assert_eq!(messages[0].role, Role::User);
@@ -264,7 +264,7 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
 
 #[tokio::test]
 async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
-    use hermes_core::provider::CompletionDelta;
+    use perry_hermes_core::provider::CompletionDelta;
 
     let provider = ScriptedProvider::from_steps(vec![ScriptedStep::DeltasThenError(
         vec![CompletionDelta {
@@ -274,7 +274,7 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
             usage: None,
             finish_reason: None,
         }],
-        hermes_core::ProviderError::Transport("stream dropped".into()),
+        perry_hermes_core::ProviderError::Transport("stream dropped".into()),
     )]);
     let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
     let loop_ = AgentLoop::new(
@@ -289,14 +289,14 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: hermes_core::tool::ToolPermissions { subprocess: true },
+        permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
     let err = loop_
         .run(
             vec![user_message("say something")],
             ctx,
-            Arc::new(hermes_agent::SessionState::default()),
+            Arc::new(perry_hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )
@@ -309,7 +309,10 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
             source,
         } => {
             let messages = failed_turn.messages;
-            assert!(matches!(source, hermes_core::ProviderError::Transport(_)));
+            assert!(matches!(
+                source,
+                perry_hermes_core::ProviderError::Transport(_)
+            ));
             assert_eq!(messages.len(), 3);
             assert_eq!(messages[0].role, Role::User);
             assert_eq!(messages[1].role, Role::Assistant);

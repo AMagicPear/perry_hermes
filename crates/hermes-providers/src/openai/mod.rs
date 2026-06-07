@@ -12,10 +12,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::message::Message;
-use hermes_core::provider::Provider;
-use hermes_core::registry::ToolSchema;
-use hermes_core::{CompletionStream, ProviderError};
+use perry_hermes_core::message::Message;
+use perry_hermes_core::provider::Provider;
+use perry_hermes_core::registry::ToolSchema;
+use perry_hermes_core::{CompletionStream, ProviderError};
 
 mod request;
 mod sse;

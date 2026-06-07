@@ -1,6 +1,6 @@
 use async_trait::async_trait;
-use hermes_core::error::ToolError;
-use hermes_core::tool::{Tool, ToolContext, ToolOutput};
+use perry_hermes_core::error::ToolError;
+use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
@@ -57,7 +57,7 @@ impl Tool for WriteFileTool {
                 "cross_profile": {
                     "type": "boolean",
                     "default": false,
-                    "description": "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Hermes profile's skills/plugins/cron/memories — by default these writes are blocked with a warning because they affect a different profile than the one this session is running under."
+                    "description": "Opt out of the cross-profile soft guard. Defaults to false. Set true ONLY after explicit user direction to edit another Perry Hermes profile's skills/plugins/cron/memories — by default these writes are blocked with a warning because they affect a different profile than the one this session is running under."
                 }
             },
             "required": ["path", "content"],

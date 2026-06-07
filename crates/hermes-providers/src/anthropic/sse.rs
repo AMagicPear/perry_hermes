@@ -8,8 +8,8 @@
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 
-use hermes_core::provider::{CompletionDelta, FinishReason, ToolCallDelta};
-use hermes_core::{ProviderError, Usage};
+use perry_hermes_core::provider::{CompletionDelta, FinishReason, ToolCallDelta};
+use perry_hermes_core::{ProviderError, Usage};
 
 /// Strip the `data: ` prefix and surrounding whitespace; return the
 /// payload, or `None` if the line is a comment or a control line.

@@ -4,14 +4,14 @@ use anyhow::{anyhow, Context};
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
-pub struct HermesConfig {
+pub struct PerryHermesConfig {
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]
     pub agent: AgentConfig,
 }
 
-impl HermesConfig {
+impl PerryHermesConfig {
     pub fn from_path(path: impl AsRef<Path>) -> anyhow::Result<Self> {
         let path = path.as_ref();
         let text = std::fs::read_to_string(path)
@@ -184,7 +184,7 @@ max_iterations = 12
 disabled_toolsets = ["terminal"]
 "#;
 
-        let config: HermesConfig = toml::from_str(input).unwrap();
+        let config: PerryHermesConfig = toml::from_str(input).unwrap();
         let provider = &config.providers[0];
 
         assert_eq!(provider.name, "minimax");
@@ -222,7 +222,7 @@ context_window_size = 128_000
 default_provider = "local"
 default_model = "echo"
 "#;
-        let config: HermesConfig = toml::from_str(input).unwrap();
+        let config: PerryHermesConfig = toml::from_str(input).unwrap();
 
         assert_eq!(config.providers[0].kind, ProviderKind::Echo);
         assert!(config.agent.context_compression_enabled);
@@ -245,7 +245,7 @@ default_model = "echo"
 context_compression_enabled = true
 context_compression_threshold_percent = 0.60
 "#;
-        let config: HermesConfig = toml::from_str(input).unwrap();
+        let config: PerryHermesConfig = toml::from_str(input).unwrap();
         assert!(config.agent.context_compression_enabled);
         assert_eq!(
             config.agent.context_compression_threshold_percent,
@@ -269,7 +269,7 @@ default_provider = "local"
 default_model = "echo"
 context_compression_enabled = false
 "#;
-        let config: HermesConfig = toml::from_str(input).unwrap();
+        let config: PerryHermesConfig = toml::from_str(input).unwrap();
         assert!(!config.agent.context_compression_enabled);
     }
 
@@ -289,7 +289,7 @@ context_window_size = 200_000
 default_provider = "openai-main"
 default_model = "gpt-4.1"
 "#;
-        let config: HermesConfig = toml::from_str(input).unwrap();
+        let config: PerryHermesConfig = toml::from_str(input).unwrap();
         assert_eq!(config.providers[0].models[0].context_window_size, 200_000);
     }
 
@@ -308,7 +308,7 @@ name = "gpt-4.1"
 default_provider = "openai-main"
 default_model = "gpt-4.1"
 "#;
-        let err = toml::from_str::<HermesConfig>(input).unwrap_err();
+        let err = toml::from_str::<PerryHermesConfig>(input).unwrap_err();
         assert!(err.to_string().contains("context_window_size"));
     }
 
@@ -343,7 +343,7 @@ context_window_size = 1_047_576
 default_provider = "minimax"
 default_model = "MiniMax-M2.7"
 "#;
-        let config: HermesConfig = toml::from_str(input).unwrap();
+        let config: PerryHermesConfig = toml::from_str(input).unwrap();
         let selected = config.resolve_provider().unwrap();
 
         assert_eq!(selected.name, "minimax");
@@ -373,7 +373,7 @@ context_window_size = 1_000_000
 default_provider = "minimax"
 default_model = "missing-model"
 "#;
-        let config: HermesConfig = toml::from_str(input).unwrap();
+        let config: PerryHermesConfig = toml::from_str(input).unwrap();
         let err = config.resolve_provider().unwrap_err().to_string();
 
         assert!(err.contains("missing-model"), "{err}");

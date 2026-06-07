@@ -7,7 +7,7 @@ pub mod loop_bridge;
 pub mod render;
 pub mod run;
 
-use hermes_agent::LoopEvent;
+use perry_hermes_agent::LoopEvent;
 use tokio::sync::mpsc;
 
 pub use app::App;

@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use hermes_agent::{AgentLoop, LoopConfig, LoopEvent};
-use hermes_core::message::{Content, Message, Role, ToolCall};
-use hermes_core::provider::{Completion, CompletionDelta, FinishReason};
-use hermes_core::registry::InMemoryRegistry;
-use hermes_core::tool::ToolContext;
+use perry_hermes_agent::{AgentLoop, LoopConfig, LoopEvent};
+use perry_hermes_core::message::{Content, Message, Role, ToolCall};
+use perry_hermes_core::provider::{Completion, CompletionDelta, FinishReason};
+use perry_hermes_core::registry::InMemoryRegistry;
+use perry_hermes_core::tool::ToolContext;
 use tokio_util::sync::CancellationToken;
 
 mod support;
@@ -31,7 +31,7 @@ async fn loop_keeps_reading_after_finish_reason_to_capture_usage() {
             content_delta: None,
             reasoning_delta: None,
             tool_call_delta: None,
-            usage: Some(hermes_core::Usage {
+            usage: Some(perry_hermes_core::Usage {
                 input_tokens: 12,
                 output_tokens: 4,
                 cached_input_tokens: 0,
@@ -62,7 +62,7 @@ async fn loop_keeps_reading_after_finish_reason_to_capture_usage() {
                 working_dir: std::env::current_dir().unwrap_or_default(),
                 permissions: Default::default(),
             },
-            Arc::new(hermes_agent::SessionState::default()),
+            Arc::new(perry_hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )
@@ -89,7 +89,7 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
                     arguments: serde_json::json!({ "command": "true" }),
                 }]),
             },
-            usage: hermes_core::Usage {
+            usage: perry_hermes_core::Usage {
                 input_tokens: 30,
                 output_tokens: 1,
                 cached_input_tokens: 7_000,
@@ -104,7 +104,7 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
                 tool_call_id: None,
                 tool_calls: None,
             },
-            usage: hermes_core::Usage {
+            usage: perry_hermes_core::Usage {
                 input_tokens: 7_400,
                 output_tokens: 1,
                 cached_input_tokens: 0,
@@ -114,7 +114,9 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
     ]);
     let loop_ = AgentLoop::new(
         provider,
-        Arc::new(InMemoryRegistry::new().register(Arc::new(hermes_agent::tools::BashTool::new()))),
+        Arc::new(
+            InMemoryRegistry::new().register(Arc::new(perry_hermes_agent::tools::BashTool::new())),
+        ),
         LoopConfig {
             max_iterations: 5,
             system_prompt: Some("z".repeat(28_000)),
@@ -135,9 +137,9 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
             ToolContext {
                 session_id: "test".into(),
                 working_dir: std::env::current_dir().unwrap_or_default(),
-                permissions: hermes_core::tool::ToolPermissions { subprocess: true },
+                permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
             },
-            Arc::new(hermes_agent::SessionState::default()),
+            Arc::new(perry_hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |ev| {
                 if let LoopEvent::ContextUsageUpdated { used_tokens } = ev {
@@ -173,7 +175,7 @@ async fn loop_emits_context_usage_only_from_normalized_real_usage() {
             content_delta: None,
             reasoning_delta: None,
             tool_call_delta: None,
-            usage: Some(hermes_core::Usage {
+            usage: Some(perry_hermes_core::Usage {
                 input_tokens: 42,
                 output_tokens: 7,
                 cached_input_tokens: 1_000,
@@ -206,7 +208,7 @@ async fn loop_emits_context_usage_only_from_normalized_real_usage() {
                 working_dir: std::env::current_dir().unwrap_or_default(),
                 permissions: Default::default(),
             },
-            Arc::new(hermes_agent::SessionState::default()),
+            Arc::new(perry_hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |ev| {
                 if let LoopEvent::ContextUsageUpdated { used_tokens } = ev {

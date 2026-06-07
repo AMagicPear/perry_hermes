@@ -1,5 +1,5 @@
 [package]
-name = "hermes-providers"
+name = "perry-hermes-providers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,7 +7,7 @@ license.workspace = true
 description = "LLM provider implementations (echo mock, OpenAI, Anthropic, ...)"
 
 [dependencies]
-hermes-core.workspace = true
+perry-hermes-core.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
 futures.workspace = true

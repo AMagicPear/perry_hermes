@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures::StreamExt;
-use hermes_agent::{AIAgent, AgentRunError, AgentSession, SessionContext};
-use hermes_core::error::LoopError;
+use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, SessionContext};
+use perry_hermes_core::error::LoopError;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::Terminal;
 use tokio::sync::mpsc;
@@ -157,14 +157,14 @@ pub async fn run(
     .await;
 
     if let Err(e) = disable_raw_mode() {
-        eprintln!("[hermes-cli] warning: failed to disable raw mode: {e}");
+        eprintln!("[perry-hermes] warning: failed to disable raw mode: {e}");
     }
     if let Err(e) = execute!(
         stdout(),
         crossterm::event::DisableMouseCapture,
         LeaveAlternateScreen
     ) {
-        eprintln!("[hermes-cli] warning: failed to leave alternate screen: {e}");
+        eprintln!("[perry-hermes] warning: failed to leave alternate screen: {e}");
     }
     result
 }
@@ -410,12 +410,14 @@ impl Backend for SharedTestBackend {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use hermes_agent::{AgentLoop, LoopConfig};
-    use hermes_core::compaction_strategy::{CompactError, CompactionResult, CompactionStrategy};
-    use hermes_core::message::Message;
-    use hermes_core::provider::{CompletionStream, Provider};
-    use hermes_core::registry::{InMemoryRegistry, ToolSchema};
-    use hermes_core::ProviderError;
+    use perry_hermes_agent::{AgentLoop, LoopConfig};
+    use perry_hermes_core::compaction_strategy::{
+        CompactError, CompactionResult, CompactionStrategy,
+    };
+    use perry_hermes_core::message::Message;
+    use perry_hermes_core::provider::{CompletionStream, Provider};
+    use perry_hermes_core::registry::{InMemoryRegistry, ToolSchema};
+    use perry_hermes_core::ProviderError;
     use tokio::sync::Mutex as TokioMutex;
 
     struct NoopProvider;
@@ -443,7 +445,7 @@ mod tests {
         ) -> Result<CompactionResult, CompactError> {
             Ok(CompactionResult {
                 messages: vec![Message::system("system"), Message::user("summary")],
-                summary_usage: hermes_core::Usage {
+                summary_usage: perry_hermes_core::Usage {
                     input_tokens: 10,
                     output_tokens: 2,
                     cached_input_tokens: 0,

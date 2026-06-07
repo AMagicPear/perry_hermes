@@ -12,14 +12,14 @@ use std::time::Duration;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-use hermes_core::compaction_strategy::{
+use perry_hermes_core::compaction_strategy::{
     CompactionStrategy, CompressionSkipReason, CompressionTrigger,
 };
-use hermes_core::error::{LoopError, ProviderError, ToolError};
-use hermes_core::message::{Message, ToolCall};
-use hermes_core::provider::{Provider, ToolCallDelta};
-use hermes_core::registry::InMemoryRegistry;
-use hermes_core::tool::{ToolContext, ToolOutput};
+use perry_hermes_core::error::{LoopError, ProviderError, ToolError};
+use perry_hermes_core::message::{Message, ToolCall};
+use perry_hermes_core::provider::{Provider, ToolCallDelta};
+use perry_hermes_core::registry::InMemoryRegistry;
+use perry_hermes_core::tool::{ToolContext, ToolOutput};
 
 use crate::session::SessionState;
 

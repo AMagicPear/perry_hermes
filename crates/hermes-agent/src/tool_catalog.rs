@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use hermes_core::registry::InMemoryRegistry;
+use perry_hermes_core::registry::InMemoryRegistry;
 
 use crate::tools::bash::BashTool;
 use crate::tools::files::{ReadFileTool, WriteFileTool};
@@ -40,7 +40,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn test_skills_dir() -> PathBuf {
-        PathBuf::from("/tmp/hermes-test-skills")
+        PathBuf::from("/tmp/perry-hermes-test-skills")
     }
 
     #[test]

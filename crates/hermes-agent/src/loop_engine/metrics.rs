@@ -1,11 +1,11 @@
 //! Token-counting + argument-validation helpers used by the agent loop.
 //!
 //! Token counts in this crate come exclusively from `Usage` after a
-//! provider responds (see `hermes_core::Usage::prompt_context_tokens`).
+//! provider responds (see `perry_hermes_core::Usage::prompt_context_tokens`).
 //! The agent loop never estimates — the TUI shows `0` until the first
 //! real response arrives.
 
-use hermes_core::Usage;
+use perry_hermes_core::Usage;
 
 /// `input_tokens + cached_input_tokens` — the value used for the
 /// `LoopEvent::ContextUsageUpdated` event after a real provider response.

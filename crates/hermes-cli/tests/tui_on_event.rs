@@ -1,9 +1,9 @@
 //! Verifies that `tui::make_on_event` forwards `LoopEvent`s into the
 //! TUI's mpsc channel as `AppEvent::Loop`.
 
-use hermes_agent::LoopEvent;
-use hermes_cli::tui::event::AppEvent;
-use hermes_cli::tui::make_on_event;
+use perry_hermes_agent::LoopEvent;
+use perry_hermes_cli::tui::event::AppEvent;
+use perry_hermes_cli::tui::make_on_event;
 use tokio::sync::mpsc;
 
 #[tokio::test]

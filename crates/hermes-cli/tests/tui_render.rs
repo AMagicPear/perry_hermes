@@ -1,10 +1,10 @@
 //! Smoke test for the TUI render module. Visual output is verified manually.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use hermes_cli::tui::app::App;
-use hermes_cli::tui::event::{AppMode, RenderedLine};
-use hermes_cli::tui::input::handle_key;
-use hermes_cli::tui::render::render;
+use perry_hermes_cli::tui::app::App;
+use perry_hermes_cli::tui::event::{AppMode, RenderedLine};
+use perry_hermes_cli::tui::input::handle_key;
+use perry_hermes_cli::tui::render::render;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Position;
 use ratatui::style::{Color, Modifier};
@@ -156,7 +156,7 @@ fn assistant_render_preserves_explicit_newlines() {
         rows.join("\n")
     );
     assert!(
-        rows.iter().any(|row| row.contains("╭─ ⚕ Hermes")),
+        rows.iter().any(|row| row.contains("╭─ ⚕ Perry Hermes")),
         "expected framed assistant header; rows:\n{}",
         rows.join("\n")
     );
@@ -245,7 +245,7 @@ fn assistant_header_keeps_right_border_with_unicode_title() {
     let buffer = terminal.backend().buffer().clone();
     let header_row = (0..buffer.area.height)
         .map(|y| row_at(&buffer, y))
-        .find(|row| row.contains("⚕ Hermes ✦"))
+        .find(|row| row.contains("⚕ Perry Hermes ✦"))
         .expect("expected assistant header row");
     assert!(
         header_row.trim_end().ends_with('╮'),

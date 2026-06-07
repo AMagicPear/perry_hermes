@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use hermes_agent::tools::ReadFileTool;
-use hermes_core::tool::{Tool, ToolContext, ToolPermissions};
+use perry_hermes_agent::tools::ReadFileTool;
+use perry_hermes_core::tool::{Tool, ToolContext, ToolPermissions};
 use serde_json::json;
 use tempfile::TempDir;
 use tokio::sync::Mutex;
@@ -20,7 +20,7 @@ fn ctx(working_dir: PathBuf) -> ToolContext {
     }
 }
 
-fn parse(out: &hermes_core::tool::ToolOutput) -> serde_json::Value {
+fn parse(out: &perry_hermes_core::tool::ToolOutput) -> serde_json::Value {
     serde_json::from_str(&out.content).expect("read_file should return JSON")
 }
 
@@ -191,7 +191,7 @@ async fn read_file_caps_content_at_100k_chars() {
 // WriteFileTool tests
 // ---------------------------------------------------------------------------
 
-use hermes_agent::tools::WriteFileTool;
+use perry_hermes_agent::tools::WriteFileTool;
 
 #[tokio::test]
 async fn write_file_creates_new_file() {
@@ -299,9 +299,9 @@ async fn write_file_rejects_internal_status_text() {
 async fn write_file_rejects_cross_profile_write_without_override() {
     let _guard = with_env_lock().await;
     let dir = TempDir::new().unwrap();
-    let hermes_home = dir.path().join("profiles/current");
-    std::fs::create_dir_all(&hermes_home).unwrap();
-    unsafe { std::env::set_var("HERMES_HOME", &hermes_home) };
+    let perry_hermes_home = dir.path().join("profiles/current");
+    std::fs::create_dir_all(&perry_hermes_home).unwrap();
+    unsafe { std::env::set_var("PERRY_HERMES_HOME", &perry_hermes_home) };
 
     let target = dir.path().join("profiles/other/skills/demo/SKILL.md");
     let tool = WriteFileTool::new();
@@ -315,18 +315,18 @@ async fn write_file_rejects_cross_profile_write_without_override() {
         .expect("cross-profile write should return JSON error");
     let v = parse(&out);
     assert!(v["error"].as_str().unwrap().contains("cross-profile"));
-    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
 }
 
 #[tokio::test]
-async fn write_file_rejects_hermes_config_path() {
+async fn write_file_rejects_perry_hermes_config_path() {
     let _guard = with_env_lock().await;
     let dir = TempDir::new().unwrap();
-    let hermes_home = dir.path().join("active-profile");
-    std::fs::create_dir_all(&hermes_home).unwrap();
-    unsafe { std::env::set_var("HERMES_HOME", &hermes_home) };
+    let perry_hermes_home = dir.path().join("active-profile");
+    std::fs::create_dir_all(&perry_hermes_home).unwrap();
+    unsafe { std::env::set_var("PERRY_HERMES_HOME", &perry_hermes_home) };
 
-    let target = hermes_home.join("config.yaml");
+    let target = perry_hermes_home.join("config.toml");
     let tool = WriteFileTool::new();
     let out = tool
         .execute(
@@ -337,17 +337,20 @@ async fn write_file_rejects_hermes_config_path() {
         .await
         .expect("config-path write should return JSON error");
     let v = parse(&out);
-    assert!(v["error"].as_str().unwrap().contains("Hermes config file"));
-    unsafe { std::env::remove_var("HERMES_HOME") };
+    assert!(v["error"]
+        .as_str()
+        .unwrap()
+        .contains("Perry Hermes config file"));
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
 }
 
 #[tokio::test]
 async fn write_file_allows_cross_profile_write_with_override() {
     let _guard = with_env_lock().await;
     let dir = TempDir::new().unwrap();
-    let hermes_home = dir.path().join("profiles/current");
-    std::fs::create_dir_all(&hermes_home).unwrap();
-    unsafe { std::env::set_var("HERMES_HOME", &hermes_home) };
+    let perry_hermes_home = dir.path().join("profiles/current");
+    std::fs::create_dir_all(&perry_hermes_home).unwrap();
+    unsafe { std::env::set_var("PERRY_HERMES_HOME", &perry_hermes_home) };
 
     let target = dir.path().join("profiles/other/skills/demo/SKILL.md");
     let tool = WriteFileTool::new();
@@ -366,7 +369,7 @@ async fn write_file_allows_cross_profile_write_with_override() {
     let v = parse(&out);
     assert!(v["resolved_path"].is_string());
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "demo");
-    unsafe { std::env::remove_var("HERMES_HOME") };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
 }
 
 #[tokio::test]
@@ -383,11 +386,15 @@ async fn write_file_does_not_leave_temp_file_on_success() {
     .await
     .expect("write should succeed");
 
-    // No leftover .hermes-tmp-* file in the directory.
+    // No leftover .perry-hermes-tmp-* file in the directory.
     let leaks: Vec<_> = std::fs::read_dir(dir.path())
         .unwrap()
         .flatten()
-        .filter(|e| e.file_name().to_string_lossy().contains(".hermes-tmp-"))
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .contains(".perry-hermes-tmp-")
+        })
         .collect();
     assert!(
         leaks.is_empty(),

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use chrono::Local;
 use chrono_tz::Tz;
-use hermes_core::message::{Message, Role};
+use perry_hermes_core::message::{Message, Role};
 
 use crate::session::SessionContext;
 
@@ -16,7 +16,7 @@ to answer, give a concise final response — do not call tools again.";
 /// (`tool_catalog::build_registry`).
 ///
 /// Resolution rules:
-/// 1. `HERMES_HOME` env var if set
+/// 1. `PERRY_HERMES_HOME` env var if set
 /// 2. else `$HOME/.perry_hermes`
 /// 3. else `./.perry_hermes`
 /// 4. append `/skills`
@@ -24,7 +24,7 @@ to answer, give a concise final response — do not call tools again.";
 /// This resolver is intentionally side-effect free. Prompt composition should
 /// not create a skills directory just because a turn was started.
 pub fn resolve_skills_dir() -> Option<PathBuf> {
-    let base = std::env::var_os("HERMES_HOME")
+    let base = std::env::var_os("PERRY_HERMES_HOME")
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))
         .or_else(|| {
@@ -40,14 +40,14 @@ pub fn compose_base_system_prompt(user_prompt: Option<&str>) -> Option<String> {
     let Some(dir) = resolve_skills_dir() else {
         return Some(base.to_string());
     };
-    let skills = match hermes_skill_loader::load_all(&dir) {
+    let skills = match perry_hermes_skill_loader::load_all(&dir) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("failed to scan skills dir {}: {e}", dir.display());
             Vec::new()
         }
     };
-    let skills_block = hermes_skill_loader::render_system_prompt_block(&skills);
+    let skills_block = perry_hermes_skill_loader::render_system_prompt_block(&skills);
 
     if skills_block.is_empty() {
         Some(base.to_string())
@@ -114,7 +114,7 @@ fn build_environment_hints(session: &SessionContext) -> String {
 }
 
 fn build_conversation_metadata(session: &SessionContext, provider_name: Option<&str>) -> String {
-    let now = hermes_now();
+    let now = perry_hermes_now();
     let mut lines = vec![format!(
         "Conversation started: {}",
         now.format("%A, %B %d, %Y")
@@ -128,8 +128,8 @@ fn build_conversation_metadata(session: &SessionContext, provider_name: Option<&
     lines.join("\n")
 }
 
-fn hermes_now() -> chrono::DateTime<chrono::FixedOffset> {
-    if let Some(name) = std::env::var("HERMES_TIMEZONE")
+fn perry_hermes_now() -> chrono::DateTime<chrono::FixedOffset> {
+    if let Some(name) = std::env::var("PERRY_HERMES_TIMEZONE")
         .ok()
         .filter(|s| !s.trim().is_empty())
     {
@@ -171,10 +171,10 @@ mod tests {
     fn resolve_returns_a_directory_path_that_ends_in_skills() {
         let _guard = ENV_LOCK.lock().unwrap();
         let home = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("HERMES_HOME", home.path()) };
+        unsafe { std::env::set_var("PERRY_HERMES_HOME", home.path()) };
         let dir = resolve_skills_dir().expect("skills dir should resolve");
         assert_eq!(dir.file_name().and_then(|s| s.to_str()), Some("skills"));
-        unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
     }
 
     #[test]
@@ -183,7 +183,7 @@ mod tests {
         let cwd = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::enter(cwd.path());
         unsafe { std::env::remove_var("HOME") };
-        unsafe { std::env::remove_var("HERMES_HOME") };
+        unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
 
         let dir = resolve_skills_dir().expect("skills dir should resolve from cwd fallback");
         let expected = std::fs::canonicalize(cwd.path())
@@ -195,7 +195,7 @@ mod tests {
 
     #[test]
     fn build_runtime_system_prompt_includes_session_metadata() {
-        unsafe { std::env::set_var("HERMES_TIMEZONE", "UTC") };
+        unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
         unsafe { std::env::set_var("HOME", "/tmp/perry-home") };
 
         let prompt = build_runtime_system_prompt(

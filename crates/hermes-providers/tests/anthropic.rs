@@ -1,10 +1,10 @@
 use futures::StreamExt;
-use hermes_core::message::{Content, Message, Role, ToolCall};
-use hermes_core::provider::{FinishReason, Provider};
-use hermes_core::registry::ToolSchema;
-use hermes_core::ProviderError;
-use hermes_providers::AnthropicProvider;
 use httpmock::prelude::*;
+use perry_hermes_core::message::{Content, Message, Role, ToolCall};
+use perry_hermes_core::provider::{FinishReason, Provider};
+use perry_hermes_core::registry::ToolSchema;
+use perry_hermes_core::ProviderError;
+use perry_hermes_providers::AnthropicProvider;
 use tokio_util::sync::CancellationToken;
 
 fn message(role: Role, text: &str) -> Message {

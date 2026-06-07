@@ -8,8 +8,8 @@
 use std::process::Stdio;
 
 use async_trait::async_trait;
-use hermes_core::error::ToolError;
-use hermes_core::tool::{Tool, ToolContext, ToolOutput};
+use perry_hermes_core::error::ToolError;
+use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{json, Value};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -33,7 +33,7 @@ Foreground (default): Commands return INSTANTLY when done, even if the timeout i
 Background: Set background=true to get a session_id. Almost always pair with notify_on_complete=true — bg without notify runs SILENTLY and you have no way to learn it finished short of calling process(action='poll') yourself. Two legitimate uses:\n\
   (1) Long-lived processes that never exit (servers, watchers, daemons) — silent is correct, there's no exit to notify on.\n\
   (2) Long-running bounded tasks (tests, builds, deploys, CI pollers, batch jobs) — MUST set notify_on_complete=true. Without it you'll either forget to poll or sit blocked waiting for the user to surface the result.\n\
-For servers/watchers, do NOT use shell-level background wrappers (nohup/disown/setsid/trailing '&') in foreground mode. Use background=true so Hermes can track lifecycle and output.\n\
+For servers/watchers, do NOT use shell-level background wrappers (nohup/disown/setsid/trailing '&') in foreground mode. Use background=true so Perry Hermes can track lifecycle and output.\n\
 After starting a server, verify readiness with a health check or log signal, then run tests in a separate terminal() call. Avoid blind sleep loops.\n\
 Use process(action=\"poll\") for progress checks, process(action=\"wait\") to block until done.\n\
 Working directory: Use 'workdir' for per-command cwd.\n\

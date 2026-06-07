@@ -1,6 +1,6 @@
 //! Internal event types flowing through the TUI's main loop.
 
-use hermes_agent::{AgentRunError, LoopEvent, RunResult};
+use perry_hermes_agent::{AgentRunError, LoopEvent, RunResult};
 
 /// A single event consumed by the `App` from any of its event sources.
 #[derive(Debug)]

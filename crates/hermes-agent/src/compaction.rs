@@ -10,8 +10,10 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use hermes_core::message::{Message, Role};
-use hermes_core::{CompactError, CompactionResult, CompactionStrategy, Provider, ProviderError};
+use perry_hermes_core::message::{Message, Role};
+use perry_hermes_core::{
+    CompactError, CompactionResult, CompactionStrategy, Provider, ProviderError,
+};
 use tokio_util::sync::CancellationToken;
 
 /// Configuration for the built-in summary compactor.
@@ -168,7 +170,7 @@ impl SummaryCompactor {
     async fn call_summary_llm(
         &self,
         prompt: &str,
-    ) -> Result<hermes_core::provider::Completion, ProviderError> {
+    ) -> Result<perry_hermes_core::provider::Completion, ProviderError> {
         let messages = vec![Message::user(prompt)];
         let provider = self
             .summary_provider

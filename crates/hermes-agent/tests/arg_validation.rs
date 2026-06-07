@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use hermes_agent::tools::BashTool;
-use hermes_agent::{AgentLoop, LoopConfig};
-use hermes_core::message::{Content, Message, Role, ToolCall};
-use hermes_core::provider::{Completion, FinishReason};
-use hermes_core::registry::InMemoryRegistry;
-use hermes_core::tool::ToolContext;
+use perry_hermes_agent::tools::BashTool;
+use perry_hermes_agent::{AgentLoop, LoopConfig};
+use perry_hermes_core::message::{Content, Message, Role, ToolCall};
+use perry_hermes_core::provider::{Completion, FinishReason};
+use perry_hermes_core::registry::InMemoryRegistry;
+use perry_hermes_core::tool::ToolContext;
 use tokio_util::sync::CancellationToken;
 
 mod support;
@@ -25,7 +25,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
                 arguments: serde_json::json!({}),
             }]),
         },
-        usage: hermes_core::Usage::default(),
+        usage: perry_hermes_core::Usage::default(),
         finish_reason: FinishReason::ToolUse,
     };
     let second = Completion {
@@ -36,7 +36,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
             tool_call_id: None,
             tool_calls: None,
         },
-        usage: hermes_core::Usage::default(),
+        usage: perry_hermes_core::Usage::default(),
         finish_reason: FinishReason::Stop,
     };
 
@@ -54,7 +54,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
     let ctx = ToolContext {
         session_id: "test".into(),
         working_dir: std::env::current_dir().unwrap_or_default(),
-        permissions: hermes_core::tool::ToolPermissions { subprocess: true },
+        permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
     let result = loop_
@@ -67,7 +67,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
                 tool_calls: None,
             }],
             ctx,
-            Arc::new(hermes_agent::SessionState::default()),
+            Arc::new(perry_hermes_agent::SessionState::default()),
             CancellationToken::new(),
             |_| {},
         )

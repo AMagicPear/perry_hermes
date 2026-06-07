@@ -3,9 +3,9 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use hermes_core::compaction_strategy::CompressionSkipReason;
-use hermes_core::message::Message;
-use hermes_core::{CompactError, CompactionStrategy};
+use perry_hermes_core::compaction_strategy::CompressionSkipReason;
+use perry_hermes_core::message::Message;
+use perry_hermes_core::{CompactError, CompactionStrategy};
 use tokio::sync::Mutex as TokioMutex;
 
 /// Outcome of one compaction attempt. The loop maps this to `LoopEvent`.

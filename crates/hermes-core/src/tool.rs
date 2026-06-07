@@ -8,8 +8,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::error::ToolError;
 
-/// A callable unit of capability exposed to the LLM. Implementations live in
-/// `hermes-tools` (bash, file ops, …) and are registered into an
+/// A callable unit of capability exposed to the LLM. Built-in implementations
+/// live in `perry-hermes-agent` and are registered into an
 /// [`InMemoryRegistry`](crate::registry::InMemoryRegistry) at startup.
 #[async_trait]
 pub trait Tool: Send + Sync {

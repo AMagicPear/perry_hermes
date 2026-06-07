@@ -3,7 +3,7 @@
 
 use async_trait::async_trait;
 use futures::stream;
-use hermes_core::{
+use perry_hermes_core::{
     message::{Content, Message, Role},
     provider::{CompletionDelta, CompletionStream, FinishReason, Provider},
     registry::ToolSchema,

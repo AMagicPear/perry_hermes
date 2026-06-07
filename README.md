@@ -1,9 +1,9 @@
-# Hermes Rust
+# Perry Hermes
 
-Hermes Rust is an AI agent runtime with streaming model calls, tool use, skills,
-context compaction, and a terminal TUI. The codebase is intentionally shaped so
-the CLI is only one adapter: the same runtime/session model should work for a
-future gateway, Telegram bot, or other platform.
+Perry Hermes (`perry_hermes`) is an AI agent runtime with streaming model
+calls, tool use, skills, context compaction, and a terminal TUI. The codebase is
+intentionally shaped so the CLI is only one adapter: the same runtime/session
+model should work for a future gateway, Telegram bot, or other platform.
 
 ## Design
 
@@ -12,7 +12,7 @@ UI and not by the agent runtime.
 
 ```text
 platform adapter
-  e.g. hermes-cli, future gateway, Telegram
+  e.g. Perry Hermes CLI, future gateway, Telegram
   owns: session_id -> AgentSession mapping and presentation
 
 AIAgent
@@ -46,25 +46,25 @@ owns the actual model context.
 ## Crates
 
 ```text
-hermes-cli
-  ratatui TUI adapter
+perry-hermes-cli crate
+  Perry Hermes CLI / ratatui TUI adapter
 
-hermes-agent
+perry-hermes-agent crate
   runtime service, sessions, agent loop, tools, config, compaction
 
-hermes-core
+perry-hermes-core crate
   transport-free shared traits/types/errors
 
-hermes-providers
+perry-hermes-providers crate
   OpenAI-compatible, Anthropic-compatible, and Echo providers
 
-hermes-skill-loader
+perry-hermes-skill-loader crate
   SKILL.md discovery, validation, and prompt rendering
 ```
 
-`hermes-core` has no IO concerns. Provider protocol details stay in
-`hermes-providers`. Product/platform behavior stays outside providers. Runtime
-assembly lives in `hermes-agent`.
+`perry-hermes-core` has no IO concerns. Provider protocol details stay in
+`perry-hermes-providers`. Product/platform behavior stays outside providers. Runtime
+assembly lives in `perry-hermes-agent`.
 
 ## Context And Compaction
 
@@ -93,7 +93,7 @@ the built-in compaction behavior should usually edit the summary prompt in
 
 ## Configuration
 
-Start from [examples/config/hermes.toml](examples/config/hermes.toml).
+Start from [examples/config/perry_hermes.toml](examples/config/perry_hermes.toml).
 
 ```toml
 [[providers]]
@@ -132,28 +132,31 @@ context_compression_threshold_percent = 0.50
 
 The config lookup order is:
 
-1. `--config /path/to/hermes.toml`
+1. `--config /path/to/perry_hermes.toml`
 2. `~/.perry_hermes/config.toml`
-3. `./hermes.toml`
+3. `./perry_hermes.toml`
 
 ## CLI
 
 ```bash
-cp examples/config/hermes.toml hermes.toml
-cargo run -p hermes-cli
+cp examples/config/perry_hermes.toml perry_hermes.toml
+cargo run -p perry-hermes-cli
 ```
+
+The installed binary name is `perry-hermes`; the Cargo package is
+`perry-hermes-cli`.
 
 Run with a specific config or provider/model override:
 
 ```bash
-cargo run -p hermes-cli -- --config /path/to/hermes.toml
-cargo run -p hermes-cli -- --provider minimax --model MiniMax-M3
+cargo run -p perry-hermes-cli -- --config /path/to/perry_hermes.toml
+cargo run -p perry-hermes-cli -- --provider minimax --model MiniMax-M3
 ```
 
 Offline smoke config:
 
 ```bash
-cat > hermes.toml <<'TOML'
+cat > perry_hermes.toml <<'TOML'
 [[providers]]
 name = "local"
 kind = "echo"
@@ -167,7 +170,7 @@ default_provider = "local"
 default_model = "echo"
 TOML
 
-cargo run -p hermes-cli
+cargo run -p perry-hermes-cli
 ```
 
 TUI controls:
@@ -192,9 +195,9 @@ cargo doc --no-deps
 Targeted examples:
 
 ```bash
-cargo run -p hermes-providers --example live_smoke -- "say hi"
-cargo run -p hermes-agent --example live_tool_use -- "what time is it?"
-cargo run -p hermes-agent --example live_context_usage -- ~/.perry_hermes/config.toml
+cargo run -p perry-hermes-providers --example live_smoke -- "say hi"
+cargo run -p perry-hermes-agent --example live_tool_use -- "what time is it?"
+cargo run -p perry-hermes-agent --example live_context_usage -- ~/.perry_hermes/config.toml
 ```
 
 Testing guidance:

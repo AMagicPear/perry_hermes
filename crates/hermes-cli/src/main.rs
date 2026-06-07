@@ -1,7 +1,7 @@
-//! Hermes CLI — interactive TUI for the Hermes agent.
+//! Perry Hermes CLI — interactive TUI for the Perry Hermes agent.
 //!
 //! Reads `--config` (or falls back to `~/.perry_hermes/config.toml` then
-//! `./hermes.toml`) and launches the ratatui TUI.
+//! `./perry_hermes.toml`) and launches the ratatui TUI.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -9,20 +9,20 @@ use std::sync::Arc;
 use anyhow::Context;
 use clap::Parser;
 
-use hermes_agent::{AIAgent, HermesConfig};
+use perry_hermes_agent::{AIAgent, PerryHermesConfig};
 
 mod config_path;
 
 #[derive(Parser)]
 #[command(
-    name = "hermes",
+    name = "perry-hermes",
     version,
-    about = "Hermes — AI agent with tool use",
+    about = "Perry Hermes — AI agent with tool use",
     long_about = None
 )]
 struct Args {
-    /// Path to HermesConfig TOML. If omitted, the CLI looks in
-    /// `~/.perry_hermes/config.toml` then `./hermes.toml`.
+    /// Path to Perry Hermes TOML config. If omitted, the CLI looks in
+    /// `~/.perry_hermes/config.toml` then `./perry_hermes.toml`.
     #[arg(long)]
     config: Option<PathBuf>,
     /// Provider name to use for this run, overriding `[agent].default_provider`.
@@ -37,7 +37,7 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let config_path = config_path::resolve_config_path(args.config.as_deref())?;
-    let config = HermesConfig::from_path(&config_path)
+    let config = PerryHermesConfig::from_path(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
     let config = apply_cli_provider_overrides(config, &args);
 
@@ -57,7 +57,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cancel = tokio_util::sync::CancellationToken::new();
 
-    hermes_cli::tui::run(
+    perry_hermes_cli::tui::run(
         agent,
         cancel,
         provider_name,
@@ -69,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn apply_cli_provider_overrides(mut config: HermesConfig, args: &Args) -> HermesConfig {
+fn apply_cli_provider_overrides(mut config: PerryHermesConfig, args: &Args) -> PerryHermesConfig {
     if let Some(provider) = &args.provider {
         config.agent.default_provider = provider.clone();
     }
@@ -90,7 +90,7 @@ mod tests {
 
     fn make_empty_dirs() -> (PathBuf, PathBuf) {
         let base = std::env::temp_dir().join(format!(
-            "hermes-cli-test-{}-{}",
+            "perry-hermes-cli-test-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -129,11 +129,11 @@ mod tests {
     }
 
     #[test]
-    fn resolve_picks_cwd_hermes_toml_when_no_home_config() {
+    fn resolve_picks_cwd_perry_hermes_toml_when_no_home_config() {
         let _guard = ENV_LOCK.lock().unwrap();
         let (home, cwd) = make_empty_dirs();
         let _cwd_guard = CwdGuard::enter(&cwd);
-        let config_path = cwd.join("hermes.toml");
+        let config_path = cwd.join("perry_hermes.toml");
         std::fs::write(
             &config_path,
             r#"
@@ -160,7 +160,7 @@ default_model = "echo"
             std::env::remove_var("HOME");
         }
 
-        let resolved = result.expect("should resolve to ./hermes.toml");
+        let resolved = result.expect("should resolve to ./perry_hermes.toml");
         let contents =
             std::fs::read_to_string(&resolved).expect("resolved path should be readable");
         assert!(
@@ -183,24 +183,24 @@ default_model = "echo"
         }
 
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("no hermes config found"), "{err}");
+        assert!(err.contains("no Perry Hermes config found"), "{err}");
         assert!(err.contains(".perry_hermes"), "{err}");
-        assert!(err.contains("hermes.toml"), "{err}");
+        assert!(err.contains("perry_hermes.toml"), "{err}");
     }
 
     #[test]
     fn cli_provider_and_model_override_config_defaults() {
-        let config = HermesConfig {
-            providers: vec![hermes_agent::ProviderConfig {
+        let config = PerryHermesConfig {
+            providers: vec![perry_hermes_agent::ProviderConfig {
                 name: "minimax".into(),
-                kind: hermes_agent::ProviderKind::Anthropic,
+                kind: perry_hermes_agent::ProviderKind::Anthropic,
                 api_key_env: Some("MINIMAX_API_KEY".into()),
                 models: vec![
-                    hermes_agent::ModelConfig {
+                    perry_hermes_agent::ModelConfig {
                         name: "MiniMax-M3".into(),
                         context_window_size: 1_000_000,
                     },
-                    hermes_agent::ModelConfig {
+                    perry_hermes_agent::ModelConfig {
                         name: "MiniMax-M2.7".into(),
                         context_window_size: 204_800,
                     },
@@ -209,7 +209,7 @@ default_model = "echo"
                 api_key_header: None,
                 thinking: None,
             }],
-            agent: hermes_agent::AgentConfig {
+            agent: perry_hermes_agent::AgentConfig {
                 default_provider: "minimax".into(),
                 default_model: "MiniMax-M3".into(),
                 ..Default::default()

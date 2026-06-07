@@ -1,9 +1,9 @@
 //! Tests for the input layer: typing, backspace, and Enter -> Submit.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use hermes_cli::tui::app::App;
-use hermes_cli::tui::event::{AppEvent, AppMode, RenderedLine};
-use hermes_cli::tui::input::handle_key;
+use perry_hermes_cli::tui::app::App;
+use perry_hermes_cli::tui::event::{AppEvent, AppMode, RenderedLine};
+use perry_hermes_cli::tui::input::handle_key;
 
 fn key(code: KeyCode) -> KeyEvent {
     KeyEvent::new(code, KeyModifiers::NONE)
@@ -115,7 +115,7 @@ fn unknown_slash_command_is_rejected_with_system_message() {
 
 #[test]
 fn cancelling_mode_ignores_typing() {
-    use hermes_cli::tui::event::AppMode;
+    use perry_hermes_cli::tui::event::AppMode;
 
     let mut app = App::new_for_test();
     app.mode = AppMode::Cancelling;
@@ -151,7 +151,7 @@ fn cancelling_mode_ignores_typing() {
 
 #[test]
 fn arrow_up_scrolls_chat_when_idle() {
-    use hermes_cli::tui::event::AppMode;
+    use perry_hermes_cli::tui::event::AppMode;
 
     let mut app = App::new_for_test();
     app.mode = AppMode::Idle;
@@ -162,7 +162,7 @@ fn arrow_up_scrolls_chat_when_idle() {
 
 #[test]
 fn arrow_down_scrolls_chat_toward_bottom_when_idle() {
-    use hermes_cli::tui::event::AppMode;
+    use perry_hermes_cli::tui::event::AppMode;
 
     let mut app = App::new_for_test();
     app.mode = AppMode::Idle;

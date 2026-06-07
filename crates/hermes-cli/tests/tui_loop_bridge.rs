@@ -1,14 +1,14 @@
 //! Tests for translating `LoopEvent` -> `AppEvent`.
 
-use hermes_agent::LoopEvent;
-use hermes_cli::tui::app::App;
-use hermes_cli::tui::event::{AppEvent, AppMode, RenderedLine};
-use hermes_cli::tui::loop_bridge::apply_loop_event;
-use hermes_core::compaction_strategy::{CompressionSkipReason, CompressionTrigger};
-use hermes_core::error::ToolError;
-use hermes_core::message::ToolCall;
-use hermes_core::provider::ToolCallDelta;
-use hermes_core::tool::ToolOutput;
+use perry_hermes_agent::LoopEvent;
+use perry_hermes_cli::tui::app::App;
+use perry_hermes_cli::tui::event::{AppEvent, AppMode, RenderedLine};
+use perry_hermes_cli::tui::loop_bridge::apply_loop_event;
+use perry_hermes_core::compaction_strategy::{CompressionSkipReason, CompressionTrigger};
+use perry_hermes_core::error::ToolError;
+use perry_hermes_core::message::ToolCall;
+use perry_hermes_core::provider::ToolCallDelta;
+use perry_hermes_core::tool::ToolOutput;
 use std::time::Duration;
 
 fn app_with_mode(mode: AppMode) -> App {
@@ -100,9 +100,9 @@ fn tool_call_finished_pushes_tool_result_line() {
 fn assistant_message_transitions_to_idle() {
     // AssistantMessage signals end of assistant turn - transition to idle
     let mut app = app_with_mode(AppMode::AwaitingModel);
-    let ev = LoopEvent::AssistantMessage(hermes_core::message::Message {
-        role: hermes_core::message::Role::Assistant,
-        content: hermes_core::message::Content::Text("done".to_string()),
+    let ev = LoopEvent::AssistantMessage(perry_hermes_core::message::Message {
+        role: perry_hermes_core::message::Role::Assistant,
+        content: perry_hermes_core::message::Content::Text("done".to_string()),
         reasoning: None,
         tool_calls: None,
         tool_call_id: None,

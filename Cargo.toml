@@ -4,13 +4,13 @@ members = [
     "crates/hermes-agent",
     "crates/hermes-core",
     "crates/hermes-providers",
-    "crates/hermes-skill-loader",  # renamed from hermes-skills in Phase 10
-    "crates/hermes-cli",           # ratatui TUI (Phase 10 replaces the legacy REPL)
-    # "crates/hermes-gateway",  # phase 11+
+    "crates/hermes-skill-loader",
+    "crates/hermes-cli",
+    # "crates/perry-hermes-gateway",
 ]
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
@@ -35,7 +35,7 @@ anyhow = "1"
 # Observability
 tracing = "0.1"
 
-# JSON Schema validation (used by hermes-loop at dispatch time)
+# JSON Schema validation for tool dispatch
 jsonschema = "0.18"
 
 # CLI
@@ -44,11 +44,11 @@ clap = { version = "4", features = ["derive"] }
 # Temp dir (dev)
 tempfile = "3"
 
-# HTTP (used by hermes-providers)
+# HTTP (used by perry-hermes-providers)
 reqwest = { version = "0.12", features = ["json", "stream"] }
 bytes = "1"
 
-# HTTP mock server (dev-dep on hermes-providers)
+# HTTP mock server (dev-dep on perry-hermes-providers)
 httpmock = "0.7"
 
 # Time
@@ -56,9 +56,9 @@ chrono = { version = "0.4", default-features = false, features = ["serde", "cloc
 chrono-tz = "0.10"
 
 # Internal
-hermes-agent = { path = "crates/hermes-agent" }
-hermes-core = { path = "crates/hermes-core" }
-hermes-providers = { path = "crates/hermes-providers" }
+perry-hermes-agent = { path = "crates/hermes-agent" }
+perry-hermes-core = { path = "crates/hermes-core" }
+perry-hermes-providers = { path = "crates/hermes-providers" }
 
 # The profile that 'dist' will build with
 [profile.dist]

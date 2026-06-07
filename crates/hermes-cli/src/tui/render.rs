@@ -118,7 +118,7 @@ const MAX_INPUT_CONTENT_LINES: usize = 8;
 /// Build the chat-area `Vec<Line>` from the scrollback. Each line is
 /// pre-wrapped to `width` columns so the line count matches the rendered
 /// row count exactly. The assistant content lives inside a rounded
-/// `╭─ Hermes ─...─╮` block (also pre-wrapped by `assistant_block`).
+/// `╭─ Perry Hermes ─...─╮` block (also pre-wrapped by `assistant_block`).
 pub(crate) fn build_chat_lines(scrollback: &[RenderedLine], width: u16) -> Vec<Line<'static>> {
     let mut out: Vec<Line<'static>> = Vec::new();
     for line in scrollback {
@@ -216,12 +216,12 @@ fn wrap_to_width(text: &str, width: u16) -> Vec<Line<'static>> {
 }
 
 /// Render assistant text with a framed header/footer and plain indented body.
-/// Top: `╭─ ⚕ Hermes ✦ ─...─╮`, body: `  <wrapped text>`, bottom: `╰─...─╯`.
+/// Top: `╭─ ⚕ Perry Hermes ✦ ─...─╮`, body: `  <wrapped text>`, bottom: `╰─...─╯`.
 fn assistant_block(text: &str, width: u16) -> Vec<Line<'static>> {
     let w = width.max(1) as usize;
     let body_indent = "  ";
     let inner_w = w.saturating_sub(visible_width(body_indent)).max(1);
-    let title = " ⚕ Hermes ✦ ";
+    let title = " ⚕ Perry Hermes ✦ ";
     let top_prefix = "╭─";
     let top_suffix = "╮";
     let top = fit_line_to_width(format!("{top_prefix}{title}{top_suffix}"), w, top_suffix);

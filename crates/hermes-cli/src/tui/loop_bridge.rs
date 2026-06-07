@@ -2,8 +2,8 @@
 
 use crate::tui::app::App;
 use crate::tui::event::{AppEvent, AppMode, RenderedLine};
-use hermes_agent::LoopEvent;
-use hermes_core::compaction_strategy::CompressionSkipReason;
+use perry_hermes_agent::LoopEvent;
+use perry_hermes_core::compaction_strategy::CompressionSkipReason;
 use serde_json::Value;
 
 /// Apply a `LoopEvent` to the `App`, returning the `AppEvent` the main loop

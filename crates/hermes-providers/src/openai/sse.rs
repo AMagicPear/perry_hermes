@@ -11,8 +11,8 @@
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 
-use hermes_core::provider::{CompletionDelta, FinishReason, ToolCallDelta};
-use hermes_core::ProviderError;
+use perry_hermes_core::provider::{CompletionDelta, FinishReason, ToolCallDelta};
+use perry_hermes_core::ProviderError;
 
 /// Strip the `data: ` prefix and surrounding whitespace; return the
 /// payload, or `None` if the line is a comment or a control line.
@@ -63,7 +63,7 @@ fn parse_sse_data_payload(
     struct SseChunk {
         choices: Vec<SseChoice>,
         #[serde(default)]
-        usage: Option<hermes_core::Usage>,
+        usage: Option<perry_hermes_core::Usage>,
     }
     #[derive(serde::Deserialize)]
     struct SseChoice {

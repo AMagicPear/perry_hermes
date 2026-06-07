@@ -1,19 +1,19 @@
 [package]
-name = "hermes-cli"
+name = "perry-hermes-cli"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Hermes CLI — a minimal Hermes-style agent in Rust"
+description = "Perry Hermes CLI"
 repository = "https://github.com/AMagicPear/perry_hermes"
 
 [[bin]]
-name = "hermes"
+name = "perry-hermes"
 path = "src/main.rs"
 
 [dependencies]
-hermes-core.workspace = true
-hermes-agent.workspace = true
+perry-hermes-core.workspace = true
+perry-hermes-agent.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tokio-util.workspace = true
 anyhow.workspace = true

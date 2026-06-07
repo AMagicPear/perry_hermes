@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use hermes_agent::tools::{SkillListTool, SkillViewTool};
-use hermes_core::tool::{Tool, ToolContext, ToolPermissions};
+use perry_hermes_agent::tools::{SkillListTool, SkillViewTool};
+use perry_hermes_core::tool::{Tool, ToolContext, ToolPermissions};
 use serde_json::json;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -14,7 +14,7 @@ fn ctx() -> ToolContext {
     }
 }
 
-fn parse(out: &hermes_core::tool::ToolOutput) -> serde_json::Value {
+fn parse(out: &perry_hermes_core::tool::ToolOutput) -> serde_json::Value {
     serde_json::from_str(&out.content).expect("tool should return JSON")
 }
 
