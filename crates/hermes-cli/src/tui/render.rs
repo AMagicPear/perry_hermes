@@ -3,7 +3,7 @@
 use ratatui::layout::{Constraint, Direction, Layout, Position};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
+use ratatui::widgets::{Block, BorderType, Borders, Clear, Paragraph};
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
@@ -105,6 +105,95 @@ pub fn render(f: &mut Frame, app: &mut App) {
     let cursor_x = inner_x + cursor_col.min(inner_w.saturating_sub(1));
 
     f.set_cursor_position(Position::new(cursor_x, cursor_y));
+}
+
+/// Paint only the fixed bottom viewport. Chat history is written once into
+/// terminal scrollback by the run loop and is not part of this frame.
+pub fn render_bottom(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let input_lines = build_input_lines(app, area.width.saturating_sub(2).max(1));
+    let desired_h = bottom_view_height(app, area.width).min(area.height);
+    let y = area.y + area.height.saturating_sub(desired_h);
+    let area = ratatui::layout::Rect {
+        x: area.x,
+        y,
+        width: area.width,
+        height: desired_h,
+    };
+    f.render_widget(Clear, area);
+    let input_h = bottom_input_height(input_lines.len()).min(area.height.saturating_sub(1));
+    let activity_h = if matches!(app.mode, AppMode::AwaitingModel | AppMode::Cancelling) {
+        1
+    } else {
+        0
+    };
+    let fixed_h = activity_h + 1 + input_h;
+    let top_padding_h = area.height.saturating_sub(fixed_h);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(top_padding_h),
+            Constraint::Length(activity_h),
+            Constraint::Length(1),
+            Constraint::Length(input_h),
+        ])
+        .split(area);
+
+    if matches!(app.mode, AppMode::AwaitingModel | AppMode::Cancelling) {
+        let activity = build_activity_line(app);
+        let activity_widget = Paragraph::new(activity)
+            .style(Style::default().fg(Color::DarkGray))
+            .block(Block::default().borders(Borders::NONE));
+        f.render_widget(activity_widget, chunks[1]);
+    }
+
+    let status_line = build_status_line_1(app);
+    let status = Paragraph::new(status_line)
+        .style(Style::default().fg(Color::DarkGray))
+        .block(Block::default().borders(Borders::NONE));
+    f.render_widget(status, chunks[2]);
+
+    let input_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded);
+    let inner_w = chunks[3].width.saturating_sub(2);
+    let inner_h = chunks[3].height.saturating_sub(2);
+    let cursor_row = compute_input_cursor_row(app, inner_w);
+    let scroll_y: u16 = if cursor_row >= inner_h {
+        cursor_row - inner_h + 1
+    } else {
+        0
+    };
+
+    let input = Paragraph::new(input_lines)
+        .block(input_block)
+        .scroll((scroll_y, 0));
+    f.render_widget(input, chunks[3]);
+
+    let inner_x = chunks[3].x + 1;
+    let inner_y = chunks[3].y + 1;
+    let (cursor_col, visible_cursor_row) = compute_input_cursor_col_row(app, inner_w);
+    let max_visible_row = inner_h.saturating_sub(1);
+    let cursor_y = inner_y + visible_cursor_row.min(max_visible_row);
+    let cursor_x = inner_x + cursor_col.min(inner_w.saturating_sub(1));
+    f.set_cursor_position(Position::new(cursor_x, cursor_y));
+}
+
+pub fn bottom_view_height(app: &App, width: u16) -> u16 {
+    let input_lines = build_input_lines(app, width.saturating_sub(2).max(1));
+    let activity_h = if matches!(app.mode, AppMode::AwaitingModel | AppMode::Cancelling) {
+        1
+    } else {
+        0
+    };
+    activity_h + 1 + bottom_input_height(input_lines.len())
+}
+
+fn bottom_input_height(input_line_count: usize) -> u16 {
+    let visible_content_lines =
+        input_line_count.clamp(MIN_INPUT_CONTENT_LINES, MAX_INPUT_CONTENT_LINES);
+    (visible_content_lines + 2) as u16
 }
 
 /// Minimum number of content rows visible inside the input block. Default

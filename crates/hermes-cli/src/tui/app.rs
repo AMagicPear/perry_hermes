@@ -44,6 +44,8 @@ pub struct App {
     /// Current context usage in tokens as reported by the provider after a
     /// completed response. `None` means the status bar has no real usage yet.
     pub context_used_tokens: Option<u64>,
+    /// Last known terminal width for one-shot history formatting.
+    pub history_width: u16,
     /// Per-turn cancellation handle. Recreated for each submit so a cancelled
     /// turn does not poison future turns.
     pub active_turn_cancel: Option<CancellationToken>,
@@ -75,6 +77,7 @@ impl App {
             chat_scroll: 0,
             context_window_size: None,
             context_used_tokens: None,
+            history_width: 80,
             active_turn_cancel: None,
             scrollback_revision: 0,
             cached_chat_lines: Vec::new(),

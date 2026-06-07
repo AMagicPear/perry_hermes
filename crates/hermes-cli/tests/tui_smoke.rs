@@ -89,9 +89,14 @@ fn completion_to_deltas(c: &Completion) -> Vec<CompletionDelta> {
     deltas
 }
 
-fn buffer_text(backend: &Arc<Mutex<TestBackend>>) -> String {
+fn terminal_text(backend: &Arc<Mutex<TestBackend>>) -> String {
     let guard = backend.lock().unwrap();
-    let buffer = guard.buffer();
+    let mut text = buffer_to_text(guard.scrollback());
+    text.push_str(&buffer_to_text(guard.buffer()));
+    text
+}
+
+fn buffer_to_text(buffer: &ratatui::buffer::Buffer) -> String {
     let width = buffer.area.width as usize;
     let height = buffer.area.height as usize;
     let mut text = String::new();
@@ -171,9 +176,9 @@ async fn user_message_then_assistant_reply_appears_in_scrollback() {
 }
 
 /// Strengthened version: retains the `TestBackend` reference after the loop
-/// exits and asserts that the user message appears in the rendered buffer.
+/// exits and asserts that the user message appears in terminal scrollback.
 #[tokio::test]
-async fn user_message_appears_in_buffer() {
+async fn user_message_appears_in_terminal_scrollback() {
     let provider = ScriptedProvider::new(vec![Completion {
         message: Message {
             role: Role::Assistant,
@@ -215,9 +220,11 @@ async fn user_message_appears_in_buffer() {
     .await
     .expect("tui run returned error");
 
-    // The user message "hi" should appear as "> hi" somewhere in the buffer.
-    let found = buffer_text(&backend).contains("> hi");
-    assert!(found, "user message '> hi' not found in buffer");
+    let text = terminal_text(&backend);
+    assert!(
+        text.contains("> hi"),
+        "user message '> hi' not found in terminal text:\n{text}"
+    );
 }
 
 #[tokio::test]
@@ -300,7 +307,7 @@ async fn unknown_slash_command_is_rendered_to_scrollback() {
     .await
     .expect("tui run returned error");
 
-    let text = buffer_text(&backend);
+    let text = terminal_text(&backend);
     assert!(
         text.contains("Unknown command: /bogus"),
         "expected unknown slash command in scrollback; full buffer:\n{text}"
@@ -356,7 +363,7 @@ async fn cancelled_turn_does_not_block_following_submit() {
     let (result, backend) = handle.await.expect("join tui task");
     result.expect("tui run returned error");
 
-    let text = buffer_text(&backend);
+    let text = terminal_text(&backend);
     assert!(
         text.contains("> second"),
         "expected second submit to remain usable after cancellation; full buffer:\n{text}"

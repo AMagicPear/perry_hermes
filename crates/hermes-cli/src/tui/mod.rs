@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod event;
+pub mod history;
 pub mod input;
 pub mod loop_bridge;
 pub mod render;
