@@ -3,7 +3,6 @@
 //!
 //! Sub-modules:
 //! - `metrics` — provider usage helpers + `validate_args`
-//! - `compaction` — compaction orchestration and message rewriting strategy
 //! - `run` — the state machine (`run`, `drive_turn`, `handle_finish_reason`, `dispatch_tool_calls`)
 
 use std::sync::Arc;
@@ -23,7 +22,6 @@ use perry_hermes_core::tool::{ToolContext, ToolOutput};
 
 use crate::session::SessionState;
 
-mod compaction;
 mod metrics;
 mod run;
 
@@ -204,18 +202,18 @@ impl AgentLoop {
                 },
             ));
         };
-        let outcome = compaction::try_compact(
+        let outcome = crate::compaction::try_compact(
             engine,
             &mut messages,
             focus_topic,
             self.config.focus_topic.as_deref(),
         )
         .await
-        .unwrap_or_else(|| compaction::CompactOutcome::Failed {
+        .unwrap_or_else(|| crate::compaction::CompactOutcome::Failed {
             error: "compression failed".into(),
         });
         let event = match outcome {
-            compaction::CompactOutcome::Compressed {
+            crate::compaction::CompactOutcome::Compressed {
                 duration,
                 summary_output_tokens,
             } => {
@@ -229,8 +227,10 @@ impl AgentLoop {
                     duration,
                 }
             }
-            compaction::CompactOutcome::Skipped(reason) => LoopEvent::CompressionSkipped { reason },
-            compaction::CompactOutcome::Failed { error } => LoopEvent::CompressionFailed {
+            crate::compaction::CompactOutcome::Skipped(reason) => {
+                LoopEvent::CompressionSkipped { reason }
+            }
+            crate::compaction::CompactOutcome::Failed { error } => LoopEvent::CompressionFailed {
                 trigger: CompressionTrigger::Manual,
                 error,
             },

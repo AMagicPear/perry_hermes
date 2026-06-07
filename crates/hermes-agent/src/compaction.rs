@@ -1,6 +1,6 @@
-//! Built-in context compaction strategy.
+//! Context compaction strategy and loop orchestration.
 //!
-//! The strategy is intentionally small:
+//! The built-in strategy is intentionally small:
 //! - keep the system prompt, if present
 //! - keep the first user message
 //! - summarize everything else into one handoff message
@@ -8,12 +8,15 @@
 //! Future changes should mostly be prompt edits, not new slicing logic.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use perry_hermes_core::compaction_strategy::CompressionSkipReason;
 use perry_hermes_core::message::{Message, Role};
 use perry_hermes_core::{
     CompactError, CompactionResult, CompactionStrategy, Provider, ProviderError,
 };
+use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 /// Configuration for the built-in summary compactor.
@@ -191,6 +194,61 @@ impl CompactionStrategy for SummaryCompactor {
         focus_topic: Option<&str>,
     ) -> Result<CompactionResult, CompactError> {
         self.compact_inner(messages, focus_topic).await
+    }
+}
+
+/// Outcome of one compaction attempt. The loop maps this to `LoopEvent`.
+pub(crate) enum CompactOutcome {
+    Skipped(CompressionSkipReason),
+    Compressed {
+        /// Total duration of the compaction call.
+        duration: Duration,
+        /// Provider-reported output tokens from the summary call.
+        summary_output_tokens: u64,
+    },
+    Failed {
+        error: String,
+    },
+}
+
+/// Attempt one compaction pass. Holds the strategy lock for the full
+/// `compact()` call and replaces `messages` in place on success.
+pub(crate) async fn try_compact(
+    strategy: &Arc<TokioMutex<dyn CompactionStrategy>>,
+    messages: &mut Vec<Message>,
+    focus_topic: Option<&str>,
+    config_focus: Option<&str>,
+) -> Option<CompactOutcome> {
+    let started = Instant::now();
+
+    let mut guard = match strategy.try_lock() {
+        Ok(g) => g,
+        Err(_) => {
+            return Some(CompactOutcome::Skipped(
+                CompressionSkipReason::NothingToCompress,
+            ));
+        }
+    };
+    let focus = config_focus.or(focus_topic);
+    let result = guard.compact(messages.clone(), focus).await;
+    drop(guard);
+
+    let duration = started.elapsed();
+    match result {
+        Ok(result) => {
+            let summary_output_tokens = result.summary_usage.output_tokens;
+            *messages = result.messages;
+            Some(CompactOutcome::Compressed {
+                duration,
+                summary_output_tokens,
+            })
+        }
+        Err(CompactError::NothingToCompress) => Some(CompactOutcome::Skipped(
+            CompressionSkipReason::NothingToCompress,
+        )),
+        Err(e) => Some(CompactOutcome::Failed {
+            error: e.to_string(),
+        }),
     }
 }
 

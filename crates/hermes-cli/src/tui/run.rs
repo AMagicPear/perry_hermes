@@ -25,7 +25,7 @@ use crate::tui::loop_bridge::apply_loop_event;
 use crate::tui::make_on_event;
 use crate::tui::render::render_bottom;
 
-const INLINE_VIEWPORT_HEIGHT: u16 = 11;
+const INLINE_VIEWPORT_HEIGHT: u16 = 6;
 
 /// Local error type for the TUI run loop.
 #[derive(Debug)]
