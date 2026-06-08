@@ -166,6 +166,7 @@ impl Tool for WriteFileTool {
                 "bytes_written": bytes_written,
                 "dirs_created": dirs_created,
                 "resolved_path": canonical,
+                "files_modified": [canonical.clone()],
             })
             .to_string(),
         })

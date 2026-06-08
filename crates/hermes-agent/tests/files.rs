@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use perry_hermes_agent::tools::ReadFileTool;
+use perry_hermes_agent::tools::{PatchTool, ReadFileTool, SearchFilesTool};
 use perry_hermes_core::tool::{Tool, ToolContext, ToolPermissions};
 use serde_json::json;
 use tempfile::TempDir;
@@ -108,6 +108,33 @@ async fn read_file_rejects_known_binary_extension() {
     let v = parse(&out);
     let err = v["error"].as_str().unwrap_or_default();
     assert!(err.to_lowercase().contains("binary"), "got error: {err}");
+    assert!(
+        !err.contains("vision_analyze"),
+        "binary error should not recommend vision_analyze (D15) — got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn read_file_errors_when_offset_past_eof() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("small.txt");
+    std::fs::write(&path, "a\nb\nc\n").unwrap();
+
+    let tool = ReadFileTool::new();
+    let out = tool
+        .execute(
+            json!({ "path": path.to_str().unwrap(), "offset": 100, "limit": 10 }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("read should return JSON");
+    let v = parse(&out);
+    let err = v["error"].as_str().unwrap_or_default();
+    assert!(
+        err.contains("past end of file"),
+        "expected 'past end of file' error, got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -209,6 +236,11 @@ async fn write_file_creates_new_file() {
         .expect("write should succeed");
     let v = parse(&out);
     assert_eq!(v["bytes_written"].as_i64(), Some(6));
+    assert_eq!(
+        v["files_modified"].as_array().map(|a| a.len()),
+        Some(1),
+        "write_file should report files_modified"
+    );
     let on_disk = std::fs::read_to_string(&path).unwrap();
     assert_eq!(on_disk, "hello\n");
 }
@@ -400,5 +432,532 @@ async fn write_file_does_not_leave_temp_file_on_success() {
         leaks.is_empty(),
         "found temp leaks: {:?}",
         leaks.iter().map(|e| e.path()).collect::<Vec<_>>()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// PatchTool tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn patch_schema_matches_reference_name_and_required_mode() {
+    let tool = PatchTool::new();
+    assert_eq!(tool.name(), "patch");
+    let schema = tool.parameters_schema();
+    let props = schema["properties"].as_object().unwrap();
+    for key in [
+        "mode",
+        "path",
+        "old_string",
+        "new_string",
+        "replace_all",
+        "patch",
+        "cross_profile",
+    ] {
+        assert!(props.contains_key(key), "missing parameter {key}");
+    }
+    assert_eq!(
+        schema["required"].as_array().unwrap(),
+        &vec![serde_json::Value::String("mode".to_string())]
+    );
+}
+
+#[tokio::test]
+async fn patch_replace_mode_edits_unique_match() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("demo.txt");
+    std::fs::write(&path, "alpha\nbeta\ngamma\n").unwrap();
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "mode": "replace",
+                "path": path.to_str().unwrap(),
+                "old_string": "beta\n",
+                "new_string": "BETA\n"
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should succeed");
+    let v = parse(&out);
+    assert!(v["diff"].as_str().unwrap_or_default().contains("-beta"));
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "alpha\nBETA\ngamma\n"
+    );
+    assert_eq!(v["files_modified"].as_array().map(|a| a.len()), Some(1));
+}
+
+#[tokio::test]
+async fn patch_replace_mode_rejects_duplicate_without_replace_all() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("demo.txt");
+    std::fs::write(&path, "same\nsame\n").unwrap();
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "mode": "replace",
+                "path": path.to_str().unwrap(),
+                "old_string": "same",
+                "new_string": "other"
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should return JSON error");
+    let v = parse(&out);
+    assert!(v["error"].as_str().unwrap_or_default().contains("multiple"));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "same\nsame\n");
+}
+
+#[tokio::test]
+async fn patch_replace_mode_supports_replace_all() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("demo.txt");
+    std::fs::write(&path, "same\nsame\n").unwrap();
+
+    let tool = PatchTool::new();
+    tool.execute(
+        json!({
+            "mode": "replace",
+            "path": path.to_str().unwrap(),
+            "old_string": "same",
+            "new_string": "other",
+            "replace_all": true
+        }),
+        ctx(dir.path().to_path_buf()),
+        CancellationToken::new(),
+    )
+    .await
+    .expect("patch should succeed");
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "other\nother\n");
+}
+
+#[tokio::test]
+async fn patch_v4a_add_update_delete_and_move_files() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("update.txt"), "old\nkeep\n").unwrap();
+    std::fs::write(dir.path().join("delete.txt"), "remove me\n").unwrap();
+    std::fs::write(dir.path().join("move.txt"), "move me\n").unwrap();
+
+    let patch = "\
+*** Begin Patch
+*** Add File: added.txt
++created
+*** Update File: update.txt
+@@
+-old
++new
+ keep
+*** Delete File: delete.txt
+*** Move File: move.txt
+*** Move to: moved.txt
+*** End Patch";
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({"mode": "patch", "patch": patch}),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should succeed");
+    let v = parse(&out);
+    assert_eq!(v["success"].as_bool(), Some(true), "output: {v}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("added.txt")).unwrap(),
+        "created\n"
+    );
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("update.txt")).unwrap(),
+        "new\nkeep\n"
+    );
+    assert!(!dir.path().join("delete.txt").exists());
+    assert!(!dir.path().join("move.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("moved.txt")).unwrap(),
+        "move me\n"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// SearchFilesTool tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn search_files_schema_matches_reference_name() {
+    let tool = SearchFilesTool::new();
+    assert_eq!(tool.name(), "search_files");
+    let schema = tool.parameters_schema();
+    let props = schema["properties"].as_object().unwrap();
+    for key in [
+        "pattern",
+        "target",
+        "path",
+        "file_glob",
+        "limit",
+        "offset",
+        "output_mode",
+        "context",
+    ] {
+        assert!(props.contains_key(key), "missing parameter {key}");
+    }
+}
+
+#[tokio::test]
+async fn search_files_content_returns_line_column_and_content() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha\nneedle here\n").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({"pattern": "needle", "path": dir.path().to_str().unwrap()}),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let first = &v["matches"].as_array().unwrap()[0];
+    assert_eq!(first["line"].as_u64(), Some(2));
+    assert_eq!(first["column"].as_u64(), Some(1));
+    assert_eq!(first["content"].as_str(), Some("needle here"));
+}
+
+#[tokio::test]
+async fn search_files_file_glob_restricts_content_search() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "needle\n").unwrap();
+    std::fs::write(dir.path().join("a.txt"), "needle\n").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "needle",
+                "path": dir.path().to_str().unwrap(),
+                "file_glob": "*.rs"
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let matches = v["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 1);
+    assert!(matches[0]["path"].as_str().unwrap().ends_with("a.rs"));
+}
+
+#[tokio::test]
+async fn search_files_content_supports_offset_limit_and_files_only() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "needle 1\nneedle 2\nneedle 3\n").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "needle",
+                "path": dir.path().to_str().unwrap(),
+                "offset": 1,
+                "limit": 1,
+                "output_mode": "files_only"
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    assert_eq!(v["files"].as_array().unwrap().len(), 1);
+    assert_eq!(v["total"].as_u64(), Some(3));
+    assert_eq!(v["truncated"].as_bool(), Some(true));
+}
+
+#[tokio::test]
+async fn search_files_content_supports_count_mode() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "needle\nneedle\n").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "needle",
+                "path": dir.path().to_str().unwrap(),
+                "output_mode": "count"
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    assert_eq!(
+        v["counts"].as_array().unwrap()[0]["count"].as_u64(),
+        Some(2)
+    );
+}
+
+#[tokio::test]
+async fn search_files_target_files_finds_glob_matches() {
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.rs"), "").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "*.rs",
+                "target": "files",
+                "path": dir.path().to_str().unwrap()
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(files.len(), 1);
+    assert!(files[0].as_str().unwrap().ends_with("a.rs"));
+}
+
+#[tokio::test]
+async fn search_files_target_files_applies_file_glob() {
+    // D7: file_glob is honored in target='files' mode too, not just
+    // target='content'. Without the fix, all files in the directory are
+    // returned and the toml/rs split is lost.
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.toml"), "").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "").unwrap();
+    std::fs::write(dir.path().join("c.toml"), "").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "*",
+                "target": "files",
+                "path": dir.path().to_str().unwrap(),
+                "file_glob": "*.toml"
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(
+        files.len(),
+        2,
+        "file_glob='*.toml' should filter to the two .toml files"
+    );
+    for f in files {
+        assert!(f.as_str().unwrap().ends_with(".toml"));
+    }
+}
+
+#[tokio::test]
+async fn search_files_content_supports_regex_pattern() {
+    // Exercises the ripgrep backend specifically: a regex alternation
+    // pattern that the pure-Rust walk fallback would treat as a literal
+    // string and miss. If this test fails with `expected 2 matches`,
+    // ripgrep is not installed — install it (`brew install ripgrep`,
+    // `apt install ripgrep`) so the rg backend can take over.
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha\nbeta\ngamma\n").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "alpha|gamma",
+                "path": dir.path().to_str().unwrap()
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let matches = v["matches"].as_array().unwrap();
+    assert_eq!(
+        matches.len(),
+        2,
+        "expected regex 'alpha|gamma' to match both 'alpha' and 'gamma' — install ripgrep to enable the rg backend"
+    );
+    let contents: Vec<&str> = matches
+        .iter()
+        .map(|m| m["content"].as_str().unwrap())
+        .collect();
+    assert!(contents.contains(&"alpha"));
+    assert!(contents.contains(&"gamma"));
+    assert!(!contents.contains(&"beta"));
+}
+
+#[tokio::test]
+async fn search_files_content_includes_context_lines() {
+    // TOOL_TEST_REPORT #2: `context` parameter is now honored via
+    // `rg -C N`. Each match entry carries `context.before` (up to N
+    // preceding lines) and `context.after` (up to N following lines).
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("a.txt"),
+        "alpha\nbeta MATCH here\ngamma\ndelta MATCH too\nepsilon\n",
+    )
+    .unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "MATCH",
+                "path": dir.path().to_str().unwrap(),
+                "context": 1
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let matches = v["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 2);
+
+    let first = &matches[0];
+    assert_eq!(first["content"], "beta MATCH here");
+    let before = first["context"]["before"].as_array().unwrap();
+    let after = first["context"]["after"].as_array().unwrap();
+    assert_eq!(before.len(), 1, "expected 1 before-context line");
+    assert_eq!(before[0], "alpha");
+    assert_eq!(after.len(), 1, "expected 1 after-context line");
+    assert_eq!(after[0], "gamma");
+
+    let second = &matches[1];
+    assert_eq!(second["content"], "delta MATCH too");
+    assert_eq!(second["context"]["before"][0], "gamma");
+    assert_eq!(second["context"]["after"][0], "epsilon");
+}
+
+#[tokio::test]
+async fn patch_v4a_accepts_end_of_patch_with_optional_index() {
+    // D4/D5: the parser must accept the "*** End of Patch" variant
+    // (with "of") and an optional "[N]" suffix. Both forms appear in
+    // documentation and existing tools.
+    let dir = TempDir::new().unwrap();
+    let patch = "*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End of Patch [0]";
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({"mode": "patch", "patch": patch}),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should succeed");
+    let v = parse(&out);
+    assert_eq!(v["success"].as_bool(), Some(true), "output: {v}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "hello\n"
+    );
+}
+
+#[tokio::test]
+async fn patch_v4a_update_preserves_unmentioned_lines() {
+    // D6 / TOOL_TEST_REPORT #1: V4A `*** Update File:` must apply the
+    // hunk to the existing file, not replace the whole file with just
+    // the hunk's content. Without the fix, lines that exist in the file
+    // but are not mentioned in the hunk are silently dropped — that's
+    // data loss when a model thinks it's doing a targeted edit.
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("v4a_test.txt");
+    std::fs::write(
+        &path,
+        "line1: keep me\nline2: change me\nline3: keep me too\n\
+         line4: also keep\nline5: change this\nline6: final keep\n",
+    )
+    .unwrap();
+
+    let patch = "\
+*** Begin Patch
+*** Update File: v4a_test.txt
+@@
+ line1: keep me
+-line2: change me
++line2: CHANGED
+ line3: keep me too
+*** End Patch";
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({"mode": "patch", "patch": patch}),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should succeed");
+    let v = parse(&out);
+    assert_eq!(v["success"].as_bool(), Some(true), "output: {v}");
+
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        on_disk,
+        "line1: keep me\nline2: CHANGED\nline3: keep me too\n\
+         line4: also keep\nline5: change this\nline6: final keep\n",
+        "lines 4-6 must be preserved (V4A hunk apply, not full-file replace)"
+    );
+}
+
+#[tokio::test]
+async fn patch_v4a_update_fails_clearly_when_hunk_not_found() {
+    // Anchor lines from the hunk don't appear in the file → reject
+    // rather than silently producing a wrong file.
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("x.txt");
+    std::fs::write(&path, "alpha\nbeta\ngamma\n").unwrap();
+
+    let patch = "\
+*** Begin Patch
+*** Update File: x.txt
+@@
+ nonexistent line
+-zzz
++ZZZ
+*** End Patch";
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({"mode": "patch", "patch": patch}),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should return JSON");
+    let v = parse(&out);
+    assert_eq!(
+        v["success"].as_bool(),
+        Some(false),
+        "hunk with non-existent anchor should fail, got: {v}"
+    );
+    // File must be unchanged
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "alpha\nbeta\ngamma\n"
     );
 }

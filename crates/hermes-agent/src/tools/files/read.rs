@@ -113,8 +113,8 @@ impl Tool for ReadFileTool {
                 return Ok(ToolOutput {
                     content: json!({
                         "error": format!(
-                            "Cannot read binary file '{}' (.{}). Use vision_analyze for images, or terminal to inspect binary files.",
-                            path_str, ext
+                            "Cannot read binary file '{}' (.{}). Use `terminal` to inspect it (e.g. `file {}`, `xxd {}`); no vision tool is available in this runtime.",
+                            path_str, ext, path_str, path_str
                         )
                     })
                     .to_string(),
@@ -167,12 +167,23 @@ impl Tool for ReadFileTool {
         let lines: Vec<&str> = text.split_inclusive('\n').collect();
         let total_lines = lines.len() as i64;
         let start = (offset as usize).saturating_sub(1);
+        // D11: distinguish "file is empty at this offset" from "user asked
+        // for a window past the end". The former is fine; the latter is
+        // almost always a mistake (model misread line count) and silently
+        // returning empty content hides it.
+        if start >= lines.len() {
+            return Ok(ToolOutput {
+                content: json!({
+                    "error": format!(
+                        "offset {offset} is past end of file (file has {total_lines} lines). Use offset <= {total_lines} to read the last line."
+                    ),
+                    "total_lines": total_lines,
+                })
+                .to_string(),
+            });
+        }
         let end = (start + limit as usize).min(lines.len());
-        let window: String = if start < lines.len() {
-            lines[start..end].join("")
-        } else {
-            String::new()
-        };
+        let window: String = lines[start..end].join("");
 
         let width = (offset + limit).to_string().len();
         let numbered: String = window

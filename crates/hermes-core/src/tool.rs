@@ -26,6 +26,41 @@ pub trait Tool: Send + Sync {
     /// toolset so the loop and CLI can apply `enabled_toolsets` filtering.
     fn toolset(&self) -> &'static str;
 
+    /// Whether the tool is async-only. Mirrors the hermes-agent `is_async`
+    /// field — used by hosts that want to schedule sync vs async work.
+    fn is_async(&self) -> bool {
+        false
+    }
+
+    /// Environment variables the tool needs to be useful. Mirrors the
+    /// hermes-agent `requires_env` field — hosts can warn the user when
+    /// any required env is missing.
+    fn requires_env(&self) -> &[&str] {
+        &[]
+    }
+
+    /// Optional cap on the size of the tool's result. Mirrors the
+    /// hermes-agent `max_result_size_chars` field — when set, the host
+    /// should truncate the `content` string to roughly this many chars
+    /// before handing it to the model.
+    fn max_result_size_chars(&self) -> Option<usize> {
+        None
+    }
+
+    /// Optional emoji hint for UI surfaces that render the tool list.
+    /// Mirrors the hermes-agent `emoji` field.
+    fn emoji(&self) -> Option<&str> {
+        None
+    }
+
+    /// Whether the tool is currently available. Mirrors the hermes-agent
+    /// `check_fn` field — hosts can disable tools whose external
+    /// dependencies are not present without removing them from the
+    /// schema entirely.
+    fn check_available(&self) -> bool {
+        true
+    }
+
     async fn execute(
         &self,
         args: Value,

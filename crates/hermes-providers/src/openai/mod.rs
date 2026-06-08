@@ -7,8 +7,6 @@
 //! The provider struct itself lives in this file because the HTTP client
 //! and the `Provider` trait impl are tightly coupled to a single type.
 
-use std::time::Duration;
-
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
@@ -16,6 +14,8 @@ use perry_hermes_core::message::Message;
 use perry_hermes_core::provider::Provider;
 use perry_hermes_core::registry::ToolSchema;
 use perry_hermes_core::{CompletionStream, ProviderError};
+
+use crate::http::{streaming_client, transport_error_message};
 
 mod request;
 mod sse;
@@ -33,10 +33,7 @@ impl OpenAiProvider {
             api_key: api_key.into(),
             base_url: "https://api.openai.com/v1".into(),
             model: model.into(),
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(120))
-                .build()
-                .expect("reqwest client"),
+            client: streaming_client(),
         }
     }
 
@@ -68,7 +65,7 @@ impl Provider for OpenAiProvider {
             r = self.client.post(&url)
                 .bearer_auth(&self.api_key)
                 .json(&body)
-                .send() => r.map_err(|e| ProviderError::Transport(e.to_string()))?,
+                .send() => r.map_err(|e| ProviderError::Transport(transport_error_message(&e)))?,
         };
 
         // Pre-flight: status check
