@@ -6,7 +6,7 @@ members = [
     "crates/hermes-providers",
     "crates/hermes-skill-loader",
     "crates/hermes-cli",
-    # "crates/perry-hermes-gateway",
+    "crates/perry-hermes-gateway",
 ]
 
 [workspace.package]
@@ -48,6 +48,12 @@ tempfile = "3"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 bytes = "1"
 
+# Telegram bot
+teloxide = { version = "0.13", features = ["macros"] }
+
+# Concurrent map
+dashmap = "6"
+
 # HTTP mock server (dev-dep on perry-hermes-providers)
 httpmock = "0.7"
 
@@ -58,6 +64,7 @@ chrono-tz = "0.10"
 # Internal
 perry-hermes-agent = { path = "crates/hermes-agent" }
 perry-hermes-core = { path = "crates/hermes-core" }
+perry-hermes-gateway = { path = "crates/perry-hermes-gateway" }
 perry-hermes-providers = { path = "crates/hermes-providers" }
 
 # The profile that 'dist' will build with

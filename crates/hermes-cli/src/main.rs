@@ -3,11 +3,12 @@
 //! Reads `--config` (or falls back to `~/.perry_hermes/config.toml` then
 //! `./perry_hermes.toml`) and launches the ratatui TUI.
 
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 use perry_hermes_agent::{AIAgent, PerryHermesConfig};
 
@@ -31,6 +32,17 @@ struct Args {
     /// Model name to use for this run, overriding `[agent].default_model`.
     #[arg(long)]
     model: Option<String>,
+    /// Subcommand. Defaults to the interactive TUI.
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// Start the interactive TUI (default when no subcommand is given).
+    Tui,
+    /// Start the platform gateway: connect all configured adapters.
+    Gateway,
 }
 
 #[tokio::main]
@@ -41,6 +53,13 @@ async fn main() -> anyhow::Result<()> {
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
     let config = apply_cli_provider_overrides(config, &args);
 
+    match args.command.unwrap_or(Command::Tui) {
+        Command::Tui => run_tui(config, &config_path).await,
+        Command::Gateway => run_gateway(config, &config_path).await,
+    }
+}
+
+async fn run_tui(config: PerryHermesConfig, config_path: &Path) -> anyhow::Result<()> {
     let selected_provider = config
         .resolve_provider()
         .with_context(|| format!("failed to resolve provider from {}", config_path.display()))?;
@@ -67,6 +86,51 @@ async fn main() -> anyhow::Result<()> {
     )
     .await?;
     Ok(())
+}
+
+async fn run_gateway(config: PerryHermesConfig, config_path: &Path) -> anyhow::Result<()> {
+    use perry_hermes_gateway::{GatewayConfig, GatewayRunner, telegram::TelegramAdapter};
+
+    let agent = Arc::new(
+        AIAgent::from_config(config)
+            .with_context(|| format!("failed to build agent from {}", config_path.display()))?,
+    );
+
+    let mut gateway_config = GatewayConfig::default();
+
+    // Load allowed users from env
+    if let Ok(allowed) = std::env::var("TELEGRAM_ALLOWED_USERS") {
+        let users: HashSet<String> = allowed
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !users.is_empty() {
+            gateway_config
+                .allowed_users
+                .insert("telegram".into(), users);
+        }
+    }
+
+    let runner = GatewayRunner::new(agent, gateway_config);
+
+    // Discover configured platform adapters
+    let mut adapters: Vec<Arc<dyn perry_hermes_gateway::PlatformAdapter>> = Vec::new();
+
+    if let Ok(token) = std::env::var("TELEGRAM_BOT_TOKEN")
+        && !token.is_empty()
+    {
+        adapters.push(Arc::new(TelegramAdapter::new(&token)));
+        eprintln!("Telegram adapter enabled");
+    }
+
+    if adapters.is_empty() {
+        anyhow::bail!(
+            "No platform adapters configured. Set TELEGRAM_BOT_TOKEN to enable Telegram."
+        );
+    }
+
+    runner.run(adapters).await
 }
 
 fn apply_cli_provider_overrides(mut config: PerryHermesConfig, args: &Args) -> PerryHermesConfig {
@@ -219,6 +283,7 @@ default_model = "echo"
             config: None,
             provider: Some("minimax".into()),
             model: Some("MiniMax-M2.7".into()),
+            command: None,
         };
 
         let config = apply_cli_provider_overrides(config, &args);
