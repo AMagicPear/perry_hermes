@@ -34,7 +34,7 @@ impl HistoryWrite {
     pub fn push_assistant_delta(&mut self, text: &str, width: u16) {
         match &mut self.active_stream {
             Some(ActiveStream::Assistant(_)) => {}
-            Some(ActiveStream::Reasoning { .. }) => {
+            Some(ActiveStream::Reasoning(..)) => {
                 self.finish_stream(width);
                 self.lines.extend(assistant_header(width));
                 self.active_stream = Some(ActiveStream::Assistant(String::new()));
@@ -46,24 +46,36 @@ impl HistoryWrite {
         }
         if let Some(ActiveStream::Assistant(buffer)) = &mut self.active_stream {
             buffer.push_str(text);
-            self.lines
-                .extend(drain_stream(buffer, width, "  ", format_assistant_body_line));
+            self.lines.extend(drain_stream(
+                buffer,
+                width,
+                "  ",
+                &mut true, // assistant never uses first-line prefix
+                format_assistant_body_line,
+                format_assistant_body_line,
+            ));
         }
     }
 
     pub fn push_reasoning_delta(&mut self, text: &str, width: u16) {
         match &mut self.active_stream {
-            Some(ActiveStream::Reasoning(buffer)) => {
+            Some(ActiveStream::Reasoning(buffer, first_line_emitted)) => {
                 buffer.push_str(text);
-                self.lines
-                    .extend(drain_stream(buffer, width, "✦ ", format_reasoning_body_line));
+                self.lines.extend(drain_stream(
+                    buffer,
+                    width,
+                    "  ",
+                    first_line_emitted,
+                    format_first_reasoning_line,
+                    format_reasoning_body_line,
+                ));
             }
             Some(ActiveStream::Assistant(_)) => {
                 self.finish_stream(width);
-                self.active_stream = Some(ActiveStream::Reasoning(text.to_string()));
+                self.active_stream = Some(ActiveStream::Reasoning(text.to_string(), false));
             }
             None => {
-                self.active_stream = Some(ActiveStream::Reasoning(text.to_string()));
+                self.active_stream = Some(ActiveStream::Reasoning(text.to_string(), false));
             }
         }
     }
@@ -74,11 +86,10 @@ impl HistoryWrite {
                 self.lines.extend(assistant_body_lines(&text, width));
                 self.lines.extend(assistant_footer(width));
             }
-            Some(ActiveStream::Reasoning(buffer)) => {
-                if !buffer.is_empty() {
-                    self.lines.extend(reasoning_block(&buffer, width));
-                }
+            Some(ActiveStream::Reasoning(buffer, _first_line_emitted)) if !buffer.is_empty() => {
+                self.lines.extend(reasoning_block(&buffer, width));
             }
+            Some(ActiveStream::Reasoning(..)) => {}
             None => {}
         }
     }
@@ -87,7 +98,8 @@ impl HistoryWrite {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum ActiveStream {
     Assistant(String),
-    Reasoning(String),
+    /// buffer, first_line_emitted
+    Reasoning(String, bool),
 }
 
 pub fn render_history_lines_to_buffer(lines: &[Line<'static>], buffer: &mut Buffer) {
@@ -197,14 +209,20 @@ fn assistant_body_lines(text: &str, width: u16) -> Vec<Line<'static>> {
 /// Drain complete lines from a streaming buffer. A line is complete when a
 /// `\n` is found or when the buffer reaches the available inner width.
 /// Incomplete trailing text stays in the buffer.
+///
+/// `first_line_emitted` is flipped to `true` when the very first line is
+/// produced; `format_first` receives that line, `format_cont` receives all
+/// subsequent lines.
 fn drain_stream(
     buffer: &mut String,
     width: u16,
-    prefix: &str,
-    format_body: fn(&str) -> Line<'static>,
+    indent: &str,
+    first_line_emitted: &mut bool,
+    format_first: fn(&str) -> Line<'static>,
+    format_cont: fn(&str) -> Line<'static>,
 ) -> Vec<Line<'static>> {
     let w = width.max(1) as usize;
-    let inner_w = w.saturating_sub(visible_width(prefix)).max(1);
+    let inner_w = w.saturating_sub(visible_width(indent)).max(1);
     let mut out = Vec::new();
 
     loop {
@@ -215,14 +233,26 @@ fn drain_stream(
                 line.pop();
             }
             for wrapped in wrap_to_width(&line, inner_w as u16) {
-                out.push(format_body(&line_text(&wrapped)));
+                let pick = if !*first_line_emitted {
+                    *first_line_emitted = true;
+                    format_first
+                } else {
+                    format_cont
+                };
+                out.push(pick(&line_text(&wrapped)));
             }
             continue;
         }
 
         if visible_width(buffer.as_str()) >= inner_w {
             let (line, rest) = split_at_display_width_owned(buffer.as_str(), inner_w);
-            out.push(format_body(&line));
+            let pick = if !*first_line_emitted {
+                *first_line_emitted = true;
+                format_first
+            } else {
+                format_cont
+            };
+            out.push(pick(&line));
             *buffer = rest;
             continue;
         }
@@ -261,7 +291,19 @@ fn format_assistant_body_line(text: &str) -> Line<'static> {
 }
 
 fn format_reasoning_body_line(text: &str) -> Line<'static> {
-    Line::from(vec![Span::raw("✦ "), Span::raw(text.to_string())]).style(
+    reasoning_line("  ", text)
+}
+
+fn format_first_reasoning_line(text: &str) -> Line<'static> {
+    reasoning_line("✦ ", text)
+}
+
+fn reasoning_line(prefix: &str, text: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::raw(prefix.to_string()),
+        Span::raw(text.to_string()),
+    ])
+    .style(
         Style::default()
             .fg(Color::DarkGray)
             .add_modifier(Modifier::DIM),

@@ -101,7 +101,13 @@ mod tests {
 
     #[test]
     fn display_round_trips_for_non_arg_commands() {
-        for cmd in [Command::Reset, Command::New, Command::Status, Command::Quit, Command::Clear] {
+        for cmd in [
+            Command::Reset,
+            Command::New,
+            Command::Status,
+            Command::Quit,
+            Command::Clear,
+        ] {
             assert_eq!(Command::parse(&format!("{cmd}")), Some(cmd));
         }
     }
