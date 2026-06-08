@@ -666,50 +666,62 @@ impl Backend for SharedTestBackend {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use perry_hermes_agent::{AgentLoop, LoopConfig};
-    use perry_hermes_core::compaction_strategy::{
-        CompactError, CompactionResult, CompactionStrategy,
-    };
+    use perry_hermes_agent::{ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind};
     use perry_hermes_core::message::Message;
+    use perry_hermes_core::provider::FinishReason;
     use perry_hermes_core::provider::{CompletionStream, Provider};
-    use perry_hermes_core::registry::{InMemoryRegistry, ToolSchema};
+    use perry_hermes_core::registry::ToolSchema;
     use perry_hermes_core::ProviderError;
     use ratatui::layout::Size;
     use std::cell::RefCell;
     use std::rc::Rc;
-    use tokio::sync::Mutex as TokioMutex;
 
-    struct NoopProvider;
+    struct CompactProvider;
 
     #[async_trait]
-    impl Provider for NoopProvider {
+    impl Provider for CompactProvider {
         async fn stream(
             &self,
             _messages: &[Message],
             _tools: &[ToolSchema],
             _cancel: CancellationToken,
         ) -> Result<CompletionStream, ProviderError> {
-            panic!("manual compact should not call the chat provider")
+            Ok(Box::pin(futures::stream::iter(vec![Ok(
+                perry_hermes_core::provider::CompletionDelta {
+                    content_delta: Some("summary".into()),
+                    reasoning_delta: None,
+                    tool_call_delta: None,
+                    usage: Some(perry_hermes_core::Usage {
+                        input_tokens: 10,
+                        output_tokens: 2,
+                        cached_input_tokens: 0,
+                    }),
+                    finish_reason: Some(FinishReason::Stop),
+                },
+            )])))
         }
     }
 
-    struct TestCompactionStrategy;
-
-    #[async_trait]
-    impl CompactionStrategy for TestCompactionStrategy {
-        async fn compact(
-            &mut self,
-            _messages: Vec<Message>,
-            _focus_topic: Option<&str>,
-        ) -> Result<CompactionResult, CompactError> {
-            Ok(CompactionResult {
-                messages: vec![Message::system("system"), Message::user("summary")],
-                summary_usage: perry_hermes_core::Usage {
-                    input_tokens: 10,
-                    output_tokens: 2,
-                    cached_input_tokens: 0,
-                },
-            })
+    fn compact_config() -> PerryHermesConfig {
+        PerryHermesConfig {
+            providers: vec![ProviderConfig {
+                name: "local".into(),
+                kind: ProviderKind::Echo,
+                api_key_env: None,
+                models: vec![ModelConfig {
+                    name: "echo".into(),
+                    context_window_size: 128_000,
+                }],
+                base_url: None,
+                api_key_header: None,
+                thinking: None,
+            }],
+            agent: perry_hermes_agent::AgentConfig {
+                default_provider: "local".into(),
+                default_model: "echo".into(),
+                context_compression_enabled: true,
+                ..Default::default()
+            },
         }
     }
 
@@ -842,15 +854,7 @@ mod tests {
 
     #[tokio::test]
     async fn compact_event_runs_agent_and_replaces_session_messages() {
-        let loop_ = AgentLoop::new(
-            NoopProvider,
-            Arc::new(InMemoryRegistry::new()),
-            LoopConfig {
-                compaction_strategy: Some(Arc::new(TokioMutex::new(TestCompactionStrategy))),
-                ..Default::default()
-            },
-        );
-        let agent = Arc::new(AIAgent::from_loop(loop_));
+        let agent = Arc::new(AIAgent::new(CompactProvider, compact_config()));
         let session = AgentSession::new("test", PathBuf::from("."), None);
         session
             .replace_messages(vec![
@@ -896,16 +900,19 @@ mod tests {
         )
         .expect("compact completion should update app state");
 
-        // The system message lives in its own session field, so
-        // the business log after compaction is [first_user, summary]
-        // (length 1). The full outbound view reattaches the system
-        // message; here it is absent because this test session
-        // was constructed without one.
+        // The system message lives in its own session field, so the business
+        // log after compaction is [first_user, summary].
         let log = session.messages().await;
-        assert_eq!(log.len(), 1);
+        assert_eq!(log.len(), 2);
         assert!(matches!(
             log.first(),
-            Some(Message { content, .. }) if content.as_text() == "summary"
+            Some(Message { content, .. }) if content.as_text() == "first request"
+        ));
+        assert!(matches!(
+            log.get(1),
+            Some(Message { content, .. })
+                if content.as_text().contains("[CONTEXT SUMMARY")
+                    && content.as_text().contains("summary")
         ));
         assert_eq!(app.context_used_tokens, Some(1_002));
         assert_eq!(app.compression_hint.as_deref(), Some("Compressed in 0ms"));

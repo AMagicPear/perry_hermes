@@ -101,6 +101,38 @@ impl AgentSession {
         }
     }
 
+    /// Load saved session history and token facts from `path`.
+    ///
+    /// The runtime working directory is intentionally taken from the current
+    /// process cwd at load time, so resuming a session follows the directory
+    /// where the adapter was started. The saved `working_dir` remains part of
+    /// the snapshot format but is not reused as the active tool context.
+    pub async fn load_json_file(path: impl Into<PathBuf>) -> std::io::Result<Self> {
+        Self::load_json_file_with_system_message(path, std::env::current_dir().ok(), None).await
+    }
+
+    pub(crate) async fn load_json_file_with_system_message(
+        path: impl Into<PathBuf>,
+        working_dir: Option<PathBuf>,
+        system_message: Option<Message>,
+    ) -> std::io::Result<Self> {
+        let path = path.into();
+        let raw = tokio::fs::read(&path).await?;
+        let snapshot: SessionSnapshot =
+            serde_json::from_slice(&raw).map_err(std::io::Error::other)?;
+        let working_dir = working_dir.unwrap_or(snapshot.working_dir);
+        Ok(Self {
+            session_id: Arc::from(snapshot.session_id),
+            working_dir: Arc::new(working_dir),
+            system_message: system_message.or(snapshot.system_message).map(Arc::new),
+            messages: Arc::new(RwLock::new(snapshot.messages)),
+            context_usage_baseline_tokens: Arc::new(RwLock::new(
+                snapshot.context_usage_baseline_tokens,
+            )),
+            store: Some(JsonFileSessionStore::new(path)),
+        })
+    }
+
     pub async fn save(&self) -> std::io::Result<()> {
         self.save_snapshot().await
     }
@@ -332,5 +364,33 @@ mod tests {
             Some(0),
             "new session should save an empty provider-neutral history"
         );
+    }
+
+    #[tokio::test]
+    async fn json_file_store_loads_history_but_uses_current_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("sessions").join("session-1.json");
+        let original = AgentSession::new(
+            "session-1",
+            PathBuf::from("/tmp/original-project"),
+            Some(Message::system("persisted system prompt")),
+        )
+        .with_json_file_store(path.clone());
+        original.append_message(Message::user("hello")).await;
+        original.remember_context_usage_baseline(123).await;
+
+        let current_cwd = std::env::current_dir().unwrap();
+        let restored = AgentSession::load_json_file(path)
+            .await
+            .expect("snapshot should load");
+
+        assert_eq!(restored.session_id.as_ref(), "session-1");
+        assert_eq!(restored.working_dir.as_ref(), &current_cwd);
+
+        let outbound = restored.outbound_messages().await;
+        assert_eq!(outbound.len(), 2);
+        assert_eq!(outbound[0].content.as_text(), "persisted system prompt");
+        assert_eq!(outbound[1].content.as_text(), "hello");
+        assert_eq!(restored.compacted_context_tokens(7).await, Some(130));
     }
 }

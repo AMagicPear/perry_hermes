@@ -8,7 +8,7 @@ use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::{PerryHermesConfig, ResolvedProviderConfig};
-use crate::prompting::{build_system_message, compose_base_system_prompt, resolve_skills_dir};
+use crate::prompting::{build_system_message, resolve_skills_dir};
 use crate::provider_factory::build_provider;
 use crate::session::AgentSession;
 use crate::tool_catalog::build_registry;
@@ -18,13 +18,10 @@ use crate::{
 };
 
 pub struct AIAgent {
-    loop_: AgentLoop,
-    /// Agent-scoped base system prompt (user-configured prompt +
-    /// skills block). Computed once at construction. Per-session
-    /// additions (AGENTS.md, working directory) are folded in by
-    /// `new_session` when the session is created; the result is
-    /// stored as the session's first message and never recomputed.
-    base_system_prompt: Option<String>,
+    agent_loop: AgentLoop,
+    /// User-configured system prompt. Skills, AGENTS.md, and working-dir
+    /// hints are folded in once when a new session is created.
+    system_prompt: Option<String>,
 }
 
 impl AIAgent {
@@ -35,11 +32,10 @@ impl AIAgent {
     #[allow(clippy::needless_pass_by_value)]
     pub fn from_config(config: PerryHermesConfig) -> anyhow::Result<Self> {
         let selected_provider = config.resolve_provider()?;
-        let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
         let provider = build_provider(&selected_provider)?;
         Ok(Self {
-            loop_: build_loop(Arc::from(provider), &config, &selected_provider),
-            base_system_prompt,
+            agent_loop: build_loop(Arc::from(provider), &config, &selected_provider),
+            system_prompt: config.agent.system_prompt.clone(),
         })
     }
 
@@ -48,27 +44,18 @@ impl AIAgent {
     #[allow(clippy::needless_pass_by_value)]
     pub fn new(provider: impl Provider + 'static, config: PerryHermesConfig) -> Self {
         let selected_provider = config.resolve_provider().ok();
-        let base_system_prompt = compose_base_system_prompt(config.agent.system_prompt.as_deref());
         Self {
-            loop_: build_loop_for_custom_provider(
+            agent_loop: build_loop_for_custom_provider(
                 Arc::new(provider),
                 &config,
                 selected_provider.as_ref(),
             ),
-            base_system_prompt,
+            system_prompt: config.agent.system_prompt.clone(),
         }
     }
 
-    pub fn from_loop(loop_: AgentLoop) -> Self {
-        Self {
-            loop_,
-            base_system_prompt: None,
-        }
-    }
-
-    /// Construct a new `AgentSession`, computing the
-    /// immutable system message from this agent's base prompt and the
-    /// session's working directory. The system message is stored at
+    /// Construct a new `AgentSession`, computing the immutable system
+    /// message for this session. The system message is stored at
     /// `AgentSession::system_message` and never recomposed on subsequent
     /// turns.
     pub fn new_session(
@@ -77,8 +64,18 @@ impl AIAgent {
         working_dir: impl Into<PathBuf>,
     ) -> AgentSession {
         let working_dir = working_dir.into();
-        let system_message = build_system_message(self.base_system_prompt.as_deref(), &working_dir);
+        let system_message = build_system_message(self.system_prompt.as_deref(), &working_dir);
         AgentSession::new(session_id, working_dir, system_message)
+    }
+
+    pub async fn load_json_session(
+        &self,
+        path: impl Into<PathBuf>,
+    ) -> std::io::Result<AgentSession> {
+        let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let system_message = build_system_message(self.system_prompt.as_deref(), &working_dir);
+        AgentSession::load_json_file_with_system_message(path, Some(working_dir), system_message)
+            .await
     }
 
     pub async fn run_session_turn(
@@ -133,7 +130,7 @@ impl AIAgent {
             working_dir: session.working_dir.as_ref().clone(),
             permissions: ToolPermissions { subprocess: true },
         };
-        self.loop_
+        self.agent_loop
             .run(messages, ctx, session, cancel, on_event)
             .await
     }
@@ -144,7 +141,7 @@ impl AIAgent {
         focus_topic: Option<&str>,
         session: &AgentSession,
     ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
-        self.loop_
+        self.agent_loop
             .compact_messages(messages, focus_topic, session)
             .await
     }
@@ -168,6 +165,16 @@ impl AIAgent {
             session.replace_messages(business).await;
         }
         Ok(event)
+    }
+}
+
+#[cfg(test)]
+impl AIAgent {
+    fn for_test(agent_loop: AgentLoop) -> Self {
+        Self {
+            agent_loop,
+            system_prompt: None,
+        }
     }
 }
 
@@ -524,6 +531,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn load_json_session_uses_current_cwd_and_rebuilds_system_message() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("sessions").join("session-1.json");
+        let saved = AgentSession::new(
+            "session-1",
+            PathBuf::from("/tmp/original-project"),
+            Some(Message::system(
+                "OLD SYSTEM\n\nCurrent working directory: /tmp/original-project",
+            )),
+        )
+        .with_json_file_store(path.clone());
+        saved.append_message(Message::user("saved hello")).await;
+        saved.remember_context_usage_baseline(123).await;
+
+        let mut config = echo_config();
+        config.agent.system_prompt = Some("NEW SYSTEM".into());
+        let agent = AIAgent::new(perry_hermes_providers::EchoProvider::new(), config);
+        let session = agent
+            .load_json_session(path)
+            .await
+            .expect("session should load");
+        let current_cwd = std::env::current_dir().unwrap();
+
+        assert_eq!(session.working_dir.as_ref(), &current_cwd);
+
+        let outbound = session.outbound_messages().await;
+        let system_text = outbound[0].content.as_text();
+        assert!(system_text.contains("NEW SYSTEM"));
+        assert!(system_text.contains(&format!(
+            "Current working directory: {}",
+            current_cwd.display()
+        )));
+        assert!(!system_text.contains("OLD SYSTEM"));
+        assert!(!system_text.contains("/tmp/original-project"));
+        assert_eq!(outbound[1].content.as_text(), "saved hello");
+        assert_eq!(session.compacted_context_tokens(7).await, Some(130));
+    }
+
+    #[tokio::test]
     async fn session_context_is_plumbed_into_tool_context() {
         let captured: Arc<Mutex<Option<ToolContext>>> = Arc::new(Mutex::new(None));
 
@@ -534,7 +580,7 @@ mod tests {
         let provider = OneToolCallProvider {
             calls: Arc::new(Mutex::new(0)),
         };
-        let loop_ = AgentLoop::new(
+        let agent_loop = AgentLoop::new(
             provider,
             Arc::new(registry),
             LoopConfig {
@@ -542,10 +588,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let agent = AIAgent {
-            loop_,
-            base_system_prompt: None,
-        };
+        let agent = AIAgent::for_test(agent_loop);
 
         let session = AgentSession::new(
             "session-xyz",

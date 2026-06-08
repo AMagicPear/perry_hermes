@@ -1,12 +1,9 @@
 //! System-prompt composition for `AIAgent` and `AgentSession`.
 //!
-//! The system prompt is a single immutable `Message` that lives at
-//! the head of a session's message log. It is built exactly once, at
-//! session construction, by `AIAgent::new_session`. There is no
-//! per-turn recomposition, no cache, no "prepend at send time"
-//! injection step: the system message is just the first message in
-//! the conversation log, identical in kind to the user and assistant
-//! messages that follow it.
+//! The system prompt is a single immutable `Message` stored on
+//! `AgentSession`. It is built exactly once, at session construction,
+//! by `AIAgent::new_session`. There is no per-turn recomposition, no cache,
+//! and no "prepend at send time" injection step.
 
 use std::path::{Path, PathBuf};
 
@@ -17,9 +14,8 @@ pub const DEFAULT_SYSTEM_PROMPT: &str =
 Use it to inspect the system or run shell commands when needed. When you have enough information \
 to answer, give a concise final response — do not call tools again.";
 
-/// Resolve the local skills directory shared by system-prompt composition
-/// (`compose_base_system_prompt`) and the runtime tool registry
-/// (`tool_catalog::build_registry`).
+/// Resolve the local skills directory shared by system-prompt composition and
+/// the runtime tool registry (`tool_catalog::build_registry`).
 ///
 /// Resolution rules:
 /// 1. `PERRY_HERMES_HOME` env var if set
@@ -41,10 +37,14 @@ pub fn resolve_skills_dir() -> Option<PathBuf> {
     Some(base.join("skills"))
 }
 
-/// Compose the agent-scoped base prompt: the user-configured
-/// `system_prompt` (or `DEFAULT_SYSTEM_PROMPT`) plus the skills
-/// block, if any. Computed once at `AIAgent` construction.
-pub fn compose_base_system_prompt(user_prompt: Option<&str>) -> Option<String> {
+/// Compose the prompt prefix for a newly-created session: the user-configured
+/// `system_prompt` (or `DEFAULT_SYSTEM_PROMPT`) plus the skills block, if any.
+///
+/// This is intentionally called from session creation, not `AIAgent`
+/// construction. A reusable `AIAgent` may create many sessions over a long
+/// lifetime, and each new session should capture the skills available at that
+/// creation point.
+fn compose_session_prompt_prefix(user_prompt: Option<&str>) -> Option<String> {
     let base = user_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
     let Some(dir) = resolve_skills_dir() else {
         return Some(base.to_string());
@@ -103,20 +103,20 @@ pub fn load_agents_md_block(working_dir: &Path) -> Option<String> {
     }
 }
 
-/// Build the immutable system `Message` for a session, combining the
-/// agent-scoped base prompt (base + skills) with the session-scoped
+/// Build the immutable system `Message` for a session, combining the prompt
+/// prefix (configured prompt/default + skills) with the session-scoped
 /// sections (AGENTS.md block, working directory).
 ///
-/// Returns `None` if no base prompt is configured and the session
-/// has no AGENTS.md to inject; the session is then created without
-/// a system message.
+/// Returns `None` only if prompt composition is explicitly changed to produce
+/// no sections. With the current default prompt and working-directory hint,
+/// newly-created sessions always get a system message.
 ///
 /// Callers should invoke this at most once per session, store the
 /// returned message in the session's log, and treat it as
 /// immutable thereafter.
-pub fn build_system_message(base_prompt: Option<&str>, working_dir: &Path) -> Option<Message> {
+pub fn build_system_message(user_prompt: Option<&str>, working_dir: &Path) -> Option<Message> {
     let mut sections: Vec<String> = Vec::with_capacity(3);
-    if let Some(base) = base_prompt {
+    if let Some(base) = compose_session_prompt_prefix(user_prompt) {
         sections.push(base.trim().to_string());
     }
     if let Some(block) = load_agents_md_block(working_dir) {

@@ -183,6 +183,38 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
 }
 
 #[tokio::test]
+async fn runtime_reads_skills_when_session_is_created_not_when_agent_is_created() {
+    let home = tempfile::tempdir().unwrap();
+    let _guard = with_env_lock().await;
+    unsafe { std::env::set_var("HOME", home.path()) };
+    unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    unsafe { std::env::set_var("PERRY_HERMES_TIMEZONE", "UTC") };
+
+    let provider = CaptureProvider::default();
+    let captured = Arc::clone(&provider.captured);
+    let mut config = config_for_echo();
+    config.agent.system_prompt = Some("CUSTOM-PROMPT-MARKER".into());
+    let agent = AIAgent::new(provider, config);
+
+    write_skill(
+        &skills_dir_for(home.path()),
+        "created-after-agent/SKILL.md",
+        "---\nname: created-after-agent\ndescription: \"created later\"\n---\nbody\n",
+    );
+
+    let session = agent.new_session("t", PathBuf::from("/tmp"));
+    agent
+        .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
+        .await
+        .unwrap();
+
+    let msgs = captured.lock().unwrap();
+    let text = system_text(&msgs);
+    assert!(text.contains("CUSTOM-PROMPT-MARKER"));
+    assert!(text.contains("**created-after-agent**: created later"));
+}
+
+#[tokio::test]
 async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
     let home = tempfile::tempdir().unwrap();
     let skills = skills_dir_for(home.path());
