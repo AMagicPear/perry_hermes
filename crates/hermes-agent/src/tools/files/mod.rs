@@ -1,8 +1,12 @@
+mod patch;
 mod policy;
 mod read;
+mod search;
 mod write;
 
+pub use patch::PatchTool;
 pub use read::ReadFileTool;
+pub use search::SearchFilesTool;
 pub use write::WriteFileTool;
 
 const READ_DEDUP_STATUS_MESSAGE: &str =

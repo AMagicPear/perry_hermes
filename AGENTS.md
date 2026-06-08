@@ -3,6 +3,10 @@
 This file is for coding agents working in this repository. Keep it current with
 the code, not with historical phase plans.
 
+For the gateway work-in-progress, see [`docs/gateway.md`](docs/gateway.md).
+For the agent-self-use tooling alignment plan, see
+[`docs/tooling-alignment.md`](docs/tooling-alignment.md).
+
 ## Project Intent
 
 Perry Hermes (`perry_hermes`) is moving toward a platform-neutral agent
@@ -57,6 +61,16 @@ perry-hermes-providers crate
 
 perry-hermes-skill-loader crate
   SKILL.md loading and prompt block rendering
+
+perry-hermes-gateway crate        (planned; see docs/gateway.md)
+  SessionRegistry
+  GatewayHandler
+  GatewayTransport trait
+  JsonDirSessionStore
+
+perry-hermes-telegram-bot crate   (planned; see docs/gateway.md)
+  long-poll transport impl GatewayTransport
+  command routing (/reset /compact /status ...)
 ```
 
 Key files:
@@ -68,8 +82,11 @@ Key files:
 | `crates/hermes-agent/src/loop_engine/` | turn execution, provider streaming, tool dispatch, automatic compaction trigger |
 | `crates/hermes-agent/src/compaction.rs` | built-in summary compaction strategy and prompt |
 | `crates/hermes-agent/src/config.rs` | TOML config model and provider/model resolution |
+| `crates/hermes-agent/src/tool_catalog.rs` | registry builder and disabled_toolset filter (target of PR-1 in tooling-alignment) |
 | `crates/hermes-cli/src/tui/` | presentation state, input handling, event rendering |
 | `crates/hermes-providers/src/` | provider protocol adapters |
+| `docs/gateway.md` | gateway design and implementation spec (draft) |
+| `docs/tooling-alignment.md` | agent-self-use tooling gap analysis + 4-PR repair plan |
 
 ## Session Model
 
@@ -175,8 +192,11 @@ Testing patterns:
 - Provider HTTP tests may use `httpmock` or a raw `tokio::net::TcpListener`
   when request body inspection is needed.
 - TUI tests should drive `App` and `LoopEvent`s; do not require a real terminal.
+- Gateway tests should drive `SessionRegistry` + a mock `GatewayTransport`
+  impl; do not require real Telegram calls.
 - When tests mutate process-wide env vars, serialize them with a mutex.
 - Do not add live provider calls to automated tests.
+- Do not add live Telegram calls to automated tests.
 
 ## Common Commands
 

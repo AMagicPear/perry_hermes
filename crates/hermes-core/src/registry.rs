@@ -35,6 +35,12 @@ impl InMemoryRegistry {
                 name: t.name().to_string(),
                 description: t.description().to_string(),
                 parameters: t.parameters_schema(),
+                toolset: t.toolset().to_string(),
+                is_async: t.is_async(),
+                requires_env: t.requires_env().iter().map(|s| s.to_string()).collect(),
+                max_result_size_chars: t.max_result_size_chars(),
+                emoji: t.emoji().map(|s| s.to_string()),
+                available: t.check_available(),
             })
             .collect()
     }
@@ -46,6 +52,12 @@ pub struct ToolSchema {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
+    pub toolset: String,
+    pub is_async: bool,
+    pub requires_env: Vec<String>,
+    pub max_result_size_chars: Option<usize>,
+    pub emoji: Option<String>,
+    pub available: bool,
 }
 
 #[cfg(test)]
@@ -77,6 +89,26 @@ mod tests {
             "core"
         }
 
+        fn is_async(&self) -> bool {
+            true
+        }
+
+        fn requires_env(&self) -> &[&str] {
+            &["NOOP_ENV"]
+        }
+
+        fn max_result_size_chars(&self) -> Option<usize> {
+            Some(1234)
+        }
+
+        fn emoji(&self) -> Option<&str> {
+            Some("T")
+        }
+
+        fn check_available(&self) -> bool {
+            false
+        }
+
         async fn execute(
             &self,
             _args: serde_json::Value,
@@ -102,5 +134,11 @@ mod tests {
             s[0].description,
             "Core toolset: no-op placeholder for tests."
         );
+        assert_eq!(s[0].toolset, "core");
+        assert!(s[0].is_async);
+        assert_eq!(s[0].requires_env, vec!["NOOP_ENV"]);
+        assert_eq!(s[0].max_result_size_chars, Some(1234));
+        assert_eq!(s[0].emoji.as_deref(), Some("T"));
+        assert!(!s[0].available);
     }
 }

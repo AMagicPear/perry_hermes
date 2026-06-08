@@ -28,6 +28,12 @@ fn tool_schema() -> ToolSchema {
             },
             "required": ["command"]
         }),
+        toolset: "terminal".into(),
+        is_async: false,
+        requires_env: Vec::new(),
+        max_result_size_chars: None,
+        emoji: None,
+        available: true,
     }
 }
 
