@@ -8,6 +8,7 @@
 //! dropped in later.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use async_trait::async_trait;
 use perry_hermes_core::error::ToolError;
@@ -21,12 +22,13 @@ use super::policy::is_binary_extension;
 
 const SEARCH_FILES_DESCRIPTION: &str = "Search for text across files or find files by name. \
 Two search modes:\n\
-- target='content' (default): search for a literal substring inside files. Honors file_glob \
+- target='content' (default): ripgrep-backed regex search inside files. Honors file_glob \
 (e.g. '*.rs'), output_mode (content | files_only | count), and offset/limit for pagination. \
-Binary extensions are skipped. Returns matches with line, column, and the matching line content.\n\
+Binary files are auto-skipped. Returns matches with line, column, and the matching line content.\n\
 - target='files': find files whose name matches the pattern (uses simple '*' wildcards). \
 Sorted by modification time, newest first.\n\
-Set path to scope the search; defaults to the current working directory.";
+Set path to scope the search; defaults to the current working directory. Falls back to a \
+pure-Rust walk if ripgrep is not installed.";
 
 pub struct SearchFilesTool;
 
@@ -58,7 +60,7 @@ impl Tool for SearchFilesTool {
             "properties": {
                 "pattern": {
                     "type": "string",
-                    "description": "Pattern to search for. Literal substring for target='content'; simple '*' wildcard for target='files'."
+                    "description": "Pattern to search for. Regex for target='content' (escape special chars with backslash to match literally); simple '*' wildcard for target='files'."
                 },
                 "target": {
                     "type": "string",
@@ -134,7 +136,7 @@ impl Tool for SearchFilesTool {
         let limit = args
             .get("limit")
             .and_then(|v| v.as_u64())
-            .unwrap_or(500)
+            .unwrap_or(50)
             .max(1) as usize;
         let offset = args.get("offset").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         let output_mode = args
@@ -171,7 +173,8 @@ impl Tool for SearchFilesTool {
                 &output_mode,
                 limit,
                 offset,
-            )),
+            )
+            .await),
             other => Ok(ToolOutput {
                 content: json!({
                     "error": format!("Unknown target '{other}'. Expected 'content' or 'files'.")
@@ -214,7 +217,21 @@ fn files_mode(root: &Path, pattern: &str, limit: usize, offset: usize) -> ToolOu
     }
 }
 
-fn content_mode(
+async fn content_mode(
+    root: &Path,
+    pattern: &str,
+    file_glob: Option<&str>,
+    output_mode: &str,
+    limit: usize,
+    offset: usize,
+) -> ToolOutput {
+    if rg_available() {
+        return rg_content_search(root, pattern, file_glob, output_mode, limit, offset).await;
+    }
+    content_mode_walk(root, pattern, file_glob, output_mode, limit, offset)
+}
+
+fn content_mode_walk(
     root: &Path,
     pattern: &str,
     file_glob: Option<&str>,
@@ -372,4 +389,145 @@ fn glob_match(pattern: &str, name: &str) -> bool {
         }
     }
     dp[pn][nn]
+}
+
+/// Probe for `rg` once per process and cache the result. Uses
+/// `std::process::Command` rather than the async variant so the probe is
+/// a pure synchronous `exec` of a no-op (`--version`) — no reason to take
+/// a hot async path through it.
+fn rg_available() -> bool {
+    static CACHE: OnceLock<bool> = OnceLock::new();
+    *CACHE.get_or_init(|| {
+        std::process::Command::new("rg")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
+/// Ripgrep backend for `target='content'`. Spawns `rg --json` and shapes
+/// the result envelope the same way the walk fallback does, so callers
+/// see a consistent schema regardless of which backend ran.
+async fn rg_content_search(
+    root: &Path,
+    pattern: &str,
+    file_glob: Option<&str>,
+    output_mode: &str,
+    limit: usize,
+    offset: usize,
+) -> ToolOutput {
+    let mut cmd = tokio::process::Command::new("rg");
+    cmd.arg("--json")
+        .arg("--no-heading")
+        .arg("-e")
+        .arg(pattern)
+        .arg(root);
+    if let Some(g) = file_glob {
+        cmd.arg("-g").arg(g);
+    }
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    let output = match cmd.output().await {
+        Ok(o) => o,
+        Err(e) => {
+            return ToolOutput {
+                content: json!({"error": format!("rg spawn failed: {e}")}).to_string(),
+            }
+        }
+    };
+    // rg exit codes: 0 = matches, 1 = no matches, ≥2 = error.
+    let exit = output.status.code().unwrap_or(-1);
+    if exit >= 2 {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return ToolOutput {
+            content: json!({"error": format!("rg error: {}", stderr.trim())}).to_string(),
+        };
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut all_matches: Vec<Value> = Vec::new();
+    for line in stdout.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let v: Value = match serde_json::from_str(line) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        if v["type"].as_str() != Some("match") {
+            continue;
+        }
+        let path = v["data"]["path"]["text"].as_str().unwrap_or("").to_string();
+        let line_no = v["data"]["line_number"].as_u64().unwrap_or(0);
+        let raw_line = v["data"]["lines"]["text"].as_str().unwrap_or("");
+        let content = raw_line.trim_end_matches('\n').to_string();
+        let column = v["data"]["submatches"][0]["start"].as_u64().unwrap_or(0) as usize + 1;
+        all_matches.push(json!({
+            "path": path,
+            "line": line_no,
+            "column": column,
+            "content": content,
+        }));
+    }
+    let total = all_matches.len();
+
+    let payload = match output_mode {
+        "files_only" => {
+            // In files_only mode the offset/limit window is on underlying
+            // matches, not on the file list — return every file that
+            // contributed at least one match and report total/truncated in
+            // match units.
+            let mut files: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+            for m in &all_matches {
+                if let Some(p) = m["path"].as_str() {
+                    files.insert(p.to_string());
+                }
+            }
+            let page: Vec<String> = files.into_iter().collect();
+            json!({
+                "files": page,
+                "total": total,
+                "truncated": total > limit,
+            })
+        }
+        "count" => {
+            let mut counts: std::collections::BTreeMap<String, usize> =
+                std::collections::BTreeMap::new();
+            for m in &all_matches {
+                if let Some(p) = m["path"].as_str() {
+                    *counts.entry(p.to_string()).or_insert(0) += 1;
+                }
+            }
+            let mut counts: Vec<(String, usize)> = counts.into_iter().collect();
+            counts.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+            let total_files = counts.len();
+            let page: Vec<Value> = counts
+                .into_iter()
+                .skip(offset)
+                .take(limit)
+                .map(|(path, count)| json!({"path": path, "count": count}))
+                .collect();
+            json!({
+                "counts": page,
+                "total": total,
+                "truncated": total_files > offset + limit,
+            })
+        }
+        _ => {
+            let page: Vec<Value> = all_matches.into_iter().skip(offset).take(limit).collect();
+            json!({
+                "matches": page,
+                "total": total,
+                "truncated": total > offset + limit,
+            })
+        }
+    };
+    ToolOutput {
+        content: payload.to_string(),
+    }
 }

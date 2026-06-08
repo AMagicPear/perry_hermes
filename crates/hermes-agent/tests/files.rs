@@ -705,3 +705,41 @@ async fn search_files_target_files_finds_glob_matches() {
     assert_eq!(files.len(), 1);
     assert!(files[0].as_str().unwrap().ends_with("a.rs"));
 }
+
+#[tokio::test]
+async fn search_files_content_supports_regex_pattern() {
+    // Exercises the ripgrep backend specifically: a regex alternation
+    // pattern that the pure-Rust walk fallback would treat as a literal
+    // string and miss. If this test fails with `expected 2 matches`,
+    // ripgrep is not installed — install it (`brew install ripgrep`,
+    // `apt install ripgrep`) so the rg backend can take over.
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.txt"), "alpha\nbeta\ngamma\n").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "alpha|gamma",
+                "path": dir.path().to_str().unwrap()
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let matches = v["matches"].as_array().unwrap();
+    assert_eq!(
+        matches.len(),
+        2,
+        "expected regex 'alpha|gamma' to match both 'alpha' and 'gamma' — install ripgrep to enable the rg backend"
+    );
+    let contents: Vec<&str> = matches
+        .iter()
+        .map(|m| m["content"].as_str().unwrap())
+        .collect();
+    assert!(contents.contains(&"alpha"));
+    assert!(contents.contains(&"gamma"));
+    assert!(!contents.contains(&"beta"));
+}
