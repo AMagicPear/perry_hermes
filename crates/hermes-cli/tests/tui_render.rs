@@ -268,7 +268,7 @@ fn reasoning_rows_are_dimmed_and_prefixed() {
         .expect("expected reasoning row");
     let row = row_at(&buffer, row_y);
     assert!(
-        row.contains("… thinking step"),
+        row.contains("✦ thinking step"),
         "expected reasoning prefix: {row:?}"
     );
 

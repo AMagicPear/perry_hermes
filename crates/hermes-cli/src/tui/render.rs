@@ -342,8 +342,7 @@ fn reasoning_block(text: &str, width: u16) -> Vec<Line<'static>> {
     let normalized = text.replace("\r\n", "\n");
     let mut out = Vec::new();
     for (idx, segment) in normalized.split('\n').enumerate() {
-        let prefix = if idx == 0 { "… " } else { "  " };
-        let wrapped = wrap_to_width(segment, width.saturating_sub(prefix.len() as u16));
+        let prefix = if idx == 0 { "✦ " } else { "  " };        let wrapped = wrap_to_width(segment, width.saturating_sub(prefix.len() as u16));
         for (line_idx, line) in wrapped.into_iter().enumerate() {
             let content = line
                 .spans
@@ -355,7 +354,7 @@ fn reasoning_block(text: &str, width: u16) -> Vec<Line<'static>> {
         }
     }
     if out.is_empty() {
-        out.push(Line::from("…").dim());
+        out.push(Line::from("✦").dim());
     }
     out
 }
