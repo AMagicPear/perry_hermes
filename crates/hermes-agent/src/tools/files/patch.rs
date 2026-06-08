@@ -361,14 +361,28 @@ impl OpKind {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct Hunk {
+    /// Lines (without trailing newline) that must appear contiguously in
+    /// the existing file. Built from ` ` and `-` hunk lines.
+    search: Vec<String>,
+    /// Lines that replace the matched search range. Built from ` ` and
+    /// `+` hunk lines.
+    replace: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 struct V4aOp {
     kind: OpKind,
     path: String,
-    /// For Update: the body of the file (already rendered back into a single string).
-    /// For Add: same.
+    /// For Add: the new file content (with trailing newlines preserved).
+    /// For Update: unused — hunks are applied to the existing file.
     /// For Delete/Move: unused.
     body: String,
+    /// For Update: one or more hunks to apply to the existing file. Each
+    /// hunk is matched against the file's current content and replaced
+    /// in place. Lines outside the matched range are preserved.
+    hunks: Vec<Hunk>,
     /// For Move: the destination path. For others: None.
     move_to: Option<String>,
 }
@@ -398,6 +412,7 @@ fn parse_v4a(body: &str) -> Result<Vec<V4aOp>, String> {
                 kind: OpKind::Add,
                 path,
                 body: String::new(),
+                hunks: Vec::new(),
                 move_to: None,
             });
             mode = 2;
@@ -412,6 +427,7 @@ fn parse_v4a(body: &str) -> Result<Vec<V4aOp>, String> {
                 kind: OpKind::Update,
                 path,
                 body: String::new(),
+                hunks: Vec::new(),
                 move_to: None,
             });
             mode = 1;
@@ -426,6 +442,7 @@ fn parse_v4a(body: &str) -> Result<Vec<V4aOp>, String> {
                 kind: OpKind::Delete,
                 path,
                 body: String::new(),
+                hunks: Vec::new(),
                 move_to: None,
             });
             mode = 0;
@@ -440,6 +457,7 @@ fn parse_v4a(body: &str) -> Result<Vec<V4aOp>, String> {
                 kind: OpKind::Move,
                 path,
                 body: String::new(),
+                hunks: Vec::new(),
                 move_to: None,
             });
             mode = 0;
@@ -473,24 +491,34 @@ fn parse_v4a(body: &str) -> Result<Vec<V4aOp>, String> {
                 }
             }
             OpKind::Update => {
-                if mode == 1 {
-                    if trimmed != "@@" {
-                        return Err("Update File requires '@@' marker before hunks".to_string());
-                    }
+                if trimmed == "@@" {
+                    // Start a new hunk. The first `@@` after `*** Update File:`
+                    // transitions mode 1 → 2 and opens the first hunk; later
+                    // `@@`s close the current hunk and open the next.
+                    cur.hunks.push(Hunk::default());
                     mode = 2;
                     continue;
                 }
+                if mode == 1 {
+                    return Err("Update File requires '@@' marker before hunks".to_string());
+                }
+                // Body / hunk lines apply to the current op.
+                let cur_hunk = match cur.hunks.last_mut() {
+                    Some(h) => h,
+                    None => {
+                        return Err("Update File hunk lines must follow '@@'".to_string());
+                    }
+                };
                 if let Some(rest) = line.strip_prefix(' ') {
-                    cur.body.push_str(rest);
-                    cur.body.push('\n');
+                    cur_hunk.search.push(rest.to_string());
+                    cur_hunk.replace.push(rest.to_string());
                 } else if let Some(rest) = line.strip_prefix('-') {
-                    // Deleted lines: skip (we're building the new file from the kept/added lines).
-                    let _ = rest;
+                    cur_hunk.search.push(rest.to_string());
                 } else if let Some(rest) = line.strip_prefix('+') {
-                    cur.body.push_str(rest);
-                    cur.body.push('\n');
+                    cur_hunk.replace.push(rest.to_string());
                 } else if line.is_empty() {
-                    cur.body.push('\n');
+                    cur_hunk.search.push(String::new());
+                    cur_hunk.replace.push(String::new());
                 } else {
                     return Err(
                         "Update File hunk lines must start with ' ', '-', or '+'".to_string()
@@ -543,8 +571,19 @@ fn apply_v4a_op(
             Ok(Some(resolved))
         }
         OpKind::Update => {
+            if op.hunks.is_empty() {
+                return Err("Update File has no hunks (missing '@@' marker)".to_string());
+            }
+            let original = match std::fs::read_to_string(&resolved) {
+                Ok(s) => s,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(format!("Update target file not found: {}", op.path));
+                }
+                Err(e) => return Err(format!("read failed: {e}")),
+            };
+            let updated = apply_hunks_to_text(&original, &op.hunks, &op.path)?;
             let tmp = temp_sibling(&resolved)?;
-            std::fs::write(&tmp, op.body.as_bytes())
+            std::fs::write(&tmp, updated.as_bytes())
                 .map_err(|e| format!("failed to write temp file: {e}"))?;
             std::fs::rename(&tmp, &resolved).map_err(|e| format!("atomic rename failed: {e}"))?;
             Ok(Some(resolved))
@@ -580,6 +619,101 @@ fn apply_v4a_op(
             Ok(Some(dest_path))
         }
     }
+}
+
+/// Apply V4A hunks to a file's text content. Lines outside the matched
+/// range are preserved verbatim; only the matched range is replaced by
+/// the hunk's `replace` lines. Each hunk is matched against the file
+/// text as it stands after the previous hunk was applied, so multiple
+/// hunks compose in order.
+///
+/// The text is split into lines without trailing newlines for matching,
+/// then re-joined. A trailing newline is preserved if the original had
+/// one, so we don't accidentally append a blank line to files that
+/// weren't newline-terminated.
+fn apply_hunks_to_text(
+    original: &str,
+    hunks: &[Hunk],
+    path_for_error: &str,
+) -> Result<String, String> {
+    let has_trailing_newline = original.ends_with('\n');
+    // split('\n') leaves an empty trailing string when the file ends
+    // with '\n'; drop it so each "line" is a real line.
+    let raw_lines: Vec<&str> = original.split('\n').collect();
+    let mut lines: Vec<String> = if has_trailing_newline {
+        raw_lines[..raw_lines.len() - 1]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    } else {
+        raw_lines.iter().map(|s| s.to_string()).collect()
+    };
+
+    for (hunk_idx, hunk) in hunks.iter().enumerate() {
+        if hunk.search.is_empty() {
+            return Err(format!(
+                "hunk #{} for '{path_for_error}' has no search context \
+                 (every line is '+'); include a context (' ') or deletion ('-') line to anchor the position",
+                hunk_idx + 1
+            ));
+        }
+
+        // Count occurrences to detect ambiguity before we splice.
+        let occurrences = count_subsequence(&lines, &hunk.search);
+        if occurrences == 0 {
+            return Err(format!(
+                "hunk #{} for '{path_for_error}' did not apply: search text not found in file. \
+                 Re-read the file to confirm current contents, or include more context lines.",
+                hunk_idx + 1
+            ));
+        }
+        if occurrences > 1 {
+            return Err(format!(
+                "hunk #{} for '{path_for_error}' matched {occurrences} locations. \
+                 Add more context lines to make the match unique.",
+                hunk_idx + 1
+            ));
+        }
+
+        // Find the single match and splice.
+        let pos =
+            find_subsequence(&lines, &hunk.search).expect("occurrences > 0 guarantees a match");
+        lines.splice(pos..pos + hunk.search.len(), hunk.replace.iter().cloned());
+    }
+
+    let mut out = lines.join("\n");
+    if has_trailing_newline {
+        out.push('\n');
+    }
+    Ok(out)
+}
+
+fn find_subsequence<T: PartialEq>(haystack: &[T], needle: &[T]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    if haystack.len() < needle.len() {
+        return None;
+    }
+    for start in 0..=haystack.len() - needle.len() {
+        if &haystack[start..start + needle.len()] == needle {
+            return Some(start);
+        }
+    }
+    None
+}
+
+fn count_subsequence<T: PartialEq>(haystack: &[T], needle: &[T]) -> usize {
+    if needle.is_empty() {
+        return 0;
+    }
+    let mut count = 0;
+    let mut start = 0;
+    while let Some(pos) = find_subsequence(&haystack[start..], needle) {
+        count += 1;
+        start += pos + needle.len();
+    }
+    count
 }
 
 /// Accept the V4A end-of-patch marker in any of the common shapes:

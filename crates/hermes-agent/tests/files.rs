@@ -808,6 +808,50 @@ async fn search_files_content_supports_regex_pattern() {
 }
 
 #[tokio::test]
+async fn search_files_content_includes_context_lines() {
+    // TOOL_TEST_REPORT #2: `context` parameter is now honored via
+    // `rg -C N`. Each match entry carries `context.before` (up to N
+    // preceding lines) and `context.after` (up to N following lines).
+    let dir = TempDir::new().unwrap();
+    std::fs::write(
+        dir.path().join("a.txt"),
+        "alpha\nbeta MATCH here\ngamma\ndelta MATCH too\nepsilon\n",
+    )
+    .unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "MATCH",
+                "path": dir.path().to_str().unwrap(),
+                "context": 1
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let matches = v["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 2);
+
+    let first = &matches[0];
+    assert_eq!(first["content"], "beta MATCH here");
+    let before = first["context"]["before"].as_array().unwrap();
+    let after = first["context"]["after"].as_array().unwrap();
+    assert_eq!(before.len(), 1, "expected 1 before-context line");
+    assert_eq!(before[0], "alpha");
+    assert_eq!(after.len(), 1, "expected 1 after-context line");
+    assert_eq!(after[0], "gamma");
+
+    let second = &matches[1];
+    assert_eq!(second["content"], "delta MATCH too");
+    assert_eq!(second["context"]["before"][0], "gamma");
+    assert_eq!(second["context"]["after"][0], "epsilon");
+}
+
+#[tokio::test]
 async fn patch_v4a_accepts_end_of_patch_with_optional_index() {
     // D4/D5: the parser must accept the "*** End of Patch" variant
     // (with "of") and an optional "[N]" suffix. Both forms appear in
@@ -829,5 +873,91 @@ async fn patch_v4a_accepts_end_of_patch_with_optional_index() {
     assert_eq!(
         std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
         "hello\n"
+    );
+}
+
+#[tokio::test]
+async fn patch_v4a_update_preserves_unmentioned_lines() {
+    // D6 / TOOL_TEST_REPORT #1: V4A `*** Update File:` must apply the
+    // hunk to the existing file, not replace the whole file with just
+    // the hunk's content. Without the fix, lines that exist in the file
+    // but are not mentioned in the hunk are silently dropped — that's
+    // data loss when a model thinks it's doing a targeted edit.
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("v4a_test.txt");
+    std::fs::write(
+        &path,
+        "line1: keep me\nline2: change me\nline3: keep me too\n\
+         line4: also keep\nline5: change this\nline6: final keep\n",
+    )
+    .unwrap();
+
+    let patch = "\
+*** Begin Patch
+*** Update File: v4a_test.txt
+@@
+ line1: keep me
+-line2: change me
++line2: CHANGED
+ line3: keep me too
+*** End Patch";
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({"mode": "patch", "patch": patch}),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should succeed");
+    let v = parse(&out);
+    assert_eq!(v["success"].as_bool(), Some(true), "output: {v}");
+
+    let on_disk = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        on_disk,
+        "line1: keep me\nline2: CHANGED\nline3: keep me too\n\
+         line4: also keep\nline5: change this\nline6: final keep\n",
+        "lines 4-6 must be preserved (V4A hunk apply, not full-file replace)"
+    );
+}
+
+#[tokio::test]
+async fn patch_v4a_update_fails_clearly_when_hunk_not_found() {
+    // Anchor lines from the hunk don't appear in the file → reject
+    // rather than silently producing a wrong file.
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("x.txt");
+    std::fs::write(&path, "alpha\nbeta\ngamma\n").unwrap();
+
+    let patch = "\
+*** Begin Patch
+*** Update File: x.txt
+@@
+ nonexistent line
+-zzz
++ZZZ
+*** End Patch";
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({"mode": "patch", "patch": patch}),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should return JSON");
+    let v = parse(&out);
+    assert_eq!(
+        v["success"].as_bool(),
+        Some(false),
+        "hunk with non-existent anchor should fail, got: {v}"
+    );
+    // File must be unchanged
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap(),
+        "alpha\nbeta\ngamma\n"
     );
 }

@@ -3,9 +3,9 @@
 //! Model contract is aligned with Python hermes-agent's `search_files_tool`:
 //! the same parameter names, the same `target` enum (`content` / `files`),
 //! and the same `output_mode` enum (`content` / `files_only` / `count`).
-//! Patterns are treated as literal substrings on the first pass — no regex
-//! yet, but the result envelope is shaped so a regex backend can be
-//! dropped in later.
+//! Content search is ripgrep-backed (regex by default). When `rg` is not
+//! installed, the tool falls back to a pure-Rust walk that does literal
+//! substring matching — the result envelope is the same either way.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -97,7 +97,7 @@ impl Tool for SearchFilesTool {
                 "context": {
                     "type": "integer",
                     "minimum": 0,
-                    "description": "Lines of surrounding context to include around each match. Not yet implemented."
+                    "description": "Number of context lines to include before and after each match. Each match entry then carries `context.before` and `context.after` arrays. Default 0 (no context)."
                 }
             },
             "required": ["pattern"],
@@ -144,6 +144,7 @@ impl Tool for SearchFilesTool {
             .and_then(|v| v.as_str())
             .unwrap_or("content")
             .to_string();
+        let context = args.get("context").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
 
         let root = match raw_path {
             Some(p) => match resolve_user_path(&p, &ctx.working_dir) {
@@ -177,6 +178,7 @@ impl Tool for SearchFilesTool {
                 &pattern,
                 file_glob.as_deref(),
                 &output_mode,
+                context,
                 limit,
                 offset,
             )
@@ -234,11 +236,21 @@ async fn content_mode(
     pattern: &str,
     file_glob: Option<&str>,
     output_mode: &str,
+    context: usize,
     limit: usize,
     offset: usize,
 ) -> ToolOutput {
     if rg_available() {
-        return rg_content_search(root, pattern, file_glob, output_mode, limit, offset).await;
+        return rg_content_search(
+            root,
+            pattern,
+            file_glob,
+            output_mode,
+            context,
+            limit,
+            offset,
+        )
+        .await;
     }
     content_mode_walk(root, pattern, file_glob, output_mode, limit, offset)
 }
@@ -428,6 +440,7 @@ async fn rg_content_search(
     pattern: &str,
     file_glob: Option<&str>,
     output_mode: &str,
+    context: usize,
     limit: usize,
     offset: usize,
 ) -> ToolOutput {
@@ -439,6 +452,9 @@ async fn rg_content_search(
         .arg(root);
     if let Some(g) = file_glob {
         cmd.arg("-g").arg(g);
+    }
+    if context > 0 {
+        cmd.arg("-C").arg(context.to_string());
     }
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
@@ -463,6 +479,13 @@ async fn rg_content_search(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut all_matches: Vec<Value> = Vec::new();
+    // When `context` is set, rg emits a `context` event for each line
+    // surrounding a match. We attribute them to the nearest match: lines
+    // before the next match become that match's `context.before`; the
+    // N lines immediately after a match become its `context.after`.
+    let mut pending_before: std::collections::VecDeque<String> = std::collections::VecDeque::new();
+    let mut last_match_idx: Option<usize> = None;
+    let mut after_remaining: usize = 0;
     for line in stdout.lines() {
         if line.is_empty() {
             continue;
@@ -471,20 +494,54 @@ async fn rg_content_search(
             Ok(v) => v,
             Err(_) => continue,
         };
-        if v["type"].as_str() != Some("match") {
-            continue;
+        match v["type"].as_str() {
+            Some("context") => {
+                let content = v["data"]["lines"]["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .trim_end_matches('\n')
+                    .to_string();
+                if after_remaining > 0 {
+                    // Line is also within the previous match's after window.
+                    if let Some(idx) = last_match_idx {
+                        let after = all_matches[idx]["context"]["after"]
+                            .as_array_mut()
+                            .expect("context.after array");
+                        after.push(Value::String(content.clone()));
+                    }
+                    after_remaining -= 1;
+                }
+                // Also keep it in the rolling "before" buffer for the next
+                // match. When two matches are within 2N lines of each
+                // other, the lines between them appear in both arrays —
+                // that's the standard grep -C semantics.
+                pending_before.push_back(content);
+                while pending_before.len() > context {
+                    pending_before.pop_front();
+                }
+            }
+            Some("match") => {
+                let path = v["data"]["path"]["text"].as_str().unwrap_or("").to_string();
+                let line_no = v["data"]["line_number"].as_u64().unwrap_or(0);
+                let raw_line = v["data"]["lines"]["text"].as_str().unwrap_or("");
+                let content = raw_line.trim_end_matches('\n').to_string();
+                let column = v["data"]["submatches"][0]["start"].as_u64().unwrap_or(0) as usize + 1;
+                let before: Vec<Value> = pending_before.drain(..).map(Value::String).collect();
+                all_matches.push(json!({
+                    "path": path,
+                    "line": line_no,
+                    "column": column,
+                    "content": content,
+                    "context": {
+                        "before": before,
+                        "after": Vec::<Value>::new(),
+                    }
+                }));
+                last_match_idx = Some(all_matches.len() - 1);
+                after_remaining = context;
+            }
+            _ => {}
         }
-        let path = v["data"]["path"]["text"].as_str().unwrap_or("").to_string();
-        let line_no = v["data"]["line_number"].as_u64().unwrap_or(0);
-        let raw_line = v["data"]["lines"]["text"].as_str().unwrap_or("");
-        let content = raw_line.trim_end_matches('\n').to_string();
-        let column = v["data"]["submatches"][0]["start"].as_u64().unwrap_or(0) as usize + 1;
-        all_matches.push(json!({
-            "path": path,
-            "line": line_no,
-            "column": column,
-            "content": content,
-        }));
     }
     let total = all_matches.len();
 
