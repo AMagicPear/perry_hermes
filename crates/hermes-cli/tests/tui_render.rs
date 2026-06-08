@@ -5,10 +5,10 @@ use perry_hermes_cli::tui::app::App;
 use perry_hermes_cli::tui::event::{AppMode, RenderedLine};
 use perry_hermes_cli::tui::input::handle_key;
 use perry_hermes_cli::tui::render::render;
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Position;
 use ratatui::style::{Color, Modifier};
-use ratatui::Terminal;
 use std::time::{Duration, Instant};
 
 fn row_at(buffer: &ratatui::buffer::Buffer, y: u16) -> String {
@@ -35,8 +35,8 @@ fn empty_app_renders_input_box_with_arrow_prompt() {
     // The input block is taller now (5 rows). With height 24, input starts at
     // row 18 (24 - 0 - 1 - 5 = 18). The middle usable row is 18 + 1 = 19.
     let _input_inner_y = buffer.area.height.saturating_sub(4); // 24 - 5 + 1 = 20 → hmm
-                                                               // Actually: status at 24-5-1=18, input at 19, inner at 20.
-                                                               // Let's just check the last few rows.
+    // Actually: status at 24-5-1=18, input at 19, inner at 20.
+    // Let's just check the last few rows.
     let rows: Vec<String> = (0..buffer.area.height)
         .map(|y| row_at(&buffer, y))
         .collect();
@@ -369,10 +369,10 @@ fn count_char_in_buffer(buffer: &ratatui::buffer::Buffer, target: &str) -> usize
     let mut count = 0;
     for y in 0..buffer.area.height {
         for x in 0..buffer.area.width {
-            if let Some(cell) = buffer.cell((x, y)) {
-                if cell.symbol() == target {
-                    count += 1;
-                }
+            if let Some(cell) = buffer.cell((x, y))
+                && cell.symbol() == target
+            {
+                count += 1;
             }
         }
     }

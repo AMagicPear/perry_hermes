@@ -1,8 +1,8 @@
 use std::time::Duration;
 
 use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, PerryHermesConfig};
-use perry_hermes_core::message::Content;
 use perry_hermes_core::LoopError;
+use perry_hermes_core::message::Content;
 use perry_hermes_providers::OpenAiProvider;
 use tokio_util::sync::CancellationToken;
 

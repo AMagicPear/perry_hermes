@@ -11,9 +11,9 @@
 use httpmock::prelude::*;
 use tokio_util::sync::CancellationToken;
 
-use perry_hermes_core::message::{Message, Role};
 use perry_hermes_core::Provider;
 use perry_hermes_core::ProviderError;
+use perry_hermes_core::message::{Message, Role};
 use perry_hermes_providers::OpenAiProvider;
 
 fn user_message(text: &str) -> Message {

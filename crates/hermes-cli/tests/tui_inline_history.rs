@@ -1,9 +1,9 @@
 use perry_hermes_agent::LoopEvent;
-use perry_hermes_cli::tui::event::RenderedLine;
-use perry_hermes_cli::tui::history::{line_text, HistoryWrite};
-use perry_hermes_cli::tui::run::run_with_backend;
 use perry_hermes_cli::tui::App;
 use perry_hermes_cli::tui::AppEvent;
+use perry_hermes_cli::tui::event::RenderedLine;
+use perry_hermes_cli::tui::history::{HistoryWrite, line_text};
+use perry_hermes_cli::tui::run::run_with_backend;
 use perry_hermes_core::message::{Message, ToolCall};
 use perry_hermes_core::tool::ToolOutput;
 use ratatui::backend::TestBackend;

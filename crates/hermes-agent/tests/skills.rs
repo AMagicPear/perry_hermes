@@ -268,11 +268,13 @@ async fn skill_view_rejects_plugin_qualified_name() {
         .expect("plugin qualifier returns JSON error");
     let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(false));
-    assert!(v["error"]
-        .as_str()
-        .unwrap()
-        .to_lowercase()
-        .contains("plugin"));
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("plugin")
+    );
 }
 
 #[tokio::test]
@@ -299,11 +301,13 @@ async fn skill_view_returns_ambiguous_error_for_colliding_names() {
         .expect("collision returns JSON error");
     let v = parse(&out);
     assert_eq!(v["success"].as_bool(), Some(false));
-    assert!(v["error"]
-        .as_str()
-        .unwrap()
-        .to_lowercase()
-        .contains("ambiguous"));
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .to_lowercase()
+            .contains("ambiguous")
+    );
 }
 
 #[tokio::test]
@@ -334,29 +338,39 @@ async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
         .expect("view should succeed");
     let v = parse(&out);
     let lf = &v["linked_files"];
-    assert!(lf["references"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|x| x == "references/file.md"));
-    assert!(lf["references"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|x| x == "references/notes.txt"));
-    assert!(lf["templates"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|x| x == "templates/file.md"));
-    assert!(lf["assets"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|x| x == "assets/file.md"));
-    assert!(lf["scripts"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|x| x == "scripts/file.py"));
+    assert!(
+        lf["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "references/file.md")
+    );
+    assert!(
+        lf["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "references/notes.txt")
+    );
+    assert!(
+        lf["templates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "templates/file.md")
+    );
+    assert!(
+        lf["assets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "assets/file.md")
+    );
+    assert!(
+        lf["scripts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x == "scripts/file.py")
+    );
 }

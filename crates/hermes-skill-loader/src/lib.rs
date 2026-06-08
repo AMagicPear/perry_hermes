@@ -204,15 +204,15 @@ fn parse_one(loc: &layout::SkillLocation) -> Option<Skill> {
         );
         return None;
     }
-    if let Some(cat) = &loc.category {
-        if !validate::is_valid_category(cat) {
-            tracing::warn!(
-                "skipping {}: invalid category {:?} (skipping entire subtree)",
-                loc.skill_md.display(),
-                cat
-            );
-            return None;
-        }
+    if let Some(cat) = &loc.category
+        && !validate::is_valid_category(cat)
+    {
+        tracing::warn!(
+            "skipping {}: invalid category {:?} (skipping entire subtree)",
+            loc.skill_md.display(),
+            cat
+        );
+        return None;
     }
 
     // Directory basename must equal `name` byte-for-byte.

@@ -1,9 +1,9 @@
 use futures::StreamExt;
 use httpmock::prelude::*;
+use perry_hermes_core::ProviderError;
 use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{FinishReason, Provider};
 use perry_hermes_core::registry::ToolSchema;
-use perry_hermes_core::ProviderError;
 use perry_hermes_providers::AnthropicProvider;
 use tokio_util::sync::CancellationToken;
 

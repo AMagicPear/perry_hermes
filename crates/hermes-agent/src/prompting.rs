@@ -9,8 +9,7 @@ use std::path::{Path, PathBuf};
 
 use perry_hermes_core::message::Message;
 
-pub const DEFAULT_SYSTEM_PROMPT: &str =
-    "You are a careful assistant with access to a `terminal` tool. \
+pub const DEFAULT_SYSTEM_PROMPT: &str = "You are a careful assistant with access to a `terminal` tool. \
 Use it to inspect the system or run shell commands when needed. When you have enough information \
 to answer, give a concise final response — do not call tools again.";
 

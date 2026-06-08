@@ -6,8 +6,8 @@
 
 use async_trait::async_trait;
 
-use crate::message::Message;
 use crate::Usage;
+use crate::message::Message;
 
 /// Result of one compression pass.
 #[derive(Debug, Clone)]

@@ -19,7 +19,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::tui::app::App;
 use crate::tui::event::{AppEvent, AppMode, RenderedLine};
-use crate::tui::history::{render_history_lines_to_buffer, HistoryWrite};
+use crate::tui::history::{HistoryWrite, render_history_lines_to_buffer};
 use crate::tui::input::handle_key;
 use crate::tui::loop_bridge::apply_loop_event;
 use crate::tui::make_on_event;
@@ -142,12 +142,11 @@ pub async fn run(
                     }
                 }
                 maybe = input_rx.recv() => {
-                    if let Some(ev) = maybe {
-                        if dispatch_event(&mut app, ev, &cancel, None, Some(&mut history))? {
+                    if let Some(ev) = maybe
+                        && dispatch_event(&mut app, ev, &cancel, None, Some(&mut history))? {
                             draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
                             return Ok(());
                         }
-                    }
                 }
             }
         }
@@ -667,11 +666,11 @@ mod tests {
     use super::*;
     use async_trait::async_trait;
     use perry_hermes_agent::{ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind};
+    use perry_hermes_core::ProviderError;
     use perry_hermes_core::message::Message;
     use perry_hermes_core::provider::FinishReason;
     use perry_hermes_core::provider::{CompletionStream, Provider};
     use perry_hermes_core::registry::ToolSchema;
-    use perry_hermes_core::ProviderError;
     use ratatui::layout::Size;
     use std::cell::RefCell;
     use std::rc::Rc;

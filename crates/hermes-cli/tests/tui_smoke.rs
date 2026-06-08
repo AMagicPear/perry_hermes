@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use futures::stream;
 use perry_hermes_agent::AgentRunError;
+use perry_hermes_core::ProviderError;
 use perry_hermes_core::error::LoopError;
 use perry_hermes_core::message::{Content, Message, Role};
 use perry_hermes_core::provider::{
@@ -17,7 +18,6 @@ use perry_hermes_core::provider::{
 };
 use perry_hermes_core::registry::ToolSchema;
 use perry_hermes_core::usage::Usage;
-use perry_hermes_core::ProviderError;
 use ratatui::backend::TestBackend;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

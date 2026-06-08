@@ -157,9 +157,11 @@ async fn read_file_reports_not_found_with_similar_files() {
     assert!(err.contains("not found"), "got error: {err}");
     let similar = v["similar_files"].as_array().expect("similar_files array");
     assert!(!similar.is_empty(), "expected at least one suggestion");
-    assert!(similar
-        .iter()
-        .any(|s| s.as_str().unwrap_or_default().ends_with("alpha.py")));
+    assert!(
+        similar
+            .iter()
+            .any(|s| s.as_str().unwrap_or_default().ends_with("alpha.py"))
+    );
 }
 
 #[tokio::test]
@@ -321,10 +323,12 @@ async fn write_file_rejects_internal_status_text() {
         .await
         .expect("write should return JSON error");
     let v = parse(&out);
-    assert!(v["error"]
-        .as_str()
-        .unwrap()
-        .contains("internal read_file status text"));
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("internal read_file status text")
+    );
 }
 
 #[tokio::test]
@@ -369,10 +373,12 @@ async fn write_file_rejects_perry_hermes_config_path() {
         .await
         .expect("config-path write should return JSON error");
     let v = parse(&out);
-    assert!(v["error"]
-        .as_str()
-        .unwrap()
-        .contains("Perry Hermes config file"));
+    assert!(
+        v["error"]
+            .as_str()
+            .unwrap()
+            .contains("Perry Hermes config file")
+    );
     unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
 }
 

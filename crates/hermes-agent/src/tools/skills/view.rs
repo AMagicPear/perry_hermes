@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use perry_hermes_core::error::ToolError;
 use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::linked_files::discover_linked_files;

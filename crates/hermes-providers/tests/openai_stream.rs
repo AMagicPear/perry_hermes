@@ -3,8 +3,8 @@
 //! per AGENTS.md).
 
 use futures::StreamExt;
-use perry_hermes_core::provider::{FinishReason, Provider};
 use perry_hermes_core::ProviderError;
+use perry_hermes_core::provider::{FinishReason, Provider};
 use perry_hermes_providers::OpenAiProvider;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;

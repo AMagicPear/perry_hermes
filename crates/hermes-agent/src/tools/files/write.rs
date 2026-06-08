@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use perry_hermes_core::error::ToolError;
 use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::tools::support::path::resolve_user_path;
@@ -11,8 +11,7 @@ use super::policy::{
     temp_sibling,
 };
 
-const WRITE_FILE_DESCRIPTION: &str =
-    "Write content to a file, completely replacing existing content. \
+const WRITE_FILE_DESCRIPTION: &str = "Write content to a file, completely replacing existing content. \
 Use this instead of echo/cat heredoc in terminal. Creates parent directories automatically. \
 OVERWRITES the entire file — use 'patch' for targeted edits. Auto-runs syntax checks on \
 .py/.json/.yaml/.toml and other linted languages; only NEW errors introduced by this write \
@@ -89,7 +88,7 @@ impl Tool for WriteFileTool {
             Err(msg) => {
                 return Ok(ToolOutput {
                     content: json!({"error": msg}).to_string(),
-                })
+                });
             }
         };
 
@@ -102,12 +101,10 @@ impl Tool for WriteFileTool {
             .get("cross_profile")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        if !cross_profile {
-            if let Some(msg) = cross_profile_write_message(&resolved) {
-                return Ok(ToolOutput {
-                    content: json!({"error": msg}).to_string(),
-                });
-            }
+        if !cross_profile && let Some(msg) = cross_profile_write_message(&resolved) {
+            return Ok(ToolOutput {
+                content: json!({"error": msg}).to_string(),
+            });
         }
         if is_internal_file_status_text(content) {
             return Ok(ToolOutput {

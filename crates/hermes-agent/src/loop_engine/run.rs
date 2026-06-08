@@ -28,7 +28,7 @@ use perry_hermes_core::tool::ToolContext;
 
 use super::metrics::{prompt_context_tokens_from_usage, validate_args};
 use super::{AgentLoop, AgentRunError, FailedTurn, LoopEvent, LoopMetrics, RunResult};
-use crate::compaction::{try_compact, CompactOutcome};
+use crate::compaction::{CompactOutcome, try_compact};
 use crate::session::AgentSession;
 
 pub(crate) async fn run(
@@ -44,10 +44,10 @@ pub(crate) async fn run(
     let mut metrics = LoopMetrics::default();
     let started = Instant::now();
 
-    if let Some(sys) = &engine.config.system_prompt {
-        if !messages.iter().any(|m| m.role == Role::System) {
-            messages.insert(0, Message::system(sys.clone()));
-        }
+    if let Some(sys) = &engine.config.system_prompt
+        && !messages.iter().any(|m| m.role == Role::System)
+    {
+        messages.insert(0, Message::system(sys.clone()));
     }
 
     loop {

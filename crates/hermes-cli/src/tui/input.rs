@@ -430,13 +430,13 @@ mod tests {
         let mut app = App::new_for_test();
         app.input = "你好世界".to_string();
         app.cursor = 12; // end
-                         // Move left past "界" (3 bytes)
+        // Move left past "界" (3 bytes)
         handle_key(&mut app, key(KeyCode::Left));
         assert_eq!(app.cursor, 9); // before "界"
-                                   // Move left past "世" (3 bytes)
+        // Move left past "世" (3 bytes)
         handle_key(&mut app, key(KeyCode::Left));
         assert_eq!(app.cursor, 6); // before "世界"
-                                   // Insert at cursor
+        // Insert at cursor
         handle_key(&mut app, key(KeyCode::Char(',')));
         assert_eq!(app.input, "你好,世界");
         assert_eq!(app.cursor, 7);

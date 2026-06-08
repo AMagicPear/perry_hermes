@@ -15,7 +15,7 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use perry_hermes_core::error::ToolError;
 use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::tools::support::path::resolve_user_path;
@@ -114,7 +114,7 @@ impl Tool for PatchTool {
             None => {
                 return Ok(ToolOutput {
                     content: json!({"error": "missing 'mode'"}).to_string(),
-                })
+                });
             }
         };
         match mode {
@@ -136,7 +136,7 @@ fn replace_mode(args: &Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError
         None => {
             return Ok(ToolOutput {
                 content: json!({"error": "mode='replace' requires 'path'"}).to_string(),
-            })
+            });
         }
     };
     let old_string = match args.get("old_string").and_then(|v| v.as_str()) {
@@ -144,7 +144,7 @@ fn replace_mode(args: &Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError
         None => {
             return Ok(ToolOutput {
                 content: json!({"error": "mode='replace' requires 'old_string'"}).to_string(),
-            })
+            });
         }
     };
     let new_string = match args.get("new_string").and_then(|v| v.as_str()) {
@@ -152,7 +152,7 @@ fn replace_mode(args: &Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError
         None => {
             return Ok(ToolOutput {
                 content: json!({"error": "mode='replace' requires 'new_string'"}).to_string(),
-            })
+            });
         }
     };
     let replace_all = args
@@ -178,7 +178,7 @@ fn replace_mode(args: &Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError
         Err(msg) => {
             return Ok(ToolOutput {
                 content: json!({"error": msg}).to_string(),
-            })
+            });
         }
     };
     if let Some(msg) = sensitive_write_path_message(path_str, &resolved) {
@@ -186,12 +186,10 @@ fn replace_mode(args: &Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError
             content: json!({"error": msg}).to_string(),
         });
     }
-    if !cross_profile {
-        if let Some(msg) = cross_profile_write_message(&resolved) {
-            return Ok(ToolOutput {
-                content: json!({"error": msg}).to_string(),
-            });
-        }
+    if !cross_profile && let Some(msg) = cross_profile_write_message(&resolved) {
+        return Ok(ToolOutput {
+            content: json!({"error": msg}).to_string(),
+        });
     }
 
     let original = match std::fs::read_to_string(&resolved) {
@@ -248,7 +246,7 @@ fn replace_mode(args: &Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError
         Err(msg) => {
             return Ok(ToolOutput {
                 content: json!({"error": msg}).to_string(),
-            })
+            });
         }
     };
     if let Err(e) = std::fs::write(&tmp, updated.as_bytes()) {
@@ -283,7 +281,7 @@ fn patch_mode(args: &Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> 
         None => {
             return Ok(ToolOutput {
                 content: json!({"error": "mode='patch' requires 'patch'"}).to_string(),
-            })
+            });
         }
     };
     let cross_profile = args
@@ -296,7 +294,7 @@ fn patch_mode(args: &Value, ctx: &ToolContext) -> Result<ToolOutput, ToolError> 
         Err(e) => {
             return Ok(ToolOutput {
                 content: json!({"error": e}).to_string(),
-            })
+            });
         }
     };
 
@@ -553,18 +551,17 @@ fn apply_v4a_op(
     if let Some(msg) = sensitive_write_path_message(&op.path, &resolved) {
         return Err(msg);
     }
-    if !cross_profile {
-        if let Some(msg) = cross_profile_write_message(&resolved) {
-            return Err(msg);
-        }
+    if !cross_profile && let Some(msg) = cross_profile_write_message(&resolved) {
+        return Err(msg);
     }
     match op.kind {
         OpKind::Add => {
-            if let Some(parent) = resolved.parent() {
-                if !parent.as_os_str().is_empty() && !parent.is_dir() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("failed to create parent dir: {e}"))?;
-                }
+            if let Some(parent) = resolved.parent()
+                && !parent.as_os_str().is_empty()
+                && !parent.is_dir()
+            {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed to create parent dir: {e}"))?;
             }
             std::fs::write(&resolved, op.body.as_bytes())
                 .map_err(|e| format!("failed to write file: {e}"))?;
@@ -603,16 +600,15 @@ fn apply_v4a_op(
             if let Some(msg) = sensitive_write_path_message(dest, &dest_path) {
                 return Err(msg);
             }
-            if !cross_profile {
-                if let Some(msg) = cross_profile_write_message(&dest_path) {
-                    return Err(msg);
-                }
+            if !cross_profile && let Some(msg) = cross_profile_write_message(&dest_path) {
+                return Err(msg);
             }
-            if let Some(parent) = dest_path.parent() {
-                if !parent.as_os_str().is_empty() && !parent.is_dir() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("failed to create destination dir: {e}"))?;
-                }
+            if let Some(parent) = dest_path.parent()
+                && !parent.as_os_str().is_empty()
+                && !parent.is_dir()
+            {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("failed to create destination dir: {e}"))?;
             }
             std::fs::rename(&resolved, &dest_path)
                 .map_err(|e| format!("failed to move file: {e}"))?;

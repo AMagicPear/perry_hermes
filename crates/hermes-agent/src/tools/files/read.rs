@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use perry_hermes_core::error::ToolError;
 use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::tools::bash::truncate_output;
@@ -98,7 +98,7 @@ impl Tool for ReadFileTool {
             Err(msg) => {
                 return Ok(ToolOutput {
                     content: json!({"error": msg}).to_string(),
-                })
+                });
             }
         };
 
@@ -108,9 +108,10 @@ impl Tool for ReadFileTool {
             });
         }
 
-        if let Some(ext) = resolved.extension().and_then(|s| s.to_str()) {
-            if is_binary_extension(ext) {
-                return Ok(ToolOutput {
+        if let Some(ext) = resolved.extension().and_then(|s| s.to_str())
+            && is_binary_extension(ext)
+        {
+            return Ok(ToolOutput {
                     content: json!({
                         "error": format!(
                             "Cannot read binary file '{}' (.{}). Use `terminal` to inspect it (e.g. `file {}`, `xxd {}`); no vision tool is available in this runtime.",
@@ -119,7 +120,6 @@ impl Tool for ReadFileTool {
                     })
                     .to_string(),
                 });
-            }
         }
 
         let meta = match std::fs::metadata(&resolved) {

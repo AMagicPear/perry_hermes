@@ -292,13 +292,13 @@ fn perry_hermes_config_path() -> String {
 }
 
 fn normalize_path_string(input: &str) -> String {
-    if let Some(stripped) = input.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
-            return PathBuf::from(home)
-                .join(stripped)
-                .to_string_lossy()
-                .into_owned();
-        }
+    if let Some(stripped) = input.strip_prefix("~/")
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home)
+            .join(stripped)
+            .to_string_lossy()
+            .into_owned();
     }
     input.to_string()
 }

@@ -205,20 +205,20 @@ fn flush_tool_results(wire: &mut Vec<AnthropicMessage>, pending: &mut Vec<Anthro
     }
 
     let results = std::mem::take(pending);
-    if let Some(last) = wire.last_mut() {
-        if last.role == "user" {
-            match &mut last.content {
-                AnthropicMessageContent::Text(text) => {
-                    let mut blocks = vec![AnthropicContentBlock::Text {
-                        text: std::mem::take(text),
-                    }];
-                    blocks.extend(results);
-                    last.content = AnthropicMessageContent::Blocks(blocks);
-                }
-                AnthropicMessageContent::Blocks(blocks) => blocks.extend(results),
+    if let Some(last) = wire.last_mut()
+        && last.role == "user"
+    {
+        match &mut last.content {
+            AnthropicMessageContent::Text(text) => {
+                let mut blocks = vec![AnthropicContentBlock::Text {
+                    text: std::mem::take(text),
+                }];
+                blocks.extend(results);
+                last.content = AnthropicMessageContent::Blocks(blocks);
             }
-            return;
+            AnthropicMessageContent::Blocks(blocks) => blocks.extend(results),
         }
+        return;
     }
 
     wire.push(AnthropicMessage {

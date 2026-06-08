@@ -1,14 +1,14 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 use futures::stream;
+use perry_hermes_core::ProviderError;
 use perry_hermes_core::message::{Content, Message};
 use perry_hermes_core::provider::{
     Completion, CompletionDelta, CompletionStream, Provider, ToolCallDelta,
 };
 use perry_hermes_core::registry::ToolSchema;
-use perry_hermes_core::ProviderError;
 use tokio_util::sync::CancellationToken;
 
 pub struct ScriptedProvider {

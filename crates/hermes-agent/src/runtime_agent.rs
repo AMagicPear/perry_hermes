@@ -254,7 +254,7 @@ mod tests {
     use perry_hermes_core::registry::{InMemoryRegistry, ToolSchema};
     use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
     use perry_hermes_core::{ProviderError, ToolError, Usage};
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     use tokio_util::sync::CancellationToken;
 
     use crate::config::{ModelConfig, ProviderConfig, ProviderKind};

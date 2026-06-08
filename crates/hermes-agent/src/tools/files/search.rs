@@ -13,7 +13,7 @@ use std::sync::OnceLock;
 use async_trait::async_trait;
 use perry_hermes_core::error::ToolError;
 use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use crate::tools::support::path::resolve_user_path;
@@ -120,7 +120,7 @@ impl Tool for SearchFilesTool {
             _ => {
                 return Ok(ToolOutput {
                     content: json!({"error": "missing 'pattern'"}).to_string(),
-                })
+                });
             }
         };
         let target = args
@@ -152,7 +152,7 @@ impl Tool for SearchFilesTool {
                 Err(msg) => {
                     return Ok(ToolOutput {
                         content: json!({"error": msg}).to_string(),
-                    })
+                    });
                 }
             },
             None => ctx.working_dir.clone(),
@@ -270,10 +270,10 @@ fn content_mode_walk(
     let mut files_with_matches: std::collections::BTreeSet<String> =
         std::collections::BTreeSet::new();
     for path in all_files {
-        if let Some(ext) = path.extension().and_then(|s| s.to_str()) {
-            if is_binary_extension(ext) {
-                continue;
-            }
+        if let Some(ext) = path.extension().and_then(|s| s.to_str())
+            && is_binary_extension(ext)
+        {
+            continue;
         }
         let raw = match std::fs::read_to_string(&path) {
             Ok(s) => s,
@@ -465,7 +465,7 @@ async fn rg_content_search(
         Err(e) => {
             return ToolOutput {
                 content: json!({"error": format!("rg spawn failed: {e}")}).to_string(),
-            }
+            };
         }
     };
     // rg exit codes: 0 = matches, 1 = no matches, ≥2 = error.

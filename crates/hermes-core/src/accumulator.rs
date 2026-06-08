@@ -87,10 +87,10 @@ impl StreamAccumulator {
     /// them before handing the message to a provider that expects an object.
     fn parse_string_arguments(tool_calls: &mut BTreeMap<usize, ToolCall>) {
         for tc in tool_calls.values_mut() {
-            if let serde_json::Value::String(s) = &tc.arguments {
-                if let Ok(parsed) = serde_json::from_str(s) {
-                    tc.arguments = parsed;
-                }
+            if let serde_json::Value::String(s) = &tc.arguments
+                && let Ok(parsed) = serde_json::from_str(s)
+            {
+                tc.arguments = parsed;
             }
         }
     }

@@ -11,8 +11,8 @@
 use bytes::Bytes;
 use futures::{Stream, StreamExt};
 
-use perry_hermes_core::provider::{CompletionDelta, FinishReason, ToolCallDelta};
 use perry_hermes_core::ProviderError;
+use perry_hermes_core::provider::{CompletionDelta, FinishReason, ToolCallDelta};
 
 use crate::http::transport_error_message;
 
