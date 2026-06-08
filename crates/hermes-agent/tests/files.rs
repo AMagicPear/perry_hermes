@@ -108,6 +108,33 @@ async fn read_file_rejects_known_binary_extension() {
     let v = parse(&out);
     let err = v["error"].as_str().unwrap_or_default();
     assert!(err.to_lowercase().contains("binary"), "got error: {err}");
+    assert!(
+        !err.contains("vision_analyze"),
+        "binary error should not recommend vision_analyze (D15) — got: {err}"
+    );
+}
+
+#[tokio::test]
+async fn read_file_errors_when_offset_past_eof() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("small.txt");
+    std::fs::write(&path, "a\nb\nc\n").unwrap();
+
+    let tool = ReadFileTool::new();
+    let out = tool
+        .execute(
+            json!({ "path": path.to_str().unwrap(), "offset": 100, "limit": 10 }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("read should return JSON");
+    let v = parse(&out);
+    let err = v["error"].as_str().unwrap_or_default();
+    assert!(
+        err.contains("past end of file"),
+        "expected 'past end of file' error, got: {err}"
+    );
 }
 
 #[tokio::test]
@@ -707,6 +734,42 @@ async fn search_files_target_files_finds_glob_matches() {
 }
 
 #[tokio::test]
+async fn search_files_target_files_applies_file_glob() {
+    // D7: file_glob is honored in target='files' mode too, not just
+    // target='content'. Without the fix, all files in the directory are
+    // returned and the toml/rs split is lost.
+    let dir = TempDir::new().unwrap();
+    std::fs::write(dir.path().join("a.toml"), "").unwrap();
+    std::fs::write(dir.path().join("b.txt"), "").unwrap();
+    std::fs::write(dir.path().join("c.toml"), "").unwrap();
+
+    let tool = SearchFilesTool::new();
+    let out = tool
+        .execute(
+            json!({
+                "pattern": "*",
+                "target": "files",
+                "path": dir.path().to_str().unwrap(),
+                "file_glob": "*.toml"
+            }),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("search should succeed");
+    let v = parse(&out);
+    let files = v["files"].as_array().unwrap();
+    assert_eq!(
+        files.len(),
+        2,
+        "file_glob='*.toml' should filter to the two .toml files"
+    );
+    for f in files {
+        assert!(f.as_str().unwrap().ends_with(".toml"));
+    }
+}
+
+#[tokio::test]
 async fn search_files_content_supports_regex_pattern() {
     // Exercises the ripgrep backend specifically: a regex alternation
     // pattern that the pure-Rust walk fallback would treat as a literal
@@ -742,4 +805,29 @@ async fn search_files_content_supports_regex_pattern() {
     assert!(contents.contains(&"alpha"));
     assert!(contents.contains(&"gamma"));
     assert!(!contents.contains(&"beta"));
+}
+
+#[tokio::test]
+async fn patch_v4a_accepts_end_of_patch_with_optional_index() {
+    // D4/D5: the parser must accept the "*** End of Patch" variant
+    // (with "of") and an optional "[N]" suffix. Both forms appear in
+    // documentation and existing tools.
+    let dir = TempDir::new().unwrap();
+    let patch = "*** Begin Patch\n*** Add File: a.txt\n+hello\n*** End of Patch [0]";
+
+    let tool = PatchTool::new();
+    let out = tool
+        .execute(
+            json!({"mode": "patch", "patch": patch}),
+            ctx(dir.path().to_path_buf()),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("patch should succeed");
+    let v = parse(&out);
+    assert_eq!(v["success"].as_bool(), Some(true), "output: {v}");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("a.txt")).unwrap(),
+        "hello\n"
+    );
 }

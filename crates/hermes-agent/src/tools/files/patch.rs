@@ -386,7 +386,7 @@ fn parse_v4a(body: &str) -> Result<Vec<V4aOp>, String> {
 
     for line in lines {
         let trimmed = line.trim_start();
-        if trimmed.starts_with("*** End Patch") {
+        if is_v4a_end_marker(trimmed) {
             break;
         }
         if let Some(rest) = trimmed.strip_prefix("*** Add File:") {
@@ -580,6 +580,21 @@ fn apply_v4a_op(
             Ok(Some(dest_path))
         }
     }
+}
+
+/// Accept the V4A end-of-patch marker in any of the common shapes:
+/// `*** End Patch`, `*** End of Patch`, with or without a trailing
+/// `[N]` index. The exact `*** End Patch` form is the design-doc
+/// spelling; the others show up in documentation, tooling, and
+/// pre-existing patches.
+fn is_v4a_end_marker(trimmed: &str) -> bool {
+    if !trimmed.starts_with("*** End") {
+        return false;
+    }
+    // The body must contain the word "Patch" so we don't accept a stray
+    // `*** End` line. `[N]` index and trailing whitespace are allowed.
+    let after = trimmed["*** End".len()..].trim_start();
+    after.starts_with("Patch") || after.starts_with("of Patch")
 }
 
 /// Render a minimal unified-diff style representation of the change.

@@ -165,7 +165,13 @@ impl Tool for SearchFilesTool {
         }
 
         match target.as_str() {
-            "files" => Ok(files_mode(&root, &pattern, limit, offset)),
+            "files" => Ok(files_mode(
+                &root,
+                &pattern,
+                file_glob.as_deref(),
+                limit,
+                offset,
+            )),
             "content" => Ok(content_mode(
                 &root,
                 &pattern,
@@ -185,9 +191,15 @@ impl Tool for SearchFilesTool {
     }
 }
 
-fn files_mode(root: &Path, pattern: &str, limit: usize, offset: usize) -> ToolOutput {
+fn files_mode(
+    root: &Path,
+    pattern: &str,
+    file_glob: Option<&str>,
+    limit: usize,
+    offset: usize,
+) -> ToolOutput {
     let mut all_files: Vec<PathBuf> = Vec::new();
-    collect_files(root, &mut all_files, None);
+    collect_files(root, &mut all_files, file_glob);
     let mut matched: Vec<PathBuf> = all_files
         .into_iter()
         .filter(|p| {
