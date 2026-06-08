@@ -3,22 +3,30 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent};
+use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, SessionEntry, SessionRegistry};
+use perry_hermes_core::commands::Command;
+use perry_hermes_core::Message;
 
 use crate::adapter::PlatformAdapter;
 use crate::config::GatewayConfig;
 use crate::event::GatewayEvent;
-use crate::session_registry::SessionRegistry;
+
+/// Build a deterministic session key from a gateway event.
+///
+/// Format: `{platform}:{chat_type}:{chat_id}[:{thread_id}]`
+pub fn build_key(event: &GatewayEvent) -> String {
+    let mut key = format!("{}:{}:{}", event.platform, event.chat_type, event.chat_id);
+    if let Some(thread_id) = &event.thread_id {
+        key.push(':');
+        key.push_str(thread_id);
+    }
+    key
+}
 
 /// Central orchestrator that bridges platform adapters with the agent runtime.
-///
-/// `GatewayRunner` owns the [`AIAgent`] and [`SessionRegistry`], and provides
-/// `handle_event()` for adapters to dispatch incoming messages. It follows the
-/// same architecture as Python's `GatewayRunner` but scoped to the Rust
-/// agent's API surface.
 pub struct GatewayRunner {
     agent: Arc<AIAgent>,
-    sessions: SessionRegistry,
+    sessions: Arc<SessionRegistry>,
     config: GatewayConfig,
 }
 
@@ -29,28 +37,28 @@ pub enum GatewayError {
     Unauthorized { platform: String, user_id: String },
     #[error("agent run failed: {0}")]
     AgentRun(#[from] AgentRunError),
-    #[error("session error: {0}")]
-    Session(String),
 }
 
 /// Response from processing a gateway event.
 #[derive(Debug)]
 pub enum GatewayResponse {
-    /// A text response to send back to the user.
-    Text(String),
-    /// A command was handled; the adapter should send the inner text.
-    CommandHandled(String),
+    /// Text to send back to the user.
+    Reply(String),
     /// The event was ignored (e.g. unauthorized user, empty text).
     Ignored,
 }
 
 impl GatewayRunner {
     pub fn new(agent: Arc<AIAgent>, config: GatewayConfig) -> Self {
-        let sessions = SessionRegistry::new(
+        let system_message = config
+            .system_prompt
+            .as_deref()
+            .map(Message::system);
+        let sessions = Arc::new(SessionRegistry::new(
             config.sessions_dir.clone(),
             config.working_dir.clone(),
-            config.system_prompt.clone(),
-        );
+            system_message,
+        ));
         Self {
             agent,
             sessions,
@@ -62,7 +70,7 @@ impl GatewayRunner {
     pub fn with_registry(
         agent: Arc<AIAgent>,
         config: GatewayConfig,
-        sessions: SessionRegistry,
+        sessions: Arc<SessionRegistry>,
     ) -> Self {
         Self {
             agent,
@@ -71,13 +79,13 @@ impl GatewayRunner {
         }
     }
 
-    /// Access the underlying agent (for manual compaction, etc.).
+    /// Access the underlying agent.
     pub fn agent(&self) -> &Arc<AIAgent> {
         &self.agent
     }
 
     /// Access the session registry.
-    pub fn sessions(&self) -> &SessionRegistry {
+    pub fn sessions(&self) -> &Arc<SessionRegistry> {
         &self.sessions
     }
 
@@ -87,9 +95,6 @@ impl GatewayRunner {
     }
 
     /// Process an incoming event from any platform adapter.
-    ///
-    /// Returns a [`GatewayResponse`] indicating what the adapter should do.
-    /// The adapter is responsible for sending the response back to the user.
     pub async fn handle_event(&self, event: GatewayEvent) -> Result<GatewayResponse, GatewayError> {
         // Authorization check
         if !self.config.is_user_allowed(&event.platform, &event.user_id) {
@@ -105,22 +110,20 @@ impl GatewayRunner {
             return Ok(GatewayResponse::Ignored);
         }
 
-        // Reset trigger check
-        if self.config.is_reset_trigger(text) {
-            let key = SessionRegistry::build_key(&event);
-            self.sessions.reset(&key).await;
-            info!(session = %key, "session reset by user");
-            return Ok(GatewayResponse::CommandHandled(
-                "Session has been reset.".into(),
-            ));
-        }
-
-        // Command handling
-        if text == "/compact" {
-            return self.handle_compact(&event).await;
-        }
-        if text == "/status" {
-            return self.handle_status(&event).await;
+        // Command handling via the unified Command enum
+        if let Some(cmd) = Command::parse(text) {
+            return match cmd {
+                Command::Reset | Command::New => {
+                    let key = build_key(&event);
+                    self.sessions.reset(&key).await;
+                    info!(session = %key, "session reset by user");
+                    Ok(GatewayResponse::Reply("Session has been reset.".into()))
+                }
+                Command::Compact(_) => self.handle_compact(&event).await,
+                Command::Status => self.handle_status(&event).await,
+                // CLI-only commands are ignored in the gateway
+                Command::Quit | Command::Clear => Ok(GatewayResponse::Ignored),
+            };
         }
 
         // Normal message: run through agent
@@ -137,18 +140,13 @@ impl GatewayRunner {
 
         let cancel = CancellationToken::new();
 
-        // Build a GatewayRunner Arc to share with adapters
-        let runner = Arc::new(GatewayRunner::with_registry(
-            Arc::clone(&self.agent),
-            self.config.clone(),
-            SessionRegistry::new(
-                self.config.sessions_dir.clone(),
-                self.config.working_dir.clone(),
-                self.config.system_prompt.clone(),
-            ),
-        ));
+        // Build a GatewayRunner Arc that shares the same sessions
+        let runner = Arc::new(GatewayRunner {
+            agent: Arc::clone(&self.agent),
+            sessions: Arc::clone(&self.sessions),
+            config: self.config.clone(),
+        });
 
-        // Run all adapters concurrently
         let mut handles = Vec::new();
         for adapter in &adapters {
             let adapter = Arc::clone(adapter);
@@ -186,12 +184,15 @@ impl GatewayRunner {
         Ok(())
     }
 
+    /// Lock and fetch the session entry for an event.
+    async fn session(&self, event: &GatewayEvent) -> Arc<SessionEntry> {
+        let key = build_key(event);
+        self.sessions.get_or_create(&key).await
+    }
+
     /// Process a normal user message through the agent loop.
     async fn handle_message(&self, event: &GatewayEvent) -> Result<GatewayResponse, GatewayError> {
-        let key = SessionRegistry::build_key(event);
-        let entry = self.sessions.get_or_create(&key).await;
-
-        // Serialize concurrent turns for this session
+        let entry = self.session(event).await;
         let _guard = entry.turn_lock.lock().await;
 
         let cancel = CancellationToken::new();
@@ -211,9 +212,10 @@ impl GatewayRunner {
                 if response_text.is_empty() {
                     response_text = "(no response)".into();
                 }
-                Ok(GatewayResponse::Text(response_text))
+                Ok(GatewayResponse::Reply(response_text))
             }
             Err(e) => {
+                let key = build_key(event);
                 warn!(session = %key, error = %e, "agent run failed");
                 Err(GatewayError::AgentRun(e))
             }
@@ -222,42 +224,32 @@ impl GatewayRunner {
 
     /// Handle /compact command.
     async fn handle_compact(&self, event: &GatewayEvent) -> Result<GatewayResponse, GatewayError> {
-        let key = SessionRegistry::build_key(event);
-        let entry = self.sessions.get_or_create(&key).await;
+        let entry = self.session(event).await;
         let _guard = entry.turn_lock.lock().await;
 
-        let result = self.agent.compact_session(&entry.session, None).await;
-
-        match result {
-            Ok(event) => {
-                let msg = format!("Compaction result: {event:?}");
-                Ok(GatewayResponse::CommandHandled(msg))
-            }
+        match self.agent.compact_session(&entry.session, None).await {
+            Ok(event) => Ok(GatewayResponse::Reply(format!(
+                "Compaction result: {event:?}"
+            ))),
             Err(e) => {
+                let key = build_key(event);
                 warn!(session = %key, error = %e, "compaction failed");
-                Ok(GatewayResponse::CommandHandled(format!(
-                    "Compaction failed: {e}"
-                )))
+                Ok(GatewayResponse::Reply(format!("Compaction failed: {e}")))
             }
         }
     }
 
     /// Handle /status command.
     async fn handle_status(&self, event: &GatewayEvent) -> Result<GatewayResponse, GatewayError> {
-        let key = SessionRegistry::build_key(event);
-        let entry = self.sessions.get_or_create(&key).await;
+        let entry = self.session(event).await;
         let messages = entry.session.messages().await;
-        let msg_count = messages.len();
+        let key = build_key(event);
 
-        let status = format!(
+        Ok(GatewayResponse::Reply(format!(
             "Session: {}\nMessages: {}\nWorking dir: {}",
             key,
-            msg_count,
+            messages.len(),
             entry.session.working_dir.display(),
-        );
-        Ok(GatewayResponse::CommandHandled(status))
+        )))
     }
 }
-
-// Manual Clone because GatewayRunner contains non-Clone types
-// but we wrap it in Arc so Clone is not needed.

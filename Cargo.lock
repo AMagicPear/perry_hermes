@@ -2003,6 +2003,8 @@ version = "0.3.7"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
+ "dashmap",
  "futures",
  "jsonschema",
  "perry-hermes-core",
@@ -2058,7 +2060,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "dashmap",
  "perry-hermes-agent",
  "perry-hermes-core",
  "perry-hermes-providers",

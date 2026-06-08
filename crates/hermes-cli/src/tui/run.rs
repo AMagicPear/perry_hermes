@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures::StreamExt;
-use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession};
+use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, SessionRegistry};
 use perry_hermes_core::error::LoopError;
 use perry_hermes_core::tool::ToolOutput;
 use ratatui::backend::{Backend, CrosstermBackend};
@@ -85,17 +85,12 @@ pub async fn run(
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(16));
 
-    let session_id = new_cli_session_id();
-    let session = agent
-        .new_session(
-            session_id.clone(),
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-        )
-        .with_json_file_store(default_sessions_dir().join(format!("{session_id}.json")));
-    session
-        .save()
-        .await
-        .map_err(|e| RunError::Tui(e.to_string()))?;
+    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let sessions_dir = perry_hermes_agent::default_sessions_dir();
+    let system_message = agent.system_message_for(&working_dir);
+    let registry = SessionRegistry::new(sessions_dir, working_dir, system_message);
+    let entry = registry.get_or_create("cli").await;
+    let session = entry.session.clone();
 
     let result: Result<(), RunError> = async {
         loop {
@@ -157,21 +152,6 @@ pub async fn run(
         eprintln!("[perry-hermes] warning: failed to disable raw mode: {e}");
     }
     result
-}
-
-fn new_cli_session_id() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    format!("cli-{}-{}", std::process::id(), now.as_nanos())
-}
-
-fn default_sessions_dir() -> PathBuf {
-    std::env::var_os("PERRY_HERMES_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))
-        .unwrap_or_else(|| PathBuf::from(".perry_hermes"))
-        .join("sessions")
 }
 
 /// Test-friendly entry point. The caller supplies:
@@ -737,7 +717,7 @@ mod tests {
             std::env::set_var("PERRY_HERMES_HOME", tmp.path());
         }
 
-        let dir = default_sessions_dir();
+        let dir = perry_hermes_agent::default_sessions_dir();
 
         unsafe {
             std::env::remove_var("PERRY_HERMES_HOME");

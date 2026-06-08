@@ -64,8 +64,15 @@ impl AIAgent {
         working_dir: impl Into<PathBuf>,
     ) -> AgentSession {
         let working_dir = working_dir.into();
-        let system_message = build_system_message(self.system_prompt.as_deref(), &working_dir);
+        let system_message = self.system_message_for(&working_dir);
         AgentSession::new(session_id, working_dir, system_message)
+    }
+
+    /// Build the system message for a session at `working_dir`.
+    /// Includes the user's system prompt, AGENTS.md content, working
+    /// directory hint, and skills index.
+    pub fn system_message_for(&self, working_dir: &std::path::Path) -> Option<Message> {
+        build_system_message(self.system_prompt.as_deref(), working_dir)
     }
 
     pub async fn load_json_session(
@@ -73,7 +80,7 @@ impl AIAgent {
         path: impl Into<PathBuf>,
     ) -> std::io::Result<AgentSession> {
         let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let system_message = build_system_message(self.system_prompt.as_deref(), &working_dir);
+        let system_message = self.system_message_for(&working_dir);
         AgentSession::load_json_file_with_system_message(path, Some(working_dir), system_message)
             .await
     }
@@ -89,7 +96,7 @@ impl AIAgent {
         self.run_current_session(session, cancel, on_event).await
     }
 
-    pub async fn run_current_session(
+    pub(crate) async fn run_current_session(
         &self,
         session: &AgentSession,
         cancel: CancellationToken,

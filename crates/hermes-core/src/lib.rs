@@ -6,6 +6,7 @@
 //! crate in the workspace.
 
 pub mod accumulator;
+pub mod commands;
 pub mod compaction_strategy;
 pub mod error;
 pub mod message;

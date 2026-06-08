@@ -3,6 +3,7 @@
 use crate::tui::app::App;
 use crate::tui::event::{AppEvent, AppMode, RenderedLine};
 use crossterm::event::{KeyCode, KeyEvent};
+use perry_hermes_core::commands::Command;
 
 /// Page-down (or arrow-down) scrolls one viewport-height toward the bottom.
 const SCROLL_PAGE: u16 = 10;
@@ -113,21 +114,22 @@ fn parse_slash_or_submit(text: String) -> AppEvent {
     if !trimmed.starts_with('/') {
         return AppEvent::Submit(text);
     }
-    let mut parts = trimmed.splitn(2, char::is_whitespace);
-    let cmd = parts.next().unwrap_or("");
-    let rest = parts.next().unwrap_or("").trim();
 
-    match cmd {
-        "/quit" | "/exit" => AppEvent::Quit,
-        "/compact" => AppEvent::Compact(if rest.is_empty() {
-            None
-        } else {
-            Some(rest.to_string())
-        }),
-        "/clear" => AppEvent::Clear,
-        other => AppEvent::Append(RenderedLine::System(format!(
-            "Unknown command: {other}. Try /quit, /exit, /compact [focus], /clear."
+    match Command::parse(trimmed) {
+        Some(Command::Quit) => AppEvent::Quit,
+        Some(Command::Compact(focus)) => AppEvent::Compact(focus),
+        Some(Command::Clear) => AppEvent::Clear,
+        // Gateway-only commands are not valid in the TUI
+        Some(cmd) => AppEvent::Append(RenderedLine::System(format!(
+            "Unknown command: {cmd}. Try /quit, /exit, /compact [focus], /clear."
         ))),
+        None => {
+            // Not a known command — check if it looks like a command at all
+            let word = trimmed.split_whitespace().next().unwrap_or("");
+            AppEvent::Append(RenderedLine::System(format!(
+                "Unknown command: {word}. Try /quit, /exit, /compact [focus], /clear."
+            )))
+        }
     }
 }
 

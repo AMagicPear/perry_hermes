@@ -7,6 +7,7 @@ mod prompting;
 mod provider_factory;
 mod runtime_agent;
 mod session;
+mod session_registry;
 mod tool_catalog;
 pub mod tools;
 
@@ -18,3 +19,4 @@ pub use loop_engine::{
 };
 pub use runtime_agent::AIAgent;
 pub use session::AgentSession;
+pub use session_registry::{default_sessions_dir, SessionEntry, SessionRegistry};

@@ -11,7 +11,7 @@
 //!   [`SessionRegistry`], dispatches incoming events.
 //! - [`PlatformAdapter`] — trait for platform-specific adapters.
 //! - [`SessionRegistry`] — concurrent session store keyed by
-//!   platform/chat identifiers.
+//!   platform/chat identifiers (re-exported from `perry-hermes-agent`).
 //! - [`GatewayEvent`] — normalized incoming message from any platform.
 //!
 //! # Usage
@@ -35,11 +35,13 @@ pub mod adapter;
 pub mod config;
 pub mod event;
 pub mod runner;
-pub mod session_registry;
 pub mod telegram;
 
 pub use adapter::PlatformAdapter;
 pub use config::GatewayConfig;
 pub use event::{ChatType, GatewayEvent};
+// Re-export the project-wide Command enum from hermes-core.
+pub use perry_hermes_core::commands::Command;
 pub use runner::{GatewayError, GatewayResponse, GatewayRunner};
-pub use session_registry::{SessionEntry, SessionRegistry};
+// Re-export session types from hermes-agent for convenience.
+pub use perry_hermes_agent::{SessionEntry, SessionRegistry};

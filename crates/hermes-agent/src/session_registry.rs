@@ -1,22 +1,26 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use tokio::sync::Mutex;
 
-use perry_hermes_agent::AgentSession;
+use perry_hermes_core::Message;
 
-use crate::event::GatewayEvent;
+use crate::session::AgentSession;
 
-/// Concurrent session store keyed by session key strings.
+/// Concurrent session store keyed by arbitrary string keys.
 ///
 /// Each entry holds an [`AgentSession`] and a per-session mutex that
 /// serializes concurrent agent turns for the same conversation.
+///
+/// Used by both the CLI TUI (single session) and the Gateway
+/// (multi-platform, multi-chat).
 pub struct SessionRegistry {
-    sessions: DashMap<String, SessionEntry>,
+    sessions: DashMap<String, Arc<SessionEntry>>,
     sessions_dir: PathBuf,
     working_dir: PathBuf,
-    system_prompt: Option<String>,
+    system_message: Option<Message>,
 }
 
 /// A managed session with concurrency control.
@@ -31,67 +35,47 @@ pub struct SessionEntry {
 
 impl SessionRegistry {
     /// Create a new registry. Sessions are persisted as JSON files
-    /// in `sessions_dir`.
-    pub fn new(sessions_dir: PathBuf, working_dir: PathBuf, system_prompt: Option<String>) -> Self {
+    /// in `sessions_dir`. The `system_message`, if provided, is used
+    /// as the immutable system prompt for every session created by
+    /// this registry.
+    pub fn new(
+        sessions_dir: PathBuf,
+        working_dir: PathBuf,
+        system_message: Option<Message>,
+    ) -> Self {
         Self {
             sessions: DashMap::new(),
             sessions_dir,
             working_dir,
-            system_prompt,
+            system_message,
         }
-    }
-
-    /// Build a deterministic session key from a gateway event.
-    ///
-    /// Format: `{platform}:{chat_type}:{chat_id}[:{thread_id}]`
-    pub fn build_key(event: &GatewayEvent) -> String {
-        let mut key = format!("{}:{}:{}", event.platform, event.chat_type, event.chat_id);
-        if let Some(thread_id) = &event.thread_id {
-            key.push(':');
-            key.push_str(thread_id);
-        }
-        key
     }
 
     /// Get an existing session or create a new one.
-    pub async fn get_or_create(&self, key: &str) -> SessionEntry {
+    /// Returns an `Arc` so all callers share the same `turn_lock`.
+    pub async fn get_or_create(&self, key: &str) -> Arc<SessionEntry> {
         if let Some(entry) = self.sessions.get(key) {
             *entry.last_active.lock().unwrap() = Utc::now();
-            return SessionEntry {
-                session: entry.session.clone(),
-                turn_lock: Mutex::new(()),
-                created_at: entry.created_at,
-                last_active: std::sync::Mutex::new(Utc::now()),
-            };
+            return Arc::clone(&entry);
         }
 
         let session_id = format_session_id(key);
         let store_path = self.sessions_dir.join(format!("{session_id}.json"));
-        let system_message = self
-            .system_prompt
-            .as_deref()
-            .map(perry_hermes_core::Message::system);
+        let system_message = self.system_message.clone();
 
         let session = AgentSession::new(&session_id, &self.working_dir, system_message)
             .with_json_file_store(&store_path);
 
         let now = Utc::now();
-        let entry = SessionEntry {
-            session: session.clone(),
-            turn_lock: Mutex::new(()),
-            created_at: now,
-            last_active: std::sync::Mutex::new(now),
-        };
-
-        self.sessions.insert(key.to_string(), entry);
-
-        // Return a new entry handle (the DashMap owns the canonical one)
-        SessionEntry {
+        let entry = Arc::new(SessionEntry {
             session,
             turn_lock: Mutex::new(()),
             created_at: now,
             last_active: std::sync::Mutex::new(now),
-        }
+        });
+
+        self.sessions.insert(key.to_string(), Arc::clone(&entry));
+        entry
     }
 
     /// Reset the session for `key`, clearing message history.
@@ -107,7 +91,7 @@ impl SessionRegistry {
     }
 
     /// Get a reference to the session for `key`, if it exists.
-    pub async fn get_session(&self, key: &str) -> Option<AgentSession> {
+    pub fn get_session(&self, key: &str) -> Option<AgentSession> {
         self.sessions.get(key).map(|e| e.session.clone())
     }
 
@@ -122,6 +106,17 @@ impl SessionRegistry {
     }
 }
 
+/// Compute the default sessions directory.
+pub fn default_sessions_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("PERRY_HERMES_HOME") {
+        return PathBuf::from(home).join("sessions");
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        return PathBuf::from(home).join(".perry_hermes").join("sessions");
+    }
+    PathBuf::from(".perry_hermes").join("sessions")
+}
+
 /// Format a session ID from a session key.
 /// Replaces characters that are problematic in filenames.
 fn format_session_id(key: &str) -> String {
@@ -131,52 +126,14 @@ fn format_session_id(key: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::event::{ChatType, GatewayEvent};
-    use chrono::Utc;
-
-    fn make_event(platform: &str, chat_id: &str, chat_type: ChatType) -> GatewayEvent {
-        GatewayEvent {
-            platform: platform.into(),
-            chat_id: chat_id.into(),
-            chat_type,
-            user_id: "user1".into(),
-            user_name: None,
-            thread_id: None,
-            text: "hello".into(),
-            message_id: None,
-            timestamp: Utc::now(),
-        }
-    }
 
     #[test]
-    fn build_key_dm() {
-        let event = make_event("telegram", "123456", ChatType::Dm);
-        assert_eq!(SessionRegistry::build_key(&event), "telegram:dm:123456");
-    }
-
-    #[test]
-    fn build_key_group() {
-        let event = make_event("telegram", "-100123", ChatType::Group);
-        assert_eq!(SessionRegistry::build_key(&event), "telegram:group:-100123");
-    }
-
-    #[test]
-    fn build_key_with_thread() {
-        let mut event = make_event("telegram", "-100123", ChatType::Group);
-        event.thread_id = Some("42".into());
-        assert_eq!(
-            SessionRegistry::build_key(&event),
-            "telegram:group:-100123:42"
-        );
-    }
-
-    #[test]
-    fn format_session_id_replaces_colons() {
+    fn format_session_id_replaces_colons_and_dashes() {
         assert_eq!(format_session_id("telegram:dm:123"), "telegram_dm_123");
     }
 
     #[tokio::test]
-    async fn get_or_create_returns_same_session() {
+    async fn get_or_create_returns_shared_entry() {
         let tmp = tempfile::tempdir().unwrap();
         let registry = SessionRegistry::new(tmp.path().into(), tmp.path().into(), None);
 
@@ -184,6 +141,7 @@ mod tests {
         let entry2 = registry.get_or_create("telegram:dm:123").await;
 
         assert_eq!(entry1.session.session_id, entry2.session.session_id);
+        assert!(Arc::ptr_eq(&entry1, &entry2));
     }
 
     #[tokio::test]
@@ -199,7 +157,7 @@ mod tests {
         assert!(!entry.session.messages().await.is_empty());
 
         assert!(registry.reset("telegram:dm:123").await);
-        let session = registry.get_session("telegram:dm:123").await.unwrap();
+        let session = registry.get_session("telegram:dm:123").unwrap();
         assert!(session.messages().await.is_empty());
     }
 

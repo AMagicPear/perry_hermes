@@ -21,7 +21,6 @@ anyhow.workspace = true
 tracing.workspace = true
 
 teloxide.workspace = true
-dashmap.workspace = true
 
 [dev-dependencies]
 perry-hermes-providers.workspace = true

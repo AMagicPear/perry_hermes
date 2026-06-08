@@ -18,16 +18,10 @@ pub trait PlatformAdapter: Send + Sync {
 
     /// Start receiving messages. For each incoming message the adapter
     /// should call `gateway.handle_event(event)` and send the returned
-    /// response text back through `send_message()`.
+    /// response text back to the user through the platform's own API.
     ///
     /// This method blocks until the adapter is shut down.
     async fn run(&self, gateway: Arc<GatewayRunner>) -> anyhow::Result<()>;
-
-    /// Send a text message to the specified chat.
-    async fn send_message(&self, chat_id: &str, text: &str) -> anyhow::Result<()>;
-
-    /// Show a typing indicator (best-effort, fire-and-forget).
-    async fn send_typing(&self, chat_id: &str) -> anyhow::Result<()>;
 
     /// Gracefully disconnect from the platform.
     async fn disconnect(&self) -> anyhow::Result<()>;

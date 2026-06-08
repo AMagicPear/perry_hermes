@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use teloxide::prelude::*;
-use teloxide::types::{ChatAction, ChatKind};
+use teloxide::types::{BotCommand, ChatAction, ChatKind};
 use tracing::{info, warn};
 
 use crate::adapter::PlatformAdapter;
@@ -80,6 +80,19 @@ impl PlatformAdapter for TelegramAdapter {
     async fn run(&self, gateway: Arc<GatewayRunner>) -> anyhow::Result<()> {
         info!("Telegram adapter starting (long-poll)");
 
+        // Register commands with Telegram so users see them in the "/" menu.
+        let commands = vec![
+            BotCommand::new("reset", "Reset the current session"),
+            BotCommand::new("new", "Reset the current session (alias)"),
+            BotCommand::new("compact", "Compact the conversation context"),
+            BotCommand::new("status", "Show session status"),
+        ];
+        if let Err(e) = self.bot.set_my_commands(commands).send().await {
+            warn!(error = %e, "failed to register Telegram commands");
+        } else {
+            info!("registered Telegram bot commands");
+        }
+
         let bot = self.bot.clone();
 
         teloxide::repl(bot, move |bot: Bot, msg: Message| {
@@ -95,8 +108,7 @@ impl PlatformAdapter for TelegramAdapter {
                 let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
 
                 match gateway.handle_event(event).await {
-                    Ok(crate::runner::GatewayResponse::Text(text))
-                    | Ok(crate::runner::GatewayResponse::CommandHandled(text)) => {
+                    Ok(crate::runner::GatewayResponse::Reply(text)) => {
                         if let Err(e) = bot.send_message(chat_id, &text).await {
                             warn!(error = %e, "failed to send Telegram reply");
                         }
@@ -113,24 +125,6 @@ impl PlatformAdapter for TelegramAdapter {
         })
         .await;
 
-        Ok(())
-    }
-
-    async fn send_message(&self, chat_id: &str, text: &str) -> anyhow::Result<()> {
-        let chat_id: i64 = chat_id
-            .parse()
-            .map_err(|_| anyhow::anyhow!("invalid Telegram chat ID: {chat_id}"))?;
-        self.bot.send_message(ChatId(chat_id), text).await?;
-        Ok(())
-    }
-
-    async fn send_typing(&self, chat_id: &str) -> anyhow::Result<()> {
-        let chat_id: i64 = chat_id
-            .parse()
-            .map_err(|_| anyhow::anyhow!("invalid Telegram chat ID: {chat_id}"))?;
-        self.bot
-            .send_chat_action(ChatId(chat_id), ChatAction::Typing)
-            .await?;
         Ok(())
     }
 
