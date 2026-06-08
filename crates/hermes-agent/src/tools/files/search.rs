@@ -76,9 +76,9 @@ impl Tool for SearchFilesTool {
                 },
                 "limit": {
                     "type": "integer",
-                    "default": 500,
+                    "default": 50,
                     "minimum": 1,
-                    "description": "Maximum number of items to return. Defaults to 500."
+                    "description": "Maximum number of items to return. Defaults to 50."
                 },
                 "offset": {
                     "type": "integer",

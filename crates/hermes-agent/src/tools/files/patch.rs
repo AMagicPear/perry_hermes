@@ -64,6 +64,7 @@ impl Tool for PatchTool {
                 "mode": {
                     "type": "string",
                     "enum": ["replace", "patch"],
+                    "default": "replace",
                     "description": "Edit mode. 'replace' for targeted find-and-replace; 'patch' for a V4A multi-file patch."
                 },
                 "path": {
