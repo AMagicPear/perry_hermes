@@ -48,14 +48,14 @@ fn compose_session_prompt_prefix(user_prompt: Option<&str>) -> Option<String> {
     let Some(dir) = resolve_skills_dir() else {
         return Some(base.to_string());
     };
-    let skills = match perry_hermes_skill_loader::load_all(&dir) {
+    let skills = match perry_hermes_skill_tools::load_all(&dir) {
         Ok(v) => v,
         Err(e) => {
             tracing::warn!("failed to scan skills dir {}: {e}", dir.display());
             Vec::new()
         }
     };
-    let skills_block = perry_hermes_skill_loader::render_system_prompt_block(&skills);
+    let skills_block = perry_hermes_skill_tools::render_system_prompt_block(&skills);
 
     if skills_block.is_empty() {
         Some(base.to_string())

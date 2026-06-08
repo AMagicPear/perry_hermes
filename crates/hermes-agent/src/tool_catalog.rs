@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use perry_hermes_core::registry::InMemoryRegistry;
 
-use crate::tools::bash::BashTool;
-use crate::tools::files::{PatchTool, ReadFileTool, SearchFilesTool, WriteFileTool};
-use crate::tools::skills::{SkillListTool, SkillViewTool};
+use perry_hermes_skill_tools::tools::{
+    BashTool, PatchTool, ReadFileTool, SearchFilesTool, SkillListTool, SkillViewTool,
+    WriteFileTool,
+};
 
 /// Wire all built-in tools into a fresh registry.
 ///

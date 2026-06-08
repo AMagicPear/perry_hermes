@@ -18,7 +18,7 @@ use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use crate::tools::support::path::resolve_user_path;
+use perry_hermes_core::util::resolve_user_path;
 
 use super::policy::{
     cross_profile_write_message, is_internal_file_status_text, sensitive_write_path_message,

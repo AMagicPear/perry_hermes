@@ -9,7 +9,7 @@ description = "Consolidated agent runtime engine and built-in tools"
 [dependencies]
 perry-hermes-core.workspace = true
 perry-hermes-providers.workspace = true
-perry-hermes-skill-loader = { path = "../hermes-skill-loader" }
+perry-hermes-skill-tools.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 futures.workspace = true

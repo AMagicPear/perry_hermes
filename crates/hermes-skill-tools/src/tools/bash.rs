@@ -44,21 +44,6 @@ Do NOT use vim/nano/interactive tools without pty=true — they hang without a p
 /// Default command timeout in seconds when the model does not specify one.
 const DEFAULT_TIMEOUT_SECS: u64 = 30;
 
-pub(crate) fn truncate_output(s: &str, max_chars: usize) -> String {
-    let char_count = s.chars().count();
-    if char_count <= max_chars {
-        return s.to_string();
-    }
-    let head_chars = max_chars * 2 / 5;
-    let tail_chars = max_chars - head_chars;
-    let head: String = s.chars().take(head_chars).collect();
-    let tail: String = s.chars().skip(char_count - tail_chars).collect();
-    let omitted = char_count - head_chars - tail_chars;
-    format!(
-        "{head}\n\n... [OUTPUT TRUNCATED - {omitted} chars omitted out of {char_count} total] ...\n\n{tail}"
-    )
-}
-
 pub struct BashTool;
 
 impl BashTool {
@@ -236,7 +221,7 @@ impl Tool for BashTool {
                 } else {
                     format!("{out}\n--- stderr ---\n{err}")
                 };
-                let truncated = truncate_output(&combined, 50_000);
+                let truncated = perry_hermes_core::util::truncate_output(&combined, 50_000);
                 let exit_note = if status.success() {
                     String::new()
                 } else {

@@ -51,7 +51,6 @@ perry-hermes-agent crate
   AgentSession
   AgentLoop
   SummaryCompactor
-  built-in tools
 
 perry-hermes-core crate
   Provider / Tool / Message / Usage / errors
@@ -59,8 +58,8 @@ perry-hermes-core crate
 perry-hermes-providers crate
   OpenAI-compatible / Anthropic-compatible / Echo
 
-perry-hermes-skill-loader crate
-  SKILL.md loading and prompt block rendering
+perry-hermes-skill-tools crate
+  Skill loading/validation, prompt rendering, and all seven built-in tools
 
 perry-hermes-gateway crate        (planned; see docs/gateway.md)
   SessionRegistry

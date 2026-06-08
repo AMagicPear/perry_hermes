@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use perry_hermes_agent::tools::BashTool;
+use perry_hermes_skill_tools::tools::BashTool;
 use perry_hermes_agent::{AgentLoop, AgentRunError, AgentSession, LoopConfig};
 use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason};
@@ -126,7 +126,7 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
 
 #[tokio::test]
 async fn loop_routes_read_file_tool_call() {
-    use perry_hermes_agent::tools::ReadFileTool;
+    use perry_hermes_skill_tools::tools::ReadFileTool;
     use tempfile::TempDir;
 
     let dir = TempDir::new().unwrap();

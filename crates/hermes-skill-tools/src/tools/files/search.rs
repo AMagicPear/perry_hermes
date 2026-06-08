@@ -16,7 +16,7 @@ use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use crate::tools::support::path::resolve_user_path;
+use perry_hermes_core::util::resolve_user_path;
 
 use super::policy::is_binary_extension;
 

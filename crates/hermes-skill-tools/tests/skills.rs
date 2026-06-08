@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use perry_hermes_agent::tools::{SkillListTool, SkillViewTool};
 use perry_hermes_core::tool::{Tool, ToolContext, ToolPermissions};
+use perry_hermes_skill_tools::tools::{SkillListTool, SkillViewTool};
 use serde_json::json;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;

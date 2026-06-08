@@ -14,6 +14,7 @@ pub mod provider;
 pub mod registry;
 pub mod tool;
 pub mod usage;
+pub mod util;
 
 pub use compaction_strategy::{
     CompactError, CompactionResult, CompactionStrategy, CompressionSkipReason, CompressionTrigger,

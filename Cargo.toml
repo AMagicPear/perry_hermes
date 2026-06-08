@@ -4,13 +4,13 @@ members = [
     "crates/hermes-agent",
     "crates/hermes-core",
     "crates/hermes-providers",
-    "crates/hermes-skill-loader",
+    "crates/hermes-skill-tools",
     "crates/hermes-cli",
-    "crates/perry-hermes-gateway",
+    "crates/hermes-gateway",
 ]
 
 [workspace.package]
-version = "0.3.7"
+version = "0.4.0"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -64,7 +64,8 @@ chrono-tz = "0.10"
 # Internal
 perry-hermes-agent = { path = "crates/hermes-agent" }
 perry-hermes-core = { path = "crates/hermes-core" }
-perry-hermes-gateway = { path = "crates/perry-hermes-gateway" }
+perry-hermes-gateway = { path = "crates/hermes-gateway" }
+perry-hermes-skill-tools = { path = "crates/hermes-skill-tools" }
 perry-hermes-providers = { path = "crates/hermes-providers" }
 
 # The profile that 'dist' will build with

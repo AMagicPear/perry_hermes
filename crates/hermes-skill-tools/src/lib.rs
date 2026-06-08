@@ -1,15 +1,15 @@
-//! Skill data loading and system-prompt injection for the Perry Hermes agent.
+//! Skill system and built-in tools for Perry Hermes.
 //!
-//! This crate is a leaf: it parses `SKILL.md` files, validates them, and renders
-//! the prompt-injection metadata block. The LLM-callable runtime tools that
-//! explore loaded skills (`SkillListTool`, `SkillViewTool`, ...) live in
-//! `perry-hermes-agent::tools::skills`.
-//!
-//! See `docs/superpowers/specs/2026-06-06-phase-10-rename-and-tui-design.md`
-//! for the rename context.
+//! This crate provides:
+//! - Skill data types and SKILL.md file loading/validation
+//! - System prompt rendering
+//! - All seven built-in LLM tools: `BashTool`, `ReadFileTool`,
+//!   `WriteFileTool`, `PatchTool`, `SearchFilesTool`,
+//!   `SkillListTool`, `SkillViewTool`
 
 pub mod frontmatter;
 pub mod layout;
+pub mod tools;
 pub mod validate;
 
 use std::path::PathBuf;
@@ -188,7 +188,7 @@ fn parse_one(loc: &layout::SkillLocation) -> Option<Skill> {
         return None;
     };
 
-    if !validate::is_valid_name(name) {
+    if !validate::is_valid_category(name) {
         tracing::warn!(
             "skipping {}: invalid `name` {:?}",
             loc.skill_md.display(),

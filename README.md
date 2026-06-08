@@ -77,7 +77,7 @@ crates/hermes-cli
 
 crates/hermes-agent
   package: perry-hermes-agent
-  owns: AIAgent, AgentSession, AgentLoop, tools, config, compaction
+  owns: AIAgent, AgentSession, AgentLoop, config, compaction, tool catalog
 
 crates/hermes-core
   package: perry-hermes-core
@@ -87,9 +87,9 @@ crates/hermes-providers
   package: perry-hermes-providers
   owns: OpenAI-compatible / Anthropic-compatible / Echo providers
 
-crates/hermes-skill-loader
-  package: perry-hermes-skill-loader
-  owns: SKILL.md discovery, validation, and prompt rendering
+crates/hermes-skill-tools
+  package: perry-hermes-skill-tools
+  owns: SKILL.md discovery, validation, prompt rendering, and all seven built-in LLM tools
 ```
 
 | Layer | Key files | Boundary |
@@ -100,7 +100,7 @@ crates/hermes-skill-loader
 | Compaction | [crates/hermes-agent/src/compaction.rs][compaction] | Encodes the summary prompt and the current "anchors plus one summary" policy. |
 | Core contracts | [crates/hermes-core/src/][core] | Defines shared traits/types without provider, CLI, or filesystem policy. |
 | Providers | [crates/hermes-providers/src/][providers] | Translates external provider protocols into core streaming types. |
-| Skills | [crates/hermes-skill-loader/src/][skill-loader] | Loads and validates `SKILL.md`, then renders the prompt block. |
+| Skills & tools | [crates/hermes-skill-tools/src/][skill-tools] | Loads and validates `SKILL.md`, renders the prompt block, and provides all seven built-in tools. |
 
 ## Context And Compaction
 
@@ -258,4 +258,4 @@ MIT
 [compaction]: crates/hermes-agent/src/compaction.rs
 [core]: crates/hermes-core/src/
 [providers]: crates/hermes-providers/src/
-[skill-loader]: crates/hermes-skill-loader/src/
+[skill-tools]: crates/hermes-skill-tools/src/

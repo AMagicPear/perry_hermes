@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use perry_hermes_agent::tools::BashTool;
+use perry_hermes_skill_tools::tools::BashTool;
 use perry_hermes_agent::{AgentLoop, AgentSession, LoopConfig};
 use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason};

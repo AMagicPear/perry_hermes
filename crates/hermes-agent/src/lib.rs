@@ -9,7 +9,6 @@ mod runtime_agent;
 mod session;
 mod session_registry;
 mod tool_catalog;
-pub mod tools;
 
 pub use compaction::{CompactorConfig, SummaryCompactor};
 pub use config::{AgentConfig, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind};

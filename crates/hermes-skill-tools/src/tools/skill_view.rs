@@ -6,7 +6,7 @@ use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::linked_files::discover_linked_files;
+use crate::tools::linked_files::discover_linked_files;
 
 const SKILL_VIEW_DESCRIPTION: &str = "Skills allow for loading information about specific tasks and workflows, as well as scripts and templates. Load a skill's full content or access its linked files (references, templates, scripts). First call returns SKILL.md content plus a 'linked_files' dict showing available references/templates/scripts. To access those, call again with file_path parameter.";
 
@@ -84,7 +84,7 @@ impl Tool for SkillViewTool {
             });
         }
 
-        let skills = match perry_hermes_skill_loader::load_all(&self.skills_dir) {
+        let skills = match crate::load_all(&self.skills_dir) {
             Ok(v) => v,
             Err(e) => {
                 return Ok(ToolOutput {
@@ -94,7 +94,7 @@ impl Tool for SkillViewTool {
             }
         };
 
-        let mut candidates: Vec<&perry_hermes_skill_loader::Skill> = skills
+        let mut candidates: Vec<&crate::Skill> = skills
             .iter()
             .filter(|s| s.name == name || s.qualified_name == name)
             .collect();
@@ -161,7 +161,7 @@ impl Tool for SkillViewTool {
         };
         let text = String::from_utf8_lossy(&raw);
         let body = strip_frontmatter(&text);
-        let truncated = crate::tools::bash::truncate_output(&body, 100_000);
+        let truncated = perry_hermes_core::util::truncate_output(&body, 100_000);
         Ok(ToolOutput {
             content: json!({
                 "success": true,
@@ -176,11 +176,7 @@ impl Tool for SkillViewTool {
     }
 }
 
-fn read_linked_file(
-    skill: &perry_hermes_skill_loader::Skill,
-    skill_root: &Path,
-    file_path: &str,
-) -> ToolOutput {
+fn read_linked_file(skill: &crate::Skill, skill_root: &Path, file_path: &str) -> ToolOutput {
     if file_path.contains("..") {
         return ToolOutput {
             content: json!({
