@@ -22,7 +22,7 @@ pub struct CompactionResult {
 ///
 /// This is not a session object. It owns only the policy for turning a list
 /// of messages into a shorter list. Session lifetime, token facts, history,
-/// cancellation, and reset behavior belong to `AgentSession` / `SessionState`.
+/// cancellation, and reset behavior belong to `AgentSession`.
 ///
 /// Methods that mutate engine state take `&mut self`. Callers store the
 /// strategy behind `Arc<tokio::sync::Mutex<dyn CompactionStrategy>>` for

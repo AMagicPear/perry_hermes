@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, LoopEvent, PerryHermesConfig};
+use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, PerryHermesConfig};
 use perry_hermes_core::message::Content;
 use perry_hermes_core::LoopError;
 use tokio_util::sync::CancellationToken;
@@ -54,7 +54,10 @@ async fn main() {
         }
     };
 
-    let session = AgentSession::current_shell();
+    let session = agent.new_session(
+        "live-context-usage",
+        std::env::current_dir().unwrap_or_default(),
+    );
     let cancel = CancellationToken::new();
     let prompts = [
         "Please remember this live context probe marker: perry-hermes-context-usage. Reply in one short sentence.",

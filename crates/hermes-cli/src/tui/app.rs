@@ -122,16 +122,6 @@ impl App {
         &self.cached_chat_lines
     }
 
-    #[cfg(test)]
-    fn scrollback_revision(&self) -> u64 {
-        self.scrollback_revision
-    }
-
-    #[cfg(test)]
-    fn chat_cache_state(&self) -> (Option<u16>, u64) {
-        (self.cached_chat_width, self.cached_chat_revision)
-    }
-
     // ── Cursor movement & text editing ──────────────────────────────────
 
     /// Insert a character at the cursor position. Advances the cursor past
@@ -223,30 +213,32 @@ mod tests {
             "hello from a somewhat longer assistant message".to_string(),
         ));
 
-        let initial_revision = app.scrollback_revision();
+        let initial_revision = app.scrollback_revision;
         let initial_lines = app.chat_lines_for_width(20).len();
-        let (cached_width, cached_revision) = app.chat_cache_state();
+        let (cached_width, cached_revision) = (app.cached_chat_width, app.cached_chat_revision);
         assert_eq!(cached_width, Some(20));
         assert_eq!(cached_revision, initial_revision);
         assert!(initial_lines > 0);
 
         app.chat_scroll = 3;
         let scrolled_lines = app.chat_lines_for_width(20).len();
-        let (cached_width_after_scroll, cached_revision_after_scroll) = app.chat_cache_state();
+        let (cached_width_after_scroll, cached_revision_after_scroll) =
+            (app.cached_chat_width, app.cached_chat_revision);
         assert_eq!(scrolled_lines, initial_lines);
         assert_eq!(cached_width_after_scroll, Some(20));
         assert_eq!(cached_revision_after_scroll, initial_revision);
 
         app.chat_lines_for_width(24);
-        let (cached_width_after_resize, cached_revision_after_resize) = app.chat_cache_state();
+        let (cached_width_after_resize, cached_revision_after_resize) =
+            (app.cached_chat_width, app.cached_chat_revision);
         assert_eq!(cached_width_after_resize, Some(24));
         assert_eq!(cached_revision_after_resize, initial_revision);
 
         app.push_line(RenderedLine::User("follow-up".to_string()));
-        let updated_revision = app.scrollback_revision();
+        let updated_revision = app.scrollback_revision;
         assert!(updated_revision > initial_revision);
         app.chat_lines_for_width(24);
-        let (_, cached_revision_after_content) = app.chat_cache_state();
+        let cached_revision_after_content = app.cached_chat_revision;
         assert_eq!(cached_revision_after_content, updated_revision);
     }
 

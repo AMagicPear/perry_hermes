@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use perry_hermes_agent::{AgentLoop, LoopConfig, LoopEvent};
+use perry_hermes_agent::{AgentLoop, AgentSession, LoopConfig, LoopEvent};
 use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, CompletionDelta, FinishReason};
 use perry_hermes_core::registry::InMemoryRegistry;
@@ -9,6 +9,10 @@ use tokio_util::sync::CancellationToken;
 
 mod support;
 use support::ScriptedProvider;
+
+fn test_session() -> AgentSession {
+    AgentSession::new("test", std::env::current_dir().unwrap_or_default(), None)
+}
 
 #[tokio::test]
 async fn loop_keeps_reading_after_finish_reason_to_capture_usage() {
@@ -48,6 +52,7 @@ async fn loop_keeps_reading_after_finish_reason_to_capture_usage() {
         },
     );
 
+    let session = test_session();
     let result = loop_
         .run(
             vec![Message {
@@ -62,7 +67,7 @@ async fn loop_keeps_reading_after_finish_reason_to_capture_usage() {
                 working_dir: std::env::current_dir().unwrap_or_default(),
                 permissions: Default::default(),
             },
-            Arc::new(perry_hermes_agent::SessionState::default()),
+            &session,
             CancellationToken::new(),
             |_| {},
         )
@@ -124,6 +129,7 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
         },
     );
 
+    let session = test_session();
     let mut usage_events = Vec::new();
     let result = loop_
         .run(
@@ -139,7 +145,7 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
                 working_dir: std::env::current_dir().unwrap_or_default(),
                 permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
             },
-            Arc::new(perry_hermes_agent::SessionState::default()),
+            &session,
             CancellationToken::new(),
             |ev| {
                 if let LoopEvent::ContextUsageUpdated { used_tokens } = ev {
@@ -193,6 +199,7 @@ async fn loop_emits_context_usage_only_from_normalized_real_usage() {
         },
     );
 
+    let session = test_session();
     let mut usage_events = Vec::new();
     let result = loop_
         .run(
@@ -208,7 +215,7 @@ async fn loop_emits_context_usage_only_from_normalized_real_usage() {
                 working_dir: std::env::current_dir().unwrap_or_default(),
                 permissions: Default::default(),
             },
-            Arc::new(perry_hermes_agent::SessionState::default()),
+            &session,
             CancellationToken::new(),
             |ev| {
                 if let LoopEvent::ContextUsageUpdated { used_tokens } = ev {

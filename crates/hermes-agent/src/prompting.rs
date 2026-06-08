@@ -12,8 +12,6 @@ use std::path::{Path, PathBuf};
 
 use perry_hermes_core::message::Message;
 
-use crate::session::SessionContext;
-
 pub const DEFAULT_SYSTEM_PROMPT: &str =
     "You are a careful assistant with access to a `terminal` tool. \
 Use it to inspect the system or run shell commands when needed. When you have enough information \
@@ -116,18 +114,15 @@ pub fn load_agents_md_block(working_dir: &Path) -> Option<String> {
 /// Callers should invoke this at most once per session, store the
 /// returned message in the session's log, and treat it as
 /// immutable thereafter.
-pub fn build_system_message(
-    base_prompt: Option<&str>,
-    session: &SessionContext,
-) -> Option<Message> {
+pub fn build_system_message(base_prompt: Option<&str>, working_dir: &Path) -> Option<Message> {
     let mut sections: Vec<String> = Vec::with_capacity(3);
     if let Some(base) = base_prompt {
         sections.push(base.trim().to_string());
     }
-    if let Some(block) = load_agents_md_block(&session.working_dir) {
+    if let Some(block) = load_agents_md_block(working_dir) {
         sections.push(block);
     }
-    sections.push(working_directory_hint(session));
+    sections.push(working_directory_hint(working_dir));
 
     if sections.is_empty() {
         None
@@ -136,11 +131,8 @@ pub fn build_system_message(
     }
 }
 
-fn working_directory_hint(session: &SessionContext) -> String {
-    format!(
-        "Current working directory: {}",
-        session.working_dir.display()
-    )
+fn working_directory_hint(working_dir: &Path) -> String {
+    format!("Current working directory: {}", working_dir.display())
 }
 
 #[cfg(test)]
@@ -243,28 +235,16 @@ mod tests {
     fn build_system_message_includes_working_dir_even_without_base_or_agents() {
         // The working-directory hint is always present, so the
         // system message is never empty for a configured session.
-        let msg = build_system_message(
-            None,
-            &SessionContext {
-                working_dir: PathBuf::from("/tmp/no-agents-md"),
-                session_id: "s".into(),
-            },
-        )
-        .expect("message should be Some because of working-dir hint");
+        let msg = build_system_message(None, Path::new("/tmp/no-agents-md"))
+            .expect("message should be Some because of working-dir hint");
         let text = msg.content.as_text();
         assert!(text.contains("Current working directory: /tmp/no-agents-md"));
     }
 
     #[test]
     fn build_system_message_includes_base_prompt_and_working_dir() {
-        let msg = build_system_message(
-            Some("BASE"),
-            &SessionContext {
-                working_dir: PathBuf::from("/tmp/project"),
-                session_id: "session-123".into(),
-            },
-        )
-        .expect("message should be Some");
+        let msg = build_system_message(Some("BASE"), Path::new("/tmp/project"))
+            .expect("message should be Some");
 
         let text = msg.content.as_text();
         assert!(text.contains("BASE"));
@@ -279,14 +259,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_agents_md(tmp.path(), "UNIQUE-AGENTS-MARKER-XYZ");
 
-        let msg = build_system_message(
-            Some("BASE-PROMPT"),
-            &SessionContext {
-                working_dir: tmp.path().to_path_buf(),
-                session_id: "s".into(),
-            },
-        )
-        .expect("message should be Some");
+        let msg =
+            build_system_message(Some("BASE-PROMPT"), tmp.path()).expect("message should be Some");
         let text = msg.content.as_text();
 
         let base_idx = text.find("BASE-PROMPT").expect("base present");
@@ -307,14 +281,7 @@ mod tests {
     #[test]
     fn build_system_message_omits_agents_block_when_file_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        let msg = build_system_message(
-            Some("BASE"),
-            &SessionContext {
-                working_dir: tmp.path().to_path_buf(),
-                session_id: "s".into(),
-            },
-        )
-        .expect("message should be Some");
+        let msg = build_system_message(Some("BASE"), tmp.path()).expect("message should be Some");
         let text = msg.content.as_text();
         assert!(!text.contains("Project guidance from `AGENTS.md`"));
         assert!(text.contains("BASE"));
@@ -332,14 +299,8 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
         let _cwd = CwdGuard::enter(other_cwd.path());
 
-        let msg = build_system_message(
-            Some("BASE"),
-            &SessionContext {
-                working_dir: session_dir.path().to_path_buf(),
-                session_id: "s".into(),
-            },
-        )
-        .expect("message should be Some");
+        let msg =
+            build_system_message(Some("BASE"), session_dir.path()).expect("message should be Some");
         let text = msg.content.as_text();
         assert!(text.contains("FROM-SESSION-DIR"));
         // The body must appear exactly once — no double-injection.

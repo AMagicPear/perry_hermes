@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, LoopEvent, PerryHermesConfig};
+use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, PerryHermesConfig};
 use perry_hermes_core::message::Content;
 use perry_hermes_core::LoopError;
 use perry_hermes_providers::OpenAiProvider;
@@ -22,7 +22,7 @@ async fn main() {
 
     let provider = OpenAiProvider::new(&api_key, &model).with_base_url(&base_url);
     let agent = AIAgent::new(provider, PerryHermesConfig::default());
-    let session = AgentSession::current_shell();
+    let session = agent.new_session("live-tool-use", std::env::current_dir().unwrap_or_default());
     let cancel = CancellationToken::new();
 
     let started = std::time::Instant::now();

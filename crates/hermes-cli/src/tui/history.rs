@@ -12,7 +12,7 @@ use ratatui::widgets::Widget;
 
 #[derive(Debug, Default, Clone)]
 pub struct HistoryWrite {
-    lines: Vec<Line<'static>>,
+    pub lines: Vec<Line<'static>>,
     active_stream: Option<ActiveStream>,
 }
 
@@ -29,10 +29,6 @@ impl HistoryWrite {
     pub fn clear(&mut self) {
         self.lines.clear();
         self.active_stream = None;
-    }
-
-    pub fn lines(&self) -> &[Line<'static>] {
-        &self.lines
     }
 
     pub fn push_assistant_delta(&mut self, text: &str, width: u16) {

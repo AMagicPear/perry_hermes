@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use perry_hermes_agent::tools::BashTool;
-use perry_hermes_agent::{AgentLoop, AgentRunError, LoopConfig};
+use perry_hermes_agent::{AgentLoop, AgentRunError, AgentSession, LoopConfig};
 use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason};
 use perry_hermes_core::registry::InMemoryRegistry;
@@ -37,6 +37,10 @@ fn tool_call(id: &str, name: &str, args: serde_json::Value) -> ToolCall {
         name: name.into(),
         arguments: args,
     }
+}
+
+fn test_session() -> AgentSession {
+    AgentSession::new("test", std::env::current_dir().unwrap_or_default(), None)
 }
 
 #[tokio::test]
@@ -82,11 +86,12 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
         permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
+    let session = test_session();
     let result = loop_
         .run(
             vec![user_message("please run something")],
             ctx,
-            Arc::new(perry_hermes_agent::SessionState::default()),
+            &session,
             CancellationToken::new(),
             |e| {
                 events_for_cb.lock().unwrap().push(format!("{e:?}"));
@@ -164,11 +169,12 @@ async fn loop_routes_read_file_tool_call() {
         working_dir: dir.path().to_path_buf(),
         permissions: perry_hermes_core::tool::ToolPermissions { subprocess: false },
     };
+    let session = test_session();
     let result = loop_
         .run(
             vec![user_message("read it")],
             ctx,
-            Arc::new(perry_hermes_agent::SessionState::default()),
+            &session,
             CancellationToken::new(),
             |_| {},
         )
@@ -221,11 +227,12 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
         permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
+    let session = test_session();
     let err = loop_
         .run(
             vec![user_message("please run something")],
             ctx,
-            Arc::new(perry_hermes_agent::SessionState::default()),
+            &session,
             CancellationToken::new(),
             |_| {},
         )
@@ -292,11 +299,12 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
         permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
+    let session = test_session();
     let err = loop_
         .run(
             vec![user_message("say something")],
             ctx,
-            Arc::new(perry_hermes_agent::SessionState::default()),
+            &session,
             CancellationToken::new(),
             |_| {},
         )

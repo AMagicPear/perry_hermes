@@ -10,7 +10,7 @@ use tokio_util::sync::CancellationToken;
 use crate::config::{PerryHermesConfig, ResolvedProviderConfig};
 use crate::prompting::{build_system_message, compose_base_system_prompt, resolve_skills_dir};
 use crate::provider_factory::build_provider;
-use crate::session::{AgentSession, SessionContext};
+use crate::session::AgentSession;
 use crate::tool_catalog::build_registry;
 use crate::{
     AgentLoop, AgentRunError, CompactorConfig, ContextWindow, LoopConfig, LoopEvent, RunResult,
@@ -66,14 +66,19 @@ impl AIAgent {
         }
     }
 
-    /// Construct a new `AgentSession` for `context`, computing the
+    /// Construct a new `AgentSession`, computing the
     /// immutable system message from this agent's base prompt and the
     /// session's working directory. The system message is stored at
-    /// the head of the session's message log and never recomposed on
-    /// subsequent turns.
-    pub fn new_session(&self, context: SessionContext) -> AgentSession {
-        let system_message = build_system_message(self.base_system_prompt.as_deref(), &context);
-        AgentSession::new(context, system_message)
+    /// `AgentSession::system_message` and never recomposed on subsequent
+    /// turns.
+    pub fn new_session(
+        &self,
+        session_id: impl Into<String>,
+        working_dir: impl Into<PathBuf>,
+    ) -> AgentSession {
+        let working_dir = working_dir.into();
+        let system_message = build_system_message(self.base_system_prompt.as_deref(), &working_dir);
+        AgentSession::new(session_id, working_dir, system_message)
     }
 
     pub async fn run_session_turn(
@@ -124,12 +129,12 @@ impl AIAgent {
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
         let ctx = ToolContext {
-            session_id: session.context.session_id.clone(),
-            working_dir: session.context.working_dir.clone(),
+            session_id: session.session_id.to_string(),
+            working_dir: session.working_dir.as_ref().clone(),
             permissions: ToolPermissions { subprocess: true },
         };
         self.loop_
-            .run(messages, ctx, Arc::clone(&session.state), cancel, on_event)
+            .run(messages, ctx, session, cancel, on_event)
             .await
     }
 
@@ -140,7 +145,7 @@ impl AIAgent {
         session: &AgentSession,
     ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
         self.loop_
-            .compact_messages(messages, focus_topic, Arc::clone(&session.state))
+            .compact_messages(messages, focus_topic, session)
             .await
     }
 
@@ -163,11 +168,6 @@ impl AIAgent {
             session.replace_messages(business).await;
         }
         Ok(event)
-    }
-
-    #[cfg(test)]
-    fn has_compaction_strategy(&self) -> bool {
-        self.loop_.has_compaction_strategy()
     }
 }
 
@@ -251,8 +251,6 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use crate::config::{ModelConfig, ProviderConfig, ProviderKind};
-    use crate::session::SessionContext;
-
     fn echo_config() -> PerryHermesConfig {
         PerryHermesConfig {
             providers: vec![provider_config(
@@ -302,14 +300,24 @@ mod tests {
         drop(agent);
     }
 
-    #[test]
-    fn from_config_wires_compaction_strategy_when_enabled() {
+    #[tokio::test]
+    async fn from_config_wires_compaction_strategy_when_enabled() {
         let agent = AIAgent::from_config(echo_config_with_compression())
             .expect("echo should build with compression enabled");
-        assert!(
-            agent.has_compaction_strategy(),
-            "compression-enabled config should wire a compaction strategy"
-        );
+        let session = AgentSession::new("s", PathBuf::from("/tmp"), None);
+        session.append_message(Message::user("first")).await;
+
+        let event = agent
+            .compact_session(&session, None)
+            .await
+            .expect("manual compaction should be callable");
+        assert!(matches!(
+            event,
+            LoopEvent::CompressionSkipped {
+                reason:
+                    perry_hermes_core::compaction_strategy::CompressionSkipReason::NothingToCompress
+            }
+        ));
     }
 
     #[test]
@@ -540,10 +548,8 @@ mod tests {
         };
 
         let session = AgentSession::new(
-            SessionContext {
-                working_dir: std::path::PathBuf::from("/tmp/perry-hermes-test-cwd"),
-                session_id: "session-xyz".into(),
-            },
+            "session-xyz",
+            std::path::PathBuf::from("/tmp/perry-hermes-test-cwd"),
             None,
         );
 

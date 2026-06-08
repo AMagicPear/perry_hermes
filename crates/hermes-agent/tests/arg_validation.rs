@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use perry_hermes_agent::tools::BashTool;
-use perry_hermes_agent::{AgentLoop, LoopConfig};
+use perry_hermes_agent::{AgentLoop, AgentSession, LoopConfig};
 use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason};
 use perry_hermes_core::registry::InMemoryRegistry;
@@ -10,6 +10,10 @@ use tokio_util::sync::CancellationToken;
 
 mod support;
 use support::ScriptedProvider;
+
+fn test_session() -> AgentSession {
+    AgentSession::new("test", std::env::current_dir().unwrap_or_default(), None)
+}
 
 #[tokio::test]
 async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
@@ -57,6 +61,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
         permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
     };
 
+    let session = test_session();
     let result = loop_
         .run(
             vec![Message {
@@ -67,7 +72,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
                 tool_calls: None,
             }],
             ctx,
-            Arc::new(perry_hermes_agent::SessionState::default()),
+            &session,
             CancellationToken::new(),
             |_| {},
         )

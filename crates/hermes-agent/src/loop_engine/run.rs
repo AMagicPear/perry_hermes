@@ -29,13 +29,13 @@ use perry_hermes_core::tool::ToolContext;
 use super::metrics::{prompt_context_tokens_from_usage, validate_args};
 use super::{AgentLoop, AgentRunError, FailedTurn, LoopEvent, LoopMetrics, RunResult};
 use crate::compaction::{try_compact, CompactOutcome};
-use crate::session::SessionState;
+use crate::session::AgentSession;
 
 pub(crate) async fn run(
     engine: &AgentLoop,
     initial_messages: Vec<Message>,
     ctx: ToolContext,
-    session_state: std::sync::Arc<SessionState>,
+    session: &AgentSession,
     cancel: CancellationToken,
     mut on_event: impl FnMut(LoopEvent) + Send,
 ) -> Result<RunResult, AgentRunError> {
@@ -79,8 +79,8 @@ pub(crate) async fn run(
         metrics.output_tokens += completion.usage.output_tokens;
         let prompt_context_tokens = prompt_context_tokens_from_usage(completion.usage);
         if prompt_context_tokens > 0 {
-            session_state
-                .remember_first_prompt_context_tokens(prompt_context_tokens)
+            session
+                .remember_context_usage_baseline(prompt_context_tokens)
                 .await;
             on_event(LoopEvent::ContextUsageUpdated {
                 used_tokens: prompt_context_tokens,
@@ -100,7 +100,7 @@ pub(crate) async fn run(
                 &mut messages,
                 &mut metrics,
                 prompt_context_tokens,
-                &session_state,
+                session,
                 &mut on_event,
             )
             .await;
@@ -297,7 +297,7 @@ async fn auto_compress_after_response(
     messages: &mut Vec<Message>,
     metrics: &mut LoopMetrics,
     prompt_context_tokens: u64,
-    session_state: &SessionState,
+    session: &AgentSession,
     on_event: &mut impl FnMut(LoopEvent),
 ) {
     let Some(engine_arc) = &engine.config.compaction_strategy else {
@@ -315,7 +315,7 @@ async fn auto_compress_after_response(
                 duration,
                 summary_output_tokens,
             } => {
-                let compacted_tokens = session_state
+                let compacted_tokens = session
                     .compacted_context_tokens(summary_output_tokens)
                     .await;
                 metrics.compressions += 1;

@@ -20,7 +20,7 @@ use perry_hermes_core::provider::{Provider, ToolCallDelta};
 use perry_hermes_core::registry::InMemoryRegistry;
 use perry_hermes_core::tool::{ToolContext, ToolOutput};
 
-use crate::session::SessionState;
+use crate::session::AgentSession;
 
 mod metrics;
 mod run;
@@ -184,15 +184,11 @@ impl AgentLoop {
         }
     }
 
-    pub fn has_compaction_strategy(&self) -> bool {
-        self.config.compaction_strategy.is_some()
-    }
-
     pub async fn compact_messages(
         &self,
         mut messages: Vec<Message>,
         focus_topic: Option<&str>,
-        session_state: Arc<SessionState>,
+        session: &AgentSession,
     ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
         let Some(engine) = &self.config.compaction_strategy else {
             return Ok((
@@ -217,7 +213,7 @@ impl AgentLoop {
                 duration,
                 summary_output_tokens,
             } => {
-                let compacted_tokens = session_state
+                let compacted_tokens = session
                     .compacted_context_tokens(summary_output_tokens)
                     .await;
                 LoopEvent::CompressionCompleted {
@@ -242,10 +238,10 @@ impl AgentLoop {
         &self,
         initial_messages: Vec<Message>,
         ctx: ToolContext,
-        session_state: Arc<SessionState>,
+        session: &AgentSession,
         cancel: CancellationToken,
         on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
-        run::run(self, initial_messages, ctx, session_state, cancel, on_event).await
+        run::run(self, initial_messages, ctx, session, cancel, on_event).await
     }
 }

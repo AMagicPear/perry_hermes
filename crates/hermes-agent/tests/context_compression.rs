@@ -2,8 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use perry_hermes_agent::{
     AIAgent, AgentLoop, AgentSession, CompactorConfig, ContextWindow, LoopConfig, ModelConfig,
-    PerryHermesConfig, ProviderConfig, ProviderKind, SessionContext, SessionState,
-    SummaryCompactor,
+    PerryHermesConfig, ProviderConfig, ProviderKind, SummaryCompactor,
 };
 use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason};
@@ -86,15 +85,8 @@ fn test_ctx() -> ToolContext {
     }
 }
 
-fn test_session() -> SessionContext {
-    SessionContext {
-        working_dir: std::env::current_dir().unwrap_or_default(),
-        session_id: "test".into(),
-    }
-}
-
-fn test_session_state() -> Arc<SessionState> {
-    Arc::new(SessionState::default())
+fn test_session() -> AgentSession {
+    AgentSession::new("test", std::env::current_dir().unwrap_or_default(), None)
 }
 
 #[tokio::test]
@@ -150,6 +142,7 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
     let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     let events_for_cb = Arc::clone(&events);
 
+    let session = test_session();
     let _ = loop_
         .run(
             vec![
@@ -164,7 +157,7 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
                 user_message("latest question"),
             ],
             test_ctx(),
-            test_session_state(),
+            &session,
             CancellationToken::new(),
             |event| events_for_cb.lock().unwrap().push(format!("{event:?}")),
         )
@@ -220,6 +213,7 @@ async fn loop_does_not_compress_until_real_context_usage_reaches_threshold() {
         },
     );
 
+    let session = test_session();
     let mut events = Vec::new();
     loop_
         .run(
@@ -229,7 +223,7 @@ async fn loop_does_not_compress_until_real_context_usage_reaches_threshold() {
                 user_message("latest question"),
             ],
             test_ctx(),
-            test_session_state(),
+            &session,
             CancellationToken::new(),
             |event| events.push(event),
         )
@@ -280,6 +274,7 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
         },
     );
 
+    let session = test_session();
     let mut events = Vec::new();
     let result = loop_
         .run(
@@ -291,7 +286,7 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
                 user_message("latest question"),
             ],
             test_ctx(),
-            test_session_state(),
+            &session,
             CancellationToken::new(),
             |event| events.push(event),
         )
@@ -374,6 +369,7 @@ async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
         },
     );
 
+    let session = test_session();
     let mut usage_events = Vec::new();
     loop_
         .run(
@@ -385,7 +381,7 @@ async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
                 user_message("latest question"),
             ],
             test_ctx(),
-            test_session_state(),
+            &session,
             CancellationToken::new(),
             |event| {
                 if let perry_hermes_agent::LoopEvent::ContextUsageUpdated { used_tokens } = event {
@@ -414,7 +410,11 @@ async fn session_compact_rewrites_history_with_summary_message() {
         echo_config_with_compression(),
     );
 
-    let session = AgentSession::new(test_session(), Some(system_message("system")));
+    let session = AgentSession::new(
+        "test",
+        std::env::current_dir().unwrap_or_default(),
+        Some(system_message("system")),
+    );
     session
         .replace_messages(vec![
             user_message("first request"),
@@ -483,13 +483,20 @@ async fn session_turn_owns_and_updates_message_history() {
         echo_config_with_compression(),
     );
     // The system message lives in its own field on the session,
-    // not at the head of `messages`. The session exposes it via
-    // `system_message()` and reattaches it in `outbound_messages()`
-    // for the loop.
-    let session = AgentSession::new(test_session(), Some(system_message("system")));
+    // not at the head of `messages`. `outbound_messages()` reattaches
+    // it for the loop.
+    let session = AgentSession::new(
+        "test",
+        std::env::current_dir().unwrap_or_default(),
+        Some(system_message("system")),
+    );
 
+    let events = Arc::new(Mutex::new(Vec::new()));
     let result = agent
-        .run_session_turn("first request", &session, CancellationToken::new(), |_| {})
+        .run_session_turn("first request", &session, CancellationToken::new(), {
+            let events = Arc::clone(&events);
+            move |event| events.lock().unwrap().push(event)
+        })
         .await
         .expect("session turn should succeed");
 
@@ -511,9 +518,12 @@ async fn session_turn_owns_and_updates_message_history() {
             Message { role: Role::Assistant, content: Content::Text(answer), .. },
         ] if user == "first request" && answer == "first answer"
     ));
-    assert_eq!(
-        session.state.first_prompt_context_tokens().await,
-        Some(1_000)
+    assert!(
+        events.lock().unwrap().iter().any(|event| matches!(
+            event,
+            perry_hermes_agent::LoopEvent::ContextUsageUpdated { used_tokens: 1_000 }
+        )),
+        "session turn should publish provider-reported context usage"
     );
 }
 
@@ -540,7 +550,11 @@ async fn session_compact_rewrites_session_messages() {
     );
     // System message is supplied via the dedicated field; the
     // business log contains only user/assistant turns.
-    let session = AgentSession::new(test_session(), Some(system_message("system")));
+    let session = AgentSession::new(
+        "test",
+        std::env::current_dir().unwrap_or_default(),
+        Some(system_message("system")),
+    );
     session
         .replace_messages(vec![
             user_message("first request"),
@@ -549,10 +563,7 @@ async fn session_compact_rewrites_session_messages() {
             assistant_text("second answer"),
         ])
         .await;
-    session
-        .state
-        .remember_first_prompt_context_tokens(1_000)
-        .await;
+    session.remember_context_usage_baseline(1_000).await;
 
     let event = agent
         .compact_session(&session, Some("second request"))
@@ -599,7 +610,11 @@ async fn session_compact_reports_summary_failure() {
         echo_config_with_compression(),
     );
 
-    let session = AgentSession::new(test_session(), Some(system_message("system")));
+    let session = AgentSession::new(
+        "test",
+        std::env::current_dir().unwrap_or_default(),
+        Some(system_message("system")),
+    );
     session
         .replace_messages(vec![
             user_message("first request"),
@@ -641,7 +656,11 @@ async fn session_compact_compresses_medium_history_instead_of_skipping() {
         echo_config_with_compression(),
     );
 
-    let session = AgentSession::new(test_session(), Some(system_message("system")));
+    let session = AgentSession::new(
+        "test",
+        std::env::current_dir().unwrap_or_default(),
+        Some(system_message("system")),
+    );
     session
         .replace_messages(vec![
             user_message("first request"),

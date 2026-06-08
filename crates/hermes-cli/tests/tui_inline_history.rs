@@ -53,7 +53,7 @@ fn history_writer_records_lines_without_keeping_them_in_app_scrollback() {
 
     assert!(app.scrollback.is_empty());
     assert_eq!(
-        history.lines().iter().map(line_text).collect::<Vec<_>>(),
+        history.lines.iter().map(line_text).collect::<Vec<_>>(),
         ["> hi"]
     );
 }
