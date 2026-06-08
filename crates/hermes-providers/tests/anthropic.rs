@@ -41,6 +41,16 @@ async fn anthropic_provider_posts_messages_request_with_headers_and_tools() {
                 .header("x-api-key", "test-key")
                 .header("anthropic-version", "2023-06-01")
                 .matches(|req| {
+                    req.headers
+                        .as_ref()
+                        .map(|headers| {
+                            headers
+                                .iter()
+                                .all(|(name, _)| !name.eq_ignore_ascii_case("accept-encoding"))
+                        })
+                        .unwrap_or(true)
+                })
+                .matches(|req| {
                     let Some(body) = &req.body else {
                         return false;
                     };

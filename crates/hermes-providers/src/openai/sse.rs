@@ -14,6 +14,8 @@ use futures::{Stream, StreamExt};
 use perry_hermes_core::provider::{CompletionDelta, FinishReason, ToolCallDelta};
 use perry_hermes_core::ProviderError;
 
+use crate::http::transport_error_message;
+
 /// Strip the `data: ` prefix and surrounding whitespace; return the
 /// payload, or `None` if the line is a comment or a control line.
 pub(super) fn parse_sse_data_line(line: &str) -> Option<&str> {
@@ -38,7 +40,7 @@ pub(super) fn parse_sse_chunks(
         while let Some(chunk) = bytes.next().await {
             match chunk {
                 Ok(c) => buffer.push_str(&String::from_utf8_lossy(&c)),
-                Err(e) => { yield Err(ProviderError::Transport(e.to_string())); return; }
+                Err(e) => { yield Err(ProviderError::Transport(transport_error_message(&e))); return; }
             }
             while let Some(pos) = buffer.find("\n\n") {
                 let event: String = buffer.drain(..pos + 2).collect();

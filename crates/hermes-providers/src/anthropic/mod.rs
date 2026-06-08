@@ -7,8 +7,6 @@
 //! The provider struct + the `Provider` trait impl live here because the
 //! HTTP client is tightly coupled to a single type.
 
-use std::time::Duration;
-
 use async_trait::async_trait;
 use tokio_util::sync::CancellationToken;
 
@@ -16,6 +14,8 @@ use perry_hermes_core::message::Message;
 use perry_hermes_core::provider::Provider;
 use perry_hermes_core::registry::ToolSchema;
 use perry_hermes_core::{CompletionStream, ProviderError};
+
+use crate::http::{streaming_client, transport_error_message};
 
 mod request;
 mod sse;
@@ -60,10 +60,7 @@ impl AnthropicProvider {
             model: model.into(),
             base_url: "https://api.anthropic.com/v1".into(),
             request_options: AnthropicRequestOptions::default(),
-            client: reqwest::Client::builder()
-                .timeout(Duration::from_secs(120))
-                .build()
-                .expect("reqwest client"),
+            client: streaming_client(),
         }
     }
 
@@ -109,7 +106,7 @@ impl Provider for AnthropicProvider {
                 .header(&self.api_key_header, &self.api_key)
                 .header("anthropic-version", "2023-06-01")
                 .json(&body)
-                .send() => r.map_err(|e| ProviderError::Transport(e.to_string()))?,
+                .send() => r.map_err(|e| ProviderError::Transport(transport_error_message(&e)))?,
         };
 
         if resp.status() == 401 {
