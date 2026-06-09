@@ -61,6 +61,11 @@ httpmock = "0.7"
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 chrono-tz = "0.10"
 
+# QQ Bot SDK (rev pinned; v0.1.0 is pre-stable)
+qq-bot-rs = { git = "https://github.com/yenharvey/qq-bot-rs", rev = "ab82963129aa682073b38288933f6a6b85a2f91e" }
+tokio-tungstenite = "0.29"
+bitflags = { version = "2", features = ["serde"] }
+
 # Internal
 perry-hermes-agent = { path = "crates/hermes-agent" }
 perry-hermes-core = { path = "crates/hermes-core" }
