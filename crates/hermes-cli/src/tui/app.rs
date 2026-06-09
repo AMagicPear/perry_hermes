@@ -61,28 +61,21 @@ pub struct App {
 }
 
 impl App {
-    /// Test constructor. Leaves all fields empty / default.
-    pub fn new_for_test() -> Self {
+    /// Default state: empty scrollback, idle mode, no provider/model wired.
+    /// Tests and any caller that wants to mutate fields one by one start
+    /// from this. Production entry points use `App::new` instead.
+    pub fn new(
+        provider_name: String,
+        model_name: String,
+        max_iterations: u32,
+        context_window_size: Option<u64>,
+    ) -> Self {
         Self {
-            scrollback: Vec::new(),
-            input: String::new(),
-            cursor: 0,
-            mode: AppMode::Idle,
-            provider_name: None,
-            model_name: None,
-            iteration: 0,
-            max_iterations: 0,
-            compression_hint: None,
-            turn_started_at: None,
-            chat_scroll: 0,
-            context_window_size: None,
-            context_used_tokens: None,
-            history_width: 80,
-            active_turn_cancel: None,
-            scrollback_revision: 0,
-            cached_chat_lines: Vec::new(),
-            cached_chat_width: None,
-            cached_chat_revision: 0,
+            provider_name: Some(provider_name),
+            model_name: Some(model_name),
+            max_iterations,
+            context_window_size,
+            ..Self::default()
         }
     }
 
@@ -202,13 +195,40 @@ impl App {
     }
 }
 
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            scrollback: Vec::new(),
+            input: String::new(),
+            cursor: 0,
+            mode: AppMode::Idle,
+            provider_name: None,
+            model_name: None,
+            iteration: 0,
+            max_iterations: 0,
+            compression_hint: None,
+            turn_started_at: None,
+            chat_scroll: 0,
+            context_window_size: None,
+            context_used_tokens: None,
+            history_width: 80,
+            active_turn_cancel: None,
+            scrollback_revision: 0,
+            cached_chat_lines: Vec::new(),
+            cached_chat_width: None,
+            cached_chat_revision: 0,
+        }
+    }
+}
+
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
     #[test]
     fn scrollback_cache_only_invalidates_on_content_or_width_change() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.push_line(RenderedLine::Assistant(
             "hello from a somewhat longer assistant message".to_string(),
         ));
@@ -246,7 +266,7 @@ mod tests {
 
     #[test]
     fn cursor_inserts_at_position() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "helo".to_string();
         app.cursor = 3;
         app.insert_at_cursor('l');
@@ -256,7 +276,7 @@ mod tests {
 
     #[test]
     fn cursor_inserts_cjk_at_position() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "你好世".to_string();
         app.cursor = 9;
         app.insert_at_cursor('界');
@@ -266,7 +286,7 @@ mod tests {
 
     #[test]
     fn cursor_delete_before_cursor_works() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hello".to_string();
         app.cursor = 5;
         assert!(app.delete_before_cursor());
@@ -276,7 +296,7 @@ mod tests {
 
     #[test]
     fn cursor_delete_before_cursor_noop_at_start() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hi".to_string();
         app.cursor = 0;
         assert!(!app.delete_before_cursor());
@@ -285,7 +305,7 @@ mod tests {
 
     #[test]
     fn cursor_delete_at_cursor_forward() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "abcd".to_string();
         app.cursor = 1;
         assert!(app.delete_at_cursor());
@@ -295,7 +315,7 @@ mod tests {
 
     #[test]
     fn cursor_delete_at_cursor_cjk() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "你好啊".to_string();
         app.cursor = 3;
         assert!(app.delete_at_cursor());
@@ -305,7 +325,7 @@ mod tests {
 
     #[test]
     fn cursor_moves_left_and_right_on_ascii() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "abc".to_string();
         app.cursor = 3;
         app.move_cursor_left();
@@ -318,7 +338,7 @@ mod tests {
 
     #[test]
     fn cursor_moves_left_and_right_on_cjk() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "你好".to_string();
         app.cursor = 6;
         app.move_cursor_left();
@@ -331,7 +351,7 @@ mod tests {
 
     #[test]
     fn cursor_home_and_end() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hello".to_string();
         app.cursor = 3;
         app.move_cursor_home();
@@ -342,7 +362,7 @@ mod tests {
 
     #[test]
     fn cursor_stays_in_bounds_at_edges() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "ab".to_string();
         app.cursor = 0;
         app.move_cursor_left();
@@ -354,7 +374,7 @@ mod tests {
 
     #[test]
     fn empty_input_cursor_operations_are_noops() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         assert!(!app.delete_before_cursor());
         assert!(!app.delete_at_cursor());
         app.move_cursor_left();

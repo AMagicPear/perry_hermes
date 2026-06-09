@@ -1,6 +1,9 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use crate::qqbot::QqBotConfig;
+use crate::telegram::TelegramConfig;
+
 /// Configuration for the gateway and all platform adapters.
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
@@ -13,6 +16,10 @@ pub struct GatewayConfig {
     pub allowed_users: HashMap<String, HashSet<String>>,
     /// Optional system prompt for new sessions.
     pub system_prompt: Option<String>,
+    /// Telegram platform config; `None` disables the adapter.
+    pub telegram: Option<TelegramConfig>,
+    /// QQ Bot platform config; `None` disables the adapter.
+    pub qqbot: Option<QqBotConfig>,
 }
 
 impl Default for GatewayConfig {
@@ -22,6 +29,8 @@ impl Default for GatewayConfig {
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             allowed_users: HashMap::new(),
             system_prompt: None,
+            telegram: None,
+            qqbot: None,
         }
     }
 }

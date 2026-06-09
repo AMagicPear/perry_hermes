@@ -1,7 +1,7 @@
 //! Platform gateway for Perry Hermes.
 //!
 //! This crate provides the gateway layer that bridges messaging platforms
-//! (Telegram, Discord, etc.) with the Perry Hermes agent runtime. It
+//! (Telegram, QQ Bot, Discord, etc.) with the Perry Hermes agent runtime. It
 //! centralizes session management, message routing, and platform adapter
 //! dispatch.
 //!
@@ -21,19 +21,22 @@
 //! use perry_hermes_gateway::{
 //!     GatewayConfig, GatewayRunner,
 //!     telegram::TelegramAdapter,
+//!     QQBotAdapter, QqBotConfig,
 //! };
 //!
 //! # fn example(agent: Arc<perry_hermes_agent::AIAgent>) {
 //! let config = GatewayConfig::default();
 //! let runner = GatewayRunner::new(agent, config);
 //! let telegram = Arc::new(TelegramAdapter::new("BOT_TOKEN"));
-//! // runner.run(vec![telegram]).await;
+//! let qqbot = Arc::new(QQBotAdapter::new(QqBotConfig::default()));
+//! // runner.run(vec![telegram, qqbot]).await;
 //! # }
 //! ```
 
 pub mod adapter;
 pub mod config;
 pub mod event;
+pub mod qqbot;
 pub mod runner;
 pub mod telegram;
 
@@ -42,6 +45,7 @@ pub use config::GatewayConfig;
 pub use event::{ChatType, GatewayEvent};
 // Re-export the project-wide Command enum from hermes-core.
 pub use perry_hermes_core::commands::Command;
+pub use qqbot::{QQBotAdapter, QqBotConfig};
 pub use runner::{GatewayError, GatewayResponse, GatewayRunner};
 // Re-export session types from hermes-agent for convenience.
 pub use perry_hermes_agent::{SessionEntry, SessionRegistry};

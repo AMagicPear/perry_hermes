@@ -27,7 +27,7 @@ fn empty_app_renders_input_box_with_arrow_prompt() {
     let backend = TestBackend::new(80, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
@@ -54,7 +54,7 @@ fn empty_app_renders_input_box_with_arrow_prompt() {
 fn chat_scrolls_to_show_most_recent_message() {
     let backend = TestBackend::new(80, 10);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     for i in 0..30 {
         app.push_line(RenderedLine::User(format!("message {i}")));
     }
@@ -80,7 +80,7 @@ fn cursor_uses_display_width_for_cjk_input() {
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input = "你好".to_string();
     app.cursor = app.input.len(); // cursor at end
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -98,7 +98,7 @@ fn cursor_position_accounts_for_cjk_with_half_width_mix() {
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input = "ab你好".to_string(); // 2 + 4 = 6 visible cols
     app.cursor = 2; // between "ab" and "你好"
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -115,7 +115,7 @@ fn input_cursor_when_empty_is_at_prompt_end() {
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     // cursor defaults to 0, input is empty
     terminal.draw(|f| render(f, &mut app)).expect("draw");
 
@@ -131,7 +131,7 @@ fn assistant_render_preserves_explicit_newlines() {
     let backend = TestBackend::new(18, 12);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.push_line(RenderedLine::Assistant(
         "first line wraps\n\nthird line wraps".to_string(),
     ));
@@ -174,7 +174,7 @@ fn tool_result_render_preserves_multiline_preview() {
     let backend = TestBackend::new(50, 12);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.push_line(RenderedLine::ToolResult {
         name: "read_file".to_string(),
         output: "1|first\n2|second\n3|third".to_string(),
@@ -207,7 +207,7 @@ fn assistant_body_is_indented_without_vertical_borders() {
     let backend = TestBackend::new(60, 10);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.push_line(RenderedLine::Assistant(
         "Hey, 我在～ 🌊✨ 有什么需要帮忙的吗？".to_string(),
     ));
@@ -238,7 +238,7 @@ fn assistant_header_keeps_right_border_with_unicode_title() {
     let backend = TestBackend::new(40, 12);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.push_line(RenderedLine::Assistant("hello".to_string()));
     terminal.draw(|f| render(f, &mut app)).expect("draw");
 
@@ -258,7 +258,7 @@ fn reasoning_rows_are_dimmed_and_prefixed() {
     let backend = TestBackend::new(40, 12);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.push_line(RenderedLine::Reasoning("thinking step".to_string()));
     terminal.draw(|f| render(f, &mut app)).expect("draw");
 
@@ -286,7 +286,7 @@ fn awaiting_state_renders_interrupt_hint_without_needing_full_phrase() {
     let backend = TestBackend::new(40, 12);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::AwaitingModel;
     app.turn_started_at = Some(Instant::now() - Duration::from_secs(2));
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -309,7 +309,7 @@ fn cancelling_state_renders_activity_line() {
     let backend = TestBackend::new(50, 14);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Cancelling;
     app.turn_started_at = Some(Instant::now() - Duration::from_secs(1));
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -328,7 +328,7 @@ fn idle_state_has_no_activity_row() {
     let backend = TestBackend::new(50, 14);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     terminal.draw(|f| render(f, &mut app)).expect("draw");
 
     let buffer = terminal.backend().buffer().clone();
@@ -345,7 +345,7 @@ fn awaiting_state_uses_activity_row_without_duplicate_status_label() {
     let backend = TestBackend::new(50, 14);
     let mut terminal = Terminal::new(backend).expect("terminal");
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::AwaitingModel;
     app.turn_started_at = Some(Instant::now() - Duration::from_secs(2));
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -387,7 +387,7 @@ fn input_box_grows_when_text_wraps_to_multiple_lines() {
     // so every character is visible and the cursor is not clamped.
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input = "a".repeat(60);
     app.cursor = app.input.len();
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -412,7 +412,7 @@ fn cursor_in_middle_of_wrapped_input_is_not_clamped() {
     // With input_h = 6, inner_y = 19, cursor_y = 19 + 1 = 20.
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input = "a".repeat(60);
     app.cursor = 30;
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -434,7 +434,7 @@ fn left_arrow_visibly_moves_cursor_in_wrapped_input() {
     // inner_y = 19, cursor_y = 19 + 3 = 22. cursor_x = 1 + 7 = 8.
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input = "a".repeat(60);
     app.cursor = app.input.len();
     handle_key(&mut app, KeyEvent::new(KeyCode::Left, KeyModifiers::NONE));
@@ -456,7 +456,7 @@ fn input_box_caps_height_when_text_exceeds_max_lines() {
     // 18 a's = 16 + 7*18 = 142 a's.
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input = "a".repeat(200);
     app.cursor = 0;
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -476,7 +476,7 @@ fn input_scrolls_to_keep_cursor_visible_in_long_text() {
     // visible window, no scroll needed.
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input = "a".repeat(200);
     app.cursor = 100;
     terminal.draw(|f| render(f, &mut app)).expect("draw");
@@ -498,7 +498,7 @@ fn input_scrolls_when_cursor_past_visible_window() {
     // the last visible row.
     let backend = TestBackend::new(20, 24);
     let mut terminal = Terminal::new(backend).expect("terminal");
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input = "a".repeat(200);
     app.cursor = app.input.len();
     terminal.draw(|f| render(f, &mut app)).expect("draw");

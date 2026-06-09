@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use perry_hermes_skill_tools::tools::BashTool;
 use perry_hermes_agent::{AgentLoop, AgentSession, LoopConfig};
 use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason};
 use perry_hermes_core::registry::InMemoryRegistry;
 use perry_hermes_core::tool::ToolContext;
+use perry_hermes_skill_tools::tools::BashTool;
 use tokio_util::sync::CancellationToken;
 
 mod support;

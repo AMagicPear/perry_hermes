@@ -89,7 +89,9 @@ async fn run_tui(config: PerryHermesConfig, config_path: &Path) -> anyhow::Resul
 }
 
 async fn run_gateway(config: PerryHermesConfig, config_path: &Path) -> anyhow::Result<()> {
-    use perry_hermes_gateway::{GatewayConfig, GatewayRunner, telegram::TelegramAdapter};
+    use perry_hermes_gateway::{
+        GatewayConfig, GatewayRunner, QQBotAdapter, QqBotConfig, telegram::TelegramAdapter,
+    };
 
     let agent = Arc::new(
         AIAgent::from_config(config)
@@ -124,9 +126,30 @@ async fn run_gateway(config: PerryHermesConfig, config_path: &Path) -> anyhow::R
         eprintln!("Telegram adapter enabled");
     }
 
+    // QQ Bot — credentials from env by default. Set both
+    // QQ_BOT_APP_ID and QQ_BOT_APP_SECRET to enable.
+    let qq_app_id = std::env::var("QQ_BOT_APP_ID").ok();
+    let qq_app_secret = std::env::var("QQ_BOT_APP_SECRET").ok();
+    if qq_app_id.as_deref().is_some_and(|s| !s.is_empty())
+        && qq_app_secret.as_deref().is_some_and(|s| !s.is_empty())
+    {
+        let qqbot_cfg = QqBotConfig {
+            app_id: qq_app_id,
+            app_secret: qq_app_secret,
+            sandbox: std::env::var("QQ_BOT_SANDBOX")
+                .ok()
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
+            ..QqBotConfig::default()
+        };
+        adapters.push(Arc::new(QQBotAdapter::new(qqbot_cfg)));
+        eprintln!("QQBot adapter enabled");
+    }
+
     if adapters.is_empty() {
         anyhow::bail!(
-            "No platform adapters configured. Set TELEGRAM_BOT_TOKEN to enable Telegram."
+            "No platform adapters configured. Set TELEGRAM_BOT_TOKEN to enable Telegram, \
+             or QQ_BOT_APP_ID + QQ_BOT_APP_SECRET to enable QQ Bot."
         );
     }
 
@@ -278,6 +301,7 @@ default_model = "echo"
                 default_model: "MiniMax-M3".into(),
                 ..Default::default()
             },
+            gateway: perry_hermes_agent::GatewayTomlConfig::default(),
         };
         let args = Args {
             config: None,

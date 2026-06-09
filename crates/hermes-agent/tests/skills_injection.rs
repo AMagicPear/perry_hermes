@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::stream;
-use perry_hermes_agent::{AIAgent, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind};
+use perry_hermes_agent::{AIAgent, PerryHermesConfig};
 use perry_hermes_core::message::Message;
 use perry_hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
 use tokio::sync::Mutex as AsyncMutex;
@@ -63,25 +63,7 @@ fn skills_dir_for(home: &std::path::Path) -> PathBuf {
 }
 
 fn config_for_echo() -> PerryHermesConfig {
-    PerryHermesConfig {
-        providers: vec![ProviderConfig {
-            name: "local".into(),
-            kind: ProviderKind::Echo,
-            api_key_env: None,
-            models: vec![ModelConfig {
-                name: "echo".into(),
-                context_window_size: 128_000,
-            }],
-            base_url: None,
-            api_key_header: None,
-            thinking: None,
-        }],
-        agent: perry_hermes_agent::AgentConfig {
-            default_provider: "local".into(),
-            default_model: "echo".into(),
-            ..Default::default()
-        },
-    }
+    PerryHermesConfig::for_test_echo()
 }
 
 fn system_text(messages: &[Message]) -> String {

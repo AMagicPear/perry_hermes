@@ -10,7 +10,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.95"
 license = "MIT"
@@ -29,7 +29,7 @@ serde_json = "1"
 toml = "0.8"
 
 # Errors
-thiserror = "1"
+thiserror = "2"
 anyhow = "1"
 
 # Observability
@@ -45,7 +45,7 @@ clap = { version = "4", features = ["derive"] }
 tempfile = "3"
 
 # HTTP (used by perry-hermes-providers)
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
 bytes = "1"
 
 # Telegram bot
@@ -60,6 +60,11 @@ httpmock = "0.7"
 # Time
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }
 chrono-tz = "0.10"
+
+# QQ Bot SDK (rev pinned; v0.1.0 is pre-stable)
+qq-bot-rs = { git = "https://github.com/yenharvey/qq-bot-rs", rev = "ab82963129aa682073b38288933f6a6b85a2f91e" }
+tokio-tungstenite = "0.29"
+bitflags = { version = "2", features = ["serde"] }
 
 # Internal
 perry-hermes-agent = { path = "crates/hermes-agent" }

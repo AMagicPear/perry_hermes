@@ -120,7 +120,8 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
     let loop_ = AgentLoop::new(
         provider,
         Arc::new(
-            InMemoryRegistry::new().register(Arc::new(perry_hermes_skill_tools::tools::BashTool::new())),
+            InMemoryRegistry::new()
+                .register(Arc::new(perry_hermes_skill_tools::tools::BashTool::new())),
         ),
         LoopConfig {
             max_iterations: 5,

@@ -25,6 +25,17 @@ pub struct AIAgent {
 }
 
 impl AIAgent {
+    /// Low-level constructor that takes a pre-built `AgentLoop` and an
+    /// empty `system_prompt`. Production code should use
+    /// `AIAgent::from_config`, which composes skills, AGENTS.md, and
+    /// working-dir hints into the system prompt.
+    pub fn from_agent_loop(agent_loop: AgentLoop) -> Self {
+        Self {
+            agent_loop,
+            system_prompt: None,
+        }
+    }
+
     // Public constructor: takes PerryHermesConfig by value so callers can
     // move their config in. This is the public API — changing the
     // signature would break every CLI and test caller. The clippy
@@ -175,16 +186,6 @@ impl AIAgent {
     }
 }
 
-#[cfg(test)]
-impl AIAgent {
-    fn for_test(agent_loop: AgentLoop) -> Self {
-        Self {
-            agent_loop,
-            system_prompt: None,
-        }
-    }
-}
-
 /// Drop any leading system message(s) from a list of messages.
 /// Used by the session to translate between the loop's outbound
 /// representation (which always includes the system message) and
@@ -248,6 +249,7 @@ fn build_loop_for_custom_provider(
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
@@ -266,39 +268,7 @@ mod tests {
 
     use crate::config::{ModelConfig, ProviderConfig, ProviderKind};
     fn echo_config() -> PerryHermesConfig {
-        PerryHermesConfig {
-            providers: vec![provider_config(
-                "local",
-                ProviderKind::Echo,
-                "echo",
-                128_000,
-            )],
-            agent: crate::config::AgentConfig {
-                default_provider: "local".into(),
-                default_model: "echo".into(),
-                ..Default::default()
-            },
-        }
-    }
-
-    fn provider_config(
-        name: &str,
-        kind: ProviderKind,
-        model: &str,
-        context_window_size: u64,
-    ) -> ProviderConfig {
-        ProviderConfig {
-            name: name.into(),
-            kind,
-            api_key_env: None,
-            models: vec![ModelConfig {
-                name: model.into(),
-                context_window_size,
-            }],
-            base_url: None,
-            api_key_header: None,
-            thinking: None,
-        }
+        PerryHermesConfig::for_test_echo()
     }
 
     fn echo_config_with_compression() -> PerryHermesConfig {
@@ -354,6 +324,7 @@ mod tests {
                 default_model: "missing-model".into(),
                 ..Default::default()
             },
+            gateway: Default::default(),
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -385,6 +356,7 @@ mod tests {
                 default_model: "gpt-4o-mini".into(),
                 ..Default::default()
             },
+            gateway: Default::default(),
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -416,6 +388,7 @@ mod tests {
                 default_model: "gpt-4o-mini".into(),
                 ..Default::default()
             },
+            gateway: Default::default(),
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -447,6 +420,7 @@ mod tests {
                 default_model: "missing-model".into(),
                 ..Default::default()
             },
+            gateway: Default::default(),
         };
 
         let err = AIAgent::from_config(config)
@@ -595,7 +569,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let agent = AIAgent::for_test(agent_loop);
+        let agent = AIAgent::from_agent_loop(agent_loop);
 
         let session = AgentSession::new(
             "session-xyz",

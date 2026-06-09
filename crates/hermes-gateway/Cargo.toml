@@ -22,6 +22,8 @@ tracing.workspace = true
 
 teloxide.workspace = true
 
+qq-bot-rs.workspace = true
+
 [dev-dependencies]
 perry-hermes-providers.workspace = true
 tempfile.workspace = true
