@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use perry_hermes_core::Platform;
+use perry_hermes_core::commands::Command;
 use teloxide::prelude::*;
 use teloxide::types::{BotCommand, ChatAction, ChatKind};
 use tracing::{info, warn};
@@ -58,7 +60,7 @@ impl TelegramAdapter {
         });
 
         Some(GatewayEvent {
-            platform: "telegram".into(),
+            platform: Platform::Telegram,
             chat_id,
             chat_type,
             user_id,
@@ -74,19 +76,19 @@ impl TelegramAdapter {
 #[async_trait]
 impl PlatformAdapter for TelegramAdapter {
     fn name(&self) -> &str {
-        "telegram"
+        Platform::Telegram.as_str()
     }
 
     async fn run(&self, gateway: Arc<GatewayRunner>) -> anyhow::Result<()> {
         info!("Telegram adapter starting (long-poll)");
 
         // Register commands with Telegram so users see them in the "/" menu.
-        let commands = vec![
-            BotCommand::new("reset", "Reset the current session"),
-            BotCommand::new("new", "Reset the current session (alias)"),
-            BotCommand::new("compact", "Compact the conversation context"),
-            BotCommand::new("status", "Show session status"),
-        ];
+        // Name + description come from `Command::ALL` — single source of truth
+        // shared with every other platform; this adapter doesn't need to
+        // know which specific names belong to the Telegram subset.
+        let commands: Vec<BotCommand> = Command::for_platform(Platform::Telegram)
+            .map(|m| BotCommand::new(m.name, m.description))
+            .collect();
         if let Err(e) = self.bot.set_my_commands(commands).send().await {
             warn!(error = %e, "failed to register Telegram commands");
         } else {

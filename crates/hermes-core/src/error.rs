@@ -1,6 +1,5 @@
 //! Error types for the provider, tool, and loop layers.
 
-use crate::message::Message;
 use thiserror::Error;
 
 /// Errors that can occur when calling an LLM provider.
@@ -46,8 +45,6 @@ pub enum LoopError {
     Timeout(std::time::Duration),
     #[error("cancelled")]
     Cancelled,
-    #[error("cancelled with partial response")]
-    CancelledWith(Message),
     #[error("content filter triggered")]
     ContentFilter,
     #[error("provider error: {0}")]

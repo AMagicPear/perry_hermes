@@ -1,5 +1,6 @@
 //! Conversion from `qq_bot_rs` events to the gateway's `GatewayEvent`.
 
+use perry_hermes_core::Platform;
 use qq_bot_rs::types::message::{C2cMessage, GroupMessage};
 
 use crate::event::{ChatType, GatewayEvent};
@@ -37,7 +38,7 @@ pub fn c2c_to_event(msg: &C2cMessage) -> Option<GatewayEvent> {
         return None;
     }
     Some(GatewayEvent {
-        platform: "qqbot".into(),
+        platform: Platform::QqBot,
         chat_id: msg.author.user_openid.clone(),
         chat_type: ChatType::Dm,
         user_id: msg.author.user_openid.clone(),
@@ -59,7 +60,7 @@ pub fn group_to_event(msg: &GroupMessage) -> Option<GatewayEvent> {
         return None;
     }
     Some(GatewayEvent {
-        platform: "qqbot".into(),
+        platform: Platform::QqBot,
         chat_id: msg.group_openid.clone(),
         chat_type: ChatType::Group,
         user_id: msg.author.member_openid.clone(),
@@ -131,7 +132,7 @@ mod tests {
         }))
         .unwrap();
         let ev = c2c_to_event(&msg).expect("event");
-        assert_eq!(ev.platform, "qqbot");
+        assert_eq!(ev.platform, Platform::QqBot);
         assert_eq!(ev.chat_id, "U_OPENID_1");
         assert_eq!(ev.user_id, "U_OPENID_1");
         assert!(matches!(ev.chat_type, ChatType::Dm));

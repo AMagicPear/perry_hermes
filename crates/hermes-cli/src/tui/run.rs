@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use futures::StreamExt;
 use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, SessionRegistry};
+use perry_hermes_core::Platform;
 use perry_hermes_core::error::LoopError;
 use perry_hermes_core::tool::ToolOutput;
 use ratatui::backend::{Backend, CrosstermBackend};
@@ -71,7 +72,8 @@ fn new_cli_session_key() -> String {
         .unwrap_or_default();
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!(
-        "cli:run:{}-{}-{}",
+        "{}:run:{}-{}-{}",
+        Platform::Tui.as_str(),
         std::process::id(),
         now.as_nanos(),
         counter
@@ -117,7 +119,8 @@ pub async fn run(
     let sessions_dir = perry_hermes_agent::default_sessions_dir();
     let system_message = agent.system_message_for(&working_dir);
     let registry = SessionRegistry::new(sessions_dir, working_dir, system_message);
-    let entry = registry.get_or_create(&new_cli_session_key()).await;
+    let cli_key = new_cli_session_key();
+    let entry = registry.get_or_create(&cli_key).await;
     let session = entry.session.clone();
 
     let result: Result<(), RunError> = async {
@@ -179,6 +182,12 @@ pub async fn run(
     if let Err(e) = disable_raw_mode() {
         eprintln!("[perry-hermes] warning: failed to disable raw mode: {e}");
     }
+
+    // Best-effort archive of this CLI run's session. Failure is
+    // logged inside `archive_active` and does not affect the run
+    // result returned to the caller.
+    let _ = registry.archive_active(&cli_key).await;
+
     result
 }
 
@@ -393,11 +402,6 @@ fn dispatch_event(
             app.active_turn_cancel = None;
             match res {
                 Ok(_) => {}
-                Err(AgentRunError::Loop(LoopError::CancelledWith(_))) => {
-                    if let Some(history) = history.as_mut() {
-                        history.finish_stream(app.history_width);
-                    }
-                }
                 Err(AgentRunError::Loop(LoopError::Cancelled)) => {
                     if let Some(history) = history.as_mut() {
                         history.finish_stream(app.history_width);
@@ -423,7 +427,6 @@ fn dispatch_event(
                     let next = apply_loop_event(app, event);
                     let _ = dispatch_event(app, next, cancel, None, history)?;
                 }
-                Err(AgentRunError::Loop(LoopError::CancelledWith(_))) => {}
                 Err(AgentRunError::Loop(LoopError::Cancelled)) => {}
                 Err(e) => {
                     let line = RenderedLine::System(format!("error: {e}"));
@@ -772,7 +775,7 @@ mod tests {
             3,
             "cli session key should follow platform:chat_type:id shape; got {first}"
         );
-        assert_eq!(parts[0], "cli", "platform segment");
+        assert_eq!(parts[0], Platform::Tui.as_str(), "platform segment");
         assert_eq!(parts[1], "run", "chat_type segment");
         assert!(
             !parts[2].is_empty(),

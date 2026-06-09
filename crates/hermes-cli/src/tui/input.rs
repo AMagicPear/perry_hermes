@@ -116,13 +116,16 @@ fn parse_slash_or_submit(text: String) -> AppEvent {
     }
 
     match Command::parse(trimmed) {
-        Some(Command::Quit) => AppEvent::Quit,
-        Some(Command::Compact(focus)) => AppEvent::Compact(focus),
-        Some(Command::Clear) => AppEvent::Clear,
-        // Gateway-only commands are not valid in the TUI
-        Some(cmd) => AppEvent::Append(RenderedLine::System(format!(
-            "Unknown command: {cmd}. Try /quit, /exit, /compact [focus], /clear."
-        ))),
+        Some(parsed) => match parsed.command {
+            Command::Quit => AppEvent::Quit,
+            Command::Compact => AppEvent::Compact(parsed.arg),
+            Command::Clear => AppEvent::Clear,
+            // Gateway-only commands are not valid in the TUI
+            other => AppEvent::Append(RenderedLine::System(format!(
+                "Unknown command: /{}. Try /quit, /exit, /compact [focus], /clear.",
+                other.meta().name,
+            ))),
+        },
         None => {
             // Not a known command — check if it looks like a command at all
             let word = trimmed.split_whitespace().next().unwrap_or("");

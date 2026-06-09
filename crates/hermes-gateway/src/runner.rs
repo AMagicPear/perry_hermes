@@ -1,10 +1,11 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, SessionEntry, SessionRegistry};
-use perry_hermes_core::Message;
+use perry_hermes_core::Platform;
 use perry_hermes_core::commands::Command;
 
 use crate::adapter::PlatformAdapter;
@@ -34,7 +35,7 @@ pub struct GatewayRunner {
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
     #[error("user {user_id} is not allowed on platform {platform}")]
-    Unauthorized { platform: String, user_id: String },
+    Unauthorized { platform: Platform, user_id: String },
     #[error("agent run failed: {0}")]
     AgentRun(#[from] AgentRunError),
 }
@@ -50,25 +51,12 @@ pub enum GatewayResponse {
 
 impl GatewayRunner {
     pub fn new(agent: Arc<AIAgent>, config: GatewayConfig) -> Self {
-        let system_message = config.system_prompt.as_deref().map(Message::system);
+        let system_message = agent.system_message_for(&config.working_dir);
         let sessions = Arc::new(SessionRegistry::new(
             config.sessions_dir.clone(),
             config.working_dir.clone(),
             system_message,
         ));
-        Self {
-            agent,
-            sessions,
-            config,
-        }
-    }
-
-    /// Construct with an existing [`SessionRegistry`] (useful for testing).
-    pub fn with_registry(
-        agent: Arc<AIAgent>,
-        config: GatewayConfig,
-        sessions: Arc<SessionRegistry>,
-    ) -> Self {
         Self {
             agent,
             sessions,
@@ -93,10 +81,13 @@ impl GatewayRunner {
 
     /// Process an incoming event from any platform adapter.
     pub async fn handle_event(&self, event: GatewayEvent) -> Result<GatewayResponse, GatewayError> {
-        // Authorization check
-        if !self.config.is_user_allowed(&event.platform, &event.user_id) {
+        // Authorization check — config keys on the platform's on-disk string form.
+        if !self
+            .config
+            .is_user_allowed(event.platform.as_str(), &event.user_id)
+        {
             return Err(GatewayError::Unauthorized {
-                platform: event.platform.clone(),
+                platform: event.platform,
                 user_id: event.user_id.clone(),
             });
         }
@@ -108,15 +99,15 @@ impl GatewayRunner {
         }
 
         // Command handling via the unified Command enum
-        if let Some(cmd) = Command::parse(text) {
-            return match cmd {
+        if let Some(parsed) = Command::parse(text) {
+            return match parsed.command {
                 Command::Reset | Command::New => {
                     let key = build_key(&event);
                     self.sessions.reset(&key).await;
                     info!(session = %key, "session reset by user");
                     Ok(GatewayResponse::Reply("Session has been reset.".into()))
                 }
-                Command::Compact(_) => self.handle_compact(&event).await,
+                Command::Compact => self.handle_compact(&event, parsed.arg.as_deref()).await,
                 Command::Status => self.handle_status(&event).await,
                 // CLI-only commands are ignored in the gateway
                 Command::Quit | Command::Clear => Ok(GatewayResponse::Ignored),
@@ -219,12 +210,18 @@ impl GatewayRunner {
         }
     }
 
-    /// Handle /compact command.
-    async fn handle_compact(&self, event: &GatewayEvent) -> Result<GatewayResponse, GatewayError> {
+    /// Handle /compact command. `focus` is the optional argument the user
+    /// passed (e.g. the `shell` in `/compact shell`); passed through to
+    /// the agent so it can bias the compaction summary.
+    async fn handle_compact(
+        &self,
+        event: &GatewayEvent,
+        focus: Option<&str>,
+    ) -> Result<GatewayResponse, GatewayError> {
         let entry = self.session(event).await;
         let _guard = entry.turn_lock.lock().await;
 
-        match self.agent.compact_session(&entry.session, None).await {
+        match self.agent.compact_session(&entry.session, focus).await {
             Ok(event) => Ok(GatewayResponse::Reply(format!(
                 "Compaction result: {event:?}"
             ))),
@@ -241,12 +238,78 @@ impl GatewayRunner {
         let entry = self.session(event).await;
         let messages = entry.session.messages().await;
         let key = build_key(event);
+        let archive_dir = self.config.sessions_dir.join(".archive");
+        let archived = count_files_in(&archive_dir).await;
 
         Ok(GatewayResponse::Reply(format!(
-            "Session: {}\nMessages: {}\nWorking dir: {}",
+            "Session: {}\nMessages: {}\nWorking dir: {}\nArchived: {}",
             key,
             messages.len(),
             entry.session.working_dir.display(),
+            archived,
         )))
+    }
+}
+
+/// Count the regular files in `dir`. Returns 0 if the directory
+/// does not exist. Non-recoverable filesystem errors are logged
+/// via `tracing::warn!` and the scan aborts at the point of
+/// failure (returning the count seen so far).
+async fn count_files_in(dir: &Path) -> u64 {
+    let mut rd = match tokio::fs::read_dir(dir).await {
+        Ok(rd) => rd,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return 0,
+        Err(err) => {
+            tracing::warn!(error = %err, dir = %dir.display(), "cannot read archive dir");
+            return 0;
+        }
+    };
+    let mut n = 0u64;
+    loop {
+        match rd.next_entry().await {
+            Ok(Some(entry)) => {
+                let is_file = matches!(
+                    entry.file_type().await,
+                    Ok(ft) if ft.is_file()
+                );
+                if is_file {
+                    n += 1;
+                }
+            }
+            Ok(None) => break,
+            Err(err) => {
+                tracing::warn!(error = %err, dir = %dir.display(), "archive dir scan aborted");
+                break;
+            }
+        }
+    }
+    n
+}
+
+#[cfg(test)]
+mod count_files_in_tests {
+    use super::count_files_in;
+
+    #[tokio::test]
+    async fn empty_dir_returns_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(count_files_in(tmp.path()).await, 0);
+    }
+
+    #[tokio::test]
+    async fn counts_regular_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.json"), b"x").unwrap();
+        std::fs::write(tmp.path().join("b.json"), b"x").unwrap();
+        std::fs::create_dir(tmp.path().join("nested")).unwrap();
+        // nested/ is a directory; should not inflate the count.
+        assert_eq!(count_files_in(tmp.path()).await, 2);
+    }
+
+    #[tokio::test]
+    async fn nonexistent_dir_returns_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        assert_eq!(count_files_in(&missing).await, 0);
     }
 }

@@ -165,14 +165,6 @@ pub enum LoopEvent {
 
 impl AgentLoop {
     pub fn new(
-        provider: impl Provider + 'static,
-        registry: Arc<InMemoryRegistry>,
-        config: LoopConfig,
-    ) -> Self {
-        Self::from_provider(Arc::new(provider), registry, config)
-    }
-
-    pub fn from_provider(
         provider: Arc<dyn Provider>,
         registry: Arc<InMemoryRegistry>,
         config: LoopConfig,

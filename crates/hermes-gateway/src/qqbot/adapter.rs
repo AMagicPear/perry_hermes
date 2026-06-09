@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use perry_hermes_core::Platform;
 use qq_bot_rs::types::message::{C2cMessage, GroupMessage, OutgoingMessage};
 
 use crate::adapter::PlatformAdapter;
@@ -37,7 +38,7 @@ impl QQBotAdapter {
 #[async_trait]
 impl PlatformAdapter for QQBotAdapter {
     fn name(&self) -> &str {
-        "qqbot"
+        Platform::QqBot.as_str()
     }
 
     async fn run(&self, gateway: Arc<GatewayRunner>) -> anyhow::Result<()> {

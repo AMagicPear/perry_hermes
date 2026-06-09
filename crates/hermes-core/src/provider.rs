@@ -120,4 +120,4 @@ pub struct CompletionDelta {
 
 // Re-exported so provider callers have one stable import path while the
 // implementation stays in `crate::accumulator`.
-pub use crate::accumulator::{StreamAccumulator, accumulate_stream};
+pub use crate::accumulator::StreamAccumulator;

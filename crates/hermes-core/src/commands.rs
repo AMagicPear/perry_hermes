@@ -1,71 +1,178 @@
-/// Project-wide slash command enum.
+use std::mem;
+
+use crate::platform::Platform;
+
+/// Project-wide slash command identity.
 ///
-/// Covers all commands across all platforms (CLI, Telegram, etc.).
-/// Each platform matches the variants it cares about and ignores the rest.
-/// `Command::parse` is the single parser for `/command [args]` input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// All variants are unit — commands are *identities* (which one was
+/// invoked), not carriers of their arguments. Any trailing argument
+/// (e.g. `/compact <focus>`) lives in [`ParsedCommand::arg`], not on the
+/// variant. This keeps the enum from growing a new variant every time
+/// we add a command that takes a string.
+///
+/// Variants are paired with their metadata in [`Command::ALL`], which
+/// is the single source of truth for names, descriptions, and platform
+/// availability. [`Command::parse`] and the [`Display`] impl both go
+/// through that dictionary rather than re-encoding name strings locally.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Command {
-    /// `/reset` — reset the current session (gateway).
+    /// `/reset` — reset the current session.
     Reset,
-    /// `/new` — alias for `/reset` (gateway).
+    /// `/new` — alias for `/reset`.
     New,
-    /// `/compact [focus]` — compact conversation context (CLI + gateway).
-    Compact(Option<String>),
-    /// `/status` — show session status (gateway).
+    /// `/compact [focus]` — compact conversation context.
+    Compact,
+    /// `/status` — show session status.
     Status,
-    /// `/quit` or `/exit` — exit the application (CLI).
+    /// `/quit` or `/exit` — exit the application (TUI only).
     Quit,
-    /// `/clear` — clear scrollback (CLI).
+    /// `/clear` — clear scrollback (TUI only).
     Clear,
 }
 
-impl Command {
-    /// Parse a `/command [args]` string into a `Command`.
-    /// Returns `None` for unrecognized commands.
-    pub fn parse(input: &str) -> Option<Self> {
-        let trimmed = input.trim();
-        let mut parts = trimmed.splitn(2, char::is_whitespace);
-        let cmd = parts.next().unwrap_or("");
-        let rest = parts.next().unwrap_or("").trim();
+/// The result of [`Command::parse`]: a command identity plus its optional
+/// trailing argument. `arg` is `Some` only when the input had content
+/// after the command name; most commands leave it `None`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedCommand {
+    pub command: Command,
+    pub arg: Option<String>,
+}
 
-        match cmd {
-            "/reset" => Some(Self::Reset),
-            "/new" => Some(Self::New),
-            "/compact" => Some(Self::Compact(if rest.is_empty() {
-                None
-            } else {
-                Some(rest.to_string())
-            })),
-            "/status" => Some(Self::Status),
-            "/quit" | "/exit" => Some(Self::Quit),
-            "/clear" => Some(Self::Clear),
-            _ => None,
-        }
+impl Command {
+    /// The dictionary: every variant paired with its metadata. Adding a
+    /// command means adding a variant to the enum and one tuple entry
+    /// here — `parse`, `Display`, `for_platform`, and `meta` all derive
+    /// their behavior from this list.
+    pub const ALL: &'static [(Self, CommandMeta)] = &[
+        (
+            Self::Reset,
+            CommandMeta {
+                name: "reset",
+                description: "Reset the current session",
+                platforms: &[Platform::Tui, Platform::QqBot, Platform::Telegram],
+            },
+        ),
+        (
+            Self::New,
+            CommandMeta {
+                name: "new",
+                description: "Reset the current session (alias)",
+                platforms: &[Platform::Tui, Platform::QqBot, Platform::Telegram],
+            },
+        ),
+        (
+            Self::Compact,
+            CommandMeta {
+                name: "compact",
+                description: "Compact the conversation context",
+                platforms: &[Platform::Tui, Platform::QqBot, Platform::Telegram],
+            },
+        ),
+        (
+            Self::Status,
+            CommandMeta {
+                name: "status",
+                description: "Show session status",
+                platforms: &[Platform::Tui, Platform::QqBot, Platform::Telegram],
+            },
+        ),
+        (
+            Self::Quit,
+            CommandMeta {
+                name: "quit",
+                description: "Exit the application",
+                platforms: &[Platform::Tui],
+            },
+        ),
+        (
+            Self::Clear,
+            CommandMeta {
+                name: "clear",
+                description: "Clear scrollback",
+                platforms: &[Platform::Tui],
+            },
+        ),
+    ];
+
+    /// Look up the metadata for this variant. O(n) over `ALL` (n=6) by
+    /// discriminant — fine for the size.
+    pub fn meta(&self) -> &'static CommandMeta {
+        let d = mem::discriminant(self);
+        Self::ALL
+            .iter()
+            .find(|(c, _)| mem::discriminant(c) == d)
+            .map(|(_, m)| m)
+            .expect("ALL must contain an entry for every Command variant")
     }
 
-    /// Human-readable description for help / registration.
-    pub fn description(&self) -> &'static str {
-        match self {
-            Self::Reset => "Reset the current session",
-            Self::New => "Reset the current session (alias)",
-            Self::Compact(_) => "Compact the conversation context",
-            Self::Status => "Show session status",
-            Self::Quit => "Exit the application",
-            Self::Clear => "Clear scrollback",
+    /// Metadata for the commands available on `platform`, in `ALL` order.
+    /// Single entry point adapters (and help text generators) use to
+    /// discover their supported command set — no caller needs to know
+    /// which specific names belong to which platform.
+    pub fn for_platform(platform: Platform) -> impl Iterator<Item = &'static CommandMeta> {
+        Self::ALL
+            .iter()
+            .filter(move |(_, m)| m.platforms.contains(&platform))
+            .map(|(_, m)| m)
+    }
+
+    /// Parse a `/command [args]` string. Returns `None` for unrecognized
+    /// commands. The known names live in [`Command::ALL`] — this function
+    /// does not embed any name string literals of its own (except the
+    /// single historical alias `/exit` → `/quit`).
+    pub fn parse(input: &str) -> Option<ParsedCommand> {
+        let trimmed = input.trim();
+        let mut parts = trimmed.splitn(2, char::is_whitespace);
+        let raw_cmd = parts.next().unwrap_or("");
+
+        // Require a leading '/' so that normal chat messages that
+        // happen to start with a command name (e.g. "reset my
+        // password") are not mis-parsed as commands. The TUI input
+        // handler already guards for this, but the gateway calls
+        // `parse` directly on raw user text.
+        if !raw_cmd.starts_with('/') {
+            return None;
         }
+
+        let cmd = raw_cmd.trim_start_matches('/');
+        let rest = parts.next().unwrap_or("").trim();
+
+        // The only historical alias. Kept here rather than in `ALL` so
+        // that the dictionary holds one canonical name per variant.
+        let canonical = if cmd == "exit" { "quit" } else { cmd };
+
+        Self::ALL.iter().find_map(|(command, m)| {
+            if m.name != canonical {
+                return None;
+            }
+            Some(ParsedCommand {
+                command: *command,
+                arg: if rest.is_empty() {
+                    None
+                } else {
+                    Some(rest.to_string())
+                },
+            })
+        })
     }
 }
 
-impl std::fmt::Display for Command {
+/// Static description of a single command. The value type of the
+/// `Command::ALL` dictionary, so all fields are `&'static`.
+#[derive(Debug, Clone, Copy)]
+pub struct CommandMeta {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub platforms: &'static [Platform],
+}
+
+impl std::fmt::Display for ParsedCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Compact(Some(focus)) => write!(f, "/compact {focus}"),
-            Self::Compact(None) => f.write_str("/compact"),
-            Self::Reset => f.write_str("/reset"),
-            Self::New => f.write_str("/new"),
-            Self::Status => f.write_str("/status"),
-            Self::Quit => f.write_str("/quit"),
-            Self::Clear => f.write_str("/clear"),
+        let m = self.command.meta();
+        match &self.arg {
+            Some(arg) => write!(f, "/{} {}", m.name, arg),
+            None => write!(f, "/{}", m.name),
         }
     }
 }
@@ -73,24 +180,58 @@ impl std::fmt::Display for Command {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
+    use std::mem::discriminant;
 
-    #[test]
-    fn parse_basics() {
-        assert_eq!(Command::parse("/reset"), Some(Command::Reset));
-        assert_eq!(Command::parse("/new"), Some(Command::New));
-        assert_eq!(Command::parse("/status"), Some(Command::Status));
-        assert_eq!(Command::parse("/quit"), Some(Command::Quit));
-        assert_eq!(Command::parse("/exit"), Some(Command::Quit));
-        assert_eq!(Command::parse("/clear"), Some(Command::Clear));
+    fn parsed(command: Command, arg: Option<&str>) -> ParsedCommand {
+        ParsedCommand {
+            command,
+            arg: arg.map(String::from),
+        }
     }
 
     #[test]
-    fn parse_compact() {
-        assert_eq!(Command::parse("/compact"), Some(Command::Compact(None)));
+    fn parse_basics() {
+        assert_eq!(Command::parse("/reset"), Some(parsed(Command::Reset, None)));
+        assert_eq!(Command::parse("/new"), Some(parsed(Command::New, None)));
+        assert_eq!(
+            Command::parse("/status"),
+            Some(parsed(Command::Status, None))
+        );
+        assert_eq!(Command::parse("/quit"), Some(parsed(Command::Quit, None)));
+        // Historical alias for /quit.
+        assert_eq!(Command::parse("/exit"), Some(parsed(Command::Quit, None)));
+        assert_eq!(Command::parse("/clear"), Some(parsed(Command::Clear, None)));
+    }
+
+    #[test]
+    fn parse_compact_carries_arg_separately_from_variant() {
+        assert_eq!(
+            Command::parse("/compact"),
+            Some(parsed(Command::Compact, None))
+        );
         assert_eq!(
             Command::parse("/compact focus on shell"),
-            Some(Command::Compact(Some("focus on shell".into())))
+            Some(parsed(Command::Compact, Some("focus on shell"))),
         );
+        // Same variant, different arg — the variant alone doesn't change.
+        assert_eq!(
+            Command::parse("/compact foo"),
+            Some(parsed(Command::Compact, Some("foo"))),
+        );
+    }
+
+    #[test]
+    fn parse_requires_leading_slash() {
+        // Normal chat messages that start with a command name must NOT
+        // be parsed as commands — only /-prefixed input is.
+        assert_eq!(Command::parse("reset"), None);
+        assert_eq!(Command::parse("status update"), None);
+        assert_eq!(Command::parse("quit now"), None);
+        assert_eq!(Command::parse("clear screen"), None);
+        // With the prefix they are commands.
+        assert!(Command::parse("/reset").is_some());
+        assert!(Command::parse("/status").is_some());
     }
 
     #[test]
@@ -100,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn display_round_trips_for_non_arg_commands() {
+    fn display_round_trips_for_arg_less_commands() {
         for cmd in [
             Command::Reset,
             Command::New,
@@ -108,7 +249,77 @@ mod tests {
             Command::Quit,
             Command::Clear,
         ] {
-            assert_eq!(Command::parse(&format!("{cmd}")), Some(cmd));
+            let p = parsed(cmd, None);
+            assert_eq!(Command::parse(&format!("{p}")), Some(p));
+        }
+    }
+
+    #[test]
+    fn display_round_trips_for_compact_with_arg() {
+        let p = parsed(Command::Compact, Some("focus on shell"));
+        assert_eq!(format!("{p}"), "/compact focus on shell");
+        assert_eq!(Command::parse(&format!("{p}")), Some(p));
+    }
+
+    #[test]
+    fn all_covers_every_variant_exactly_once() {
+        // One entry per Command variant — and every variant is present.
+        let in_all: HashSet<_> = Command::ALL.iter().map(|(c, _)| discriminant(c)).collect();
+        let expected: HashSet<_> = [
+            discriminant(&Command::Reset),
+            discriminant(&Command::New),
+            discriminant(&Command::Compact),
+            discriminant(&Command::Status),
+            discriminant(&Command::Quit),
+            discriminant(&Command::Clear),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            in_all, expected,
+            "ALL must contain exactly one entry per Command variant"
+        );
+
+        // Names are unique — protects `parse`'s name lookup.
+        let names: HashSet<&str> = Command::ALL.iter().map(|(_, m)| m.name).collect();
+        assert_eq!(names.len(), Command::ALL.len(), "duplicate name in ALL");
+    }
+
+    #[test]
+    fn for_platform_splits_tui_from_gateways() {
+        // TUI sees everything.
+        let tui: Vec<&str> = Command::for_platform(Platform::Tui)
+            .map(|m| m.name)
+            .collect();
+        assert_eq!(tui.len(), Command::ALL.len());
+        assert!(tui.contains(&"quit"));
+        assert!(tui.contains(&"clear"));
+
+        // Each gateway excludes the TUI-only `/quit` and `/clear`.
+        for gw in [Platform::QqBot, Platform::Telegram] {
+            let names: Vec<&str> = Command::for_platform(gw).map(|m| m.name).collect();
+            assert_eq!(
+                names.len(),
+                Command::ALL.len() - 2,
+                "gateway {gw:?} should drop exactly the two TUI-only commands",
+            );
+            assert!(!names.contains(&"quit"), "{gw:?} leaked /quit");
+            assert!(!names.contains(&"clear"), "{gw:?} leaked /clear");
+        }
+
+        // The four shared gateway commands appear in ALL order.
+        let tg: Vec<&str> = Command::for_platform(Platform::Telegram)
+            .map(|m| m.name)
+            .collect();
+        assert_eq!(tg, vec!["reset", "new", "compact", "status"]);
+
+        // Every command lists at least one platform.
+        for (_, m) in Command::ALL {
+            assert!(
+                !m.platforms.is_empty(),
+                "ALL entry '{}' has no platform",
+                m.name
+            );
         }
     }
 }

@@ -19,21 +19,14 @@ use crate::{
 
 pub struct AIAgent {
     agent_loop: AgentLoop,
-    /// User-configured system prompt. Skills, AGENTS.md, and working-dir
-    /// hints are folded in once when a new session is created.
-    system_prompt: Option<String>,
 }
 
 impl AIAgent {
-    /// Low-level constructor that takes a pre-built `AgentLoop` and an
-    /// empty `system_prompt`. Production code should use
-    /// `AIAgent::from_config`, which composes skills, AGENTS.md, and
-    /// working-dir hints into the system prompt.
+    /// Low-level constructor that takes a pre-built `AgentLoop`.
+    /// Only used in tests.
+    #[cfg(test)]
     pub fn from_agent_loop(agent_loop: AgentLoop) -> Self {
-        Self {
-            agent_loop,
-            system_prompt: None,
-        }
+        Self { agent_loop }
     }
 
     // Public constructor: takes PerryHermesConfig by value so callers can
@@ -45,8 +38,11 @@ impl AIAgent {
         let selected_provider = config.resolve_provider()?;
         let provider = build_provider(&selected_provider)?;
         Ok(Self {
-            agent_loop: build_loop(Arc::from(provider), &config, &selected_provider),
-            system_prompt: config.agent.system_prompt.clone(),
+            agent_loop: build_loop_for_custom_provider(
+                Arc::from(provider),
+                &config,
+                Some(&selected_provider),
+            ),
         })
     }
 
@@ -61,7 +57,6 @@ impl AIAgent {
                 &config,
                 selected_provider.as_ref(),
             ),
-            system_prompt: config.agent.system_prompt.clone(),
         }
     }
 
@@ -80,10 +75,10 @@ impl AIAgent {
     }
 
     /// Build the system message for a session at `working_dir`.
-    /// Includes the user's system prompt, AGENTS.md content, working
-    /// directory hint, and skills index.
+    /// Includes the hardcoded base prompt, skills index, AGENTS.md
+    /// content, and working directory hint.
     pub fn system_message_for(&self, working_dir: &std::path::Path) -> Option<Message> {
-        build_system_message(self.system_prompt.as_deref(), working_dir)
+        build_system_message(working_dir)
     }
 
     pub async fn load_json_session(
@@ -199,14 +194,6 @@ fn strip_system_message(messages: &[Message]) -> Vec<Message> {
         .collect()
 }
 
-fn build_loop(
-    provider: Arc<dyn Provider>,
-    config: &PerryHermesConfig,
-    selected_provider: &ResolvedProviderConfig,
-) -> AgentLoop {
-    build_loop_for_custom_provider(provider, config, Some(selected_provider))
-}
-
 fn build_loop_for_custom_provider(
     provider: Arc<dyn Provider>,
     config: &PerryHermesConfig,
@@ -235,7 +222,7 @@ fn build_loop_for_custom_provider(
             .context_compression_threshold_percent
             .unwrap_or(0.50),
     });
-    AgentLoop::from_provider(
+    AgentLoop::new(
         provider,
         registry,
         LoopConfig {
@@ -513,6 +500,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_json_session_uses_current_cwd_and_rebuilds_system_message() {
+        let _guard = crate::test_env::lock().await;
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("sessions").join("session-1.json");
         let saved = AgentSession::new(
@@ -526,20 +514,19 @@ mod tests {
         saved.append_message(Message::user("saved hello")).await;
         saved.remember_context_usage_baseline(123).await;
 
-        let mut config = echo_config();
-        config.agent.system_prompt = Some("NEW SYSTEM".into());
-        let agent = AIAgent::new(perry_hermes_providers::EchoProvider::new(), config);
+        let agent = AIAgent::new(perry_hermes_providers::EchoProvider::new(), echo_config());
         let session = agent
             .load_json_session(path)
             .await
             .expect("session should load");
-        let current_cwd = std::env::current_dir().unwrap();
+        let current_cwd = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+        let session_cwd = std::fs::canonicalize(session.working_dir.as_ref()).unwrap();
 
-        assert_eq!(session.working_dir.as_ref(), &current_cwd);
+        assert_eq!(session_cwd, current_cwd);
 
         let outbound = session.outbound_messages().await;
         let system_text = outbound[0].content.as_text();
-        assert!(system_text.contains("NEW SYSTEM"));
+        assert!(system_text.contains("careful assistant"));
         assert!(system_text.contains(&format!(
             "Current working directory: {}",
             current_cwd.display()
@@ -562,7 +549,7 @@ mod tests {
             calls: Arc::new(Mutex::new(0)),
         };
         let agent_loop = AgentLoop::new(
-            provider,
+            Arc::new(provider),
             Arc::new(registry),
             LoopConfig {
                 max_iterations: 3,

@@ -281,8 +281,6 @@ pub struct AgentConfig {
     pub max_iterations: Option<u32>,
     #[serde(default)]
     pub disabled_toolsets: Vec<String>,
-    #[serde(default)]
-    pub system_prompt: Option<String>,
     /// Enable context compression. Default true; set false to disable.
     #[serde(default = "default_context_compression_enabled")]
     pub context_compression_enabled: bool,
@@ -303,7 +301,6 @@ impl Default for AgentConfig {
             default_provider: String::new(),
             default_model: String::new(),
             disabled_toolsets: Vec::new(),
-            system_prompt: None,
             context_compression_enabled: default_context_compression_enabled(),
             context_compression_threshold_percent: None,
         }
