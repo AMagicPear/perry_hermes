@@ -175,36 +175,32 @@ impl SessionRegistry {
 
     /// Reserve a sub-agent session for the given parent. The
     /// child key is derived as
-    /// `<parent_key>__sub_<sub_id>__<utc_ts>`. The in-memory
-    /// session is stamped with `role = SubAgent` and
-    /// `parent_session_id = parent_key`; the on-disk snapshot
-    /// picks up these fields on the next `append_message`.
+    /// `<parent_key>__sub_<sub_id>__<utc_ts>`. The timestamp
+    /// guarantees uniqueness, so this method builds the session
+    /// directly rather than going through `get_or_create`
+    /// (no disk-load or corrupt-recovery needed for a new key).
+    ///
+    /// The session is stamped with `role = SubAgent` and
+    /// `parent_session_id = parent_key` at construction; the
+    /// on-disk snapshot picks up these fields on the first
+    /// `append_message`.
     ///
     /// This method is reserved for the future sub-agent runtime
     /// and is not invoked by any adapter today.
     pub async fn create_sub_session(&self, parent_key: &str, sub_id: &str) -> Arc<SessionEntry> {
         let ts = archive_timestamp();
         let child_key = format!("{parent_key}__sub_{sub_id}__{ts}");
-        let entry = self.get_or_create(&child_key).await;
+        let session_id = format_session_id(&child_key);
+        let store_path = self.sessions_dir.join(format!("{session_id}.json"));
 
-        // Construct a patched session that shares the message log
-        // and store (both held by Arc inside AgentSession) with
-        // the entry returned above, but with the sub-agent
-        // identity stamped on. Persistence of the new identity
-        // happens automatically on the next `append_message`.
-        let patched = entry
-            .session
-            .clone()
-            .with_subagent_identity(Arc::from(parent_key));
+        let session =
+            AgentSession::new(&session_id, &self.working_dir, self.system_message.clone())
+                .with_json_file_store(&store_path)
+                .with_subagent_identity(Arc::from(parent_key));
 
-        // The first `get_or_create` produced an entry with an
-        // identity-less AgentSession; replace it with the patched
-        // one. The fresh `turn_lock` and `created_at` are
-        // intentional — a sub-agent runs independently of the
-        // parent.
-        let new_entry = SessionEntry::new(patched);
-        self.sessions.insert(child_key, new_entry.clone());
-        new_entry
+        let entry = SessionEntry::new(session);
+        self.sessions.insert(child_key, entry.clone());
+        entry
     }
 
     /// Get a reference to the session for `key`, if it exists.

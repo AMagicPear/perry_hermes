@@ -124,7 +124,18 @@ impl Command {
     pub fn parse(input: &str) -> Option<ParsedCommand> {
         let trimmed = input.trim();
         let mut parts = trimmed.splitn(2, char::is_whitespace);
-        let cmd = parts.next().unwrap_or("").trim_start_matches('/');
+        let raw_cmd = parts.next().unwrap_or("");
+
+        // Require a leading '/' so that normal chat messages that
+        // happen to start with a command name (e.g. "reset my
+        // password") are not mis-parsed as commands. The TUI input
+        // handler already guards for this, but the gateway calls
+        // `parse` directly on raw user text.
+        if !raw_cmd.starts_with('/') {
+            return None;
+        }
+
+        let cmd = raw_cmd.trim_start_matches('/');
         let rest = parts.next().unwrap_or("").trim();
 
         // The only historical alias. Kept here rather than in `ALL` so
@@ -208,6 +219,19 @@ mod tests {
             Command::parse("/compact foo"),
             Some(parsed(Command::Compact, Some("foo"))),
         );
+    }
+
+    #[test]
+    fn parse_requires_leading_slash() {
+        // Normal chat messages that start with a command name must NOT
+        // be parsed as commands — only /-prefixed input is.
+        assert_eq!(Command::parse("reset"), None);
+        assert_eq!(Command::parse("status update"), None);
+        assert_eq!(Command::parse("quit now"), None);
+        assert_eq!(Command::parse("clear screen"), None);
+        // With the prefix they are commands.
+        assert!(Command::parse("/reset").is_some());
+        assert!(Command::parse("/status").is_some());
     }
 
     #[test]
