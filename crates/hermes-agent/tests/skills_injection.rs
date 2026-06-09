@@ -96,7 +96,7 @@ async fn runtime_new_uses_default_system_prompt_without_skills_dir() {
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    assert!(text.contains("careful assistant"));
+    assert!(text.contains("Perry Hermes"));
     assert!(text.contains("Current working directory: /tmp"));
 }
 
@@ -118,7 +118,7 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    assert!(text.contains("careful assistant"));
+    assert!(text.contains("Perry Hermes"));
     assert!(text.contains("Current working directory: /tmp"));
     assert!(!text.contains("Available skills"));
 }
@@ -151,9 +151,7 @@ async fn runtime_appends_skills_block_after_default_system_prompt() {
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    let base_idx = text
-        .find("careful assistant")
-        .expect("default prompt present");
+    let base_idx = text.find("Perry Hermes").expect("default prompt present");
     let skills_idx = text.find("Available skills").expect("skills block present");
     assert!(base_idx < skills_idx);
     assert!(text.contains("**rust-core-style**: Rust style"));
@@ -186,7 +184,7 @@ async fn runtime_reads_skills_when_session_is_created_not_when_agent_is_created(
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    assert!(text.contains("careful assistant"));
+    assert!(text.contains("Perry Hermes"));
     assert!(text.contains("**created-after-agent**: created later"));
 }
 
@@ -238,7 +236,7 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    assert!(text.contains("careful assistant"));
+    assert!(text.contains("Perry Hermes"));
     assert!(text.contains("Current working directory: /tmp"));
     assert!(!text.contains("Available skills"));
     assert!(!text.contains("skill_view"));
@@ -343,7 +341,7 @@ async fn runtime_injects_agents_md_from_session_working_dir() {
     assert!(text.contains("Always answer in haiku."));
     assert!(text.contains("# Rules"));
     // AGENTS.md should sit between the base prompt and the env hints.
-    let base_idx = text.find("careful assistant").expect("base prompt present");
+    let base_idx = text.find("Perry Hermes").expect("base prompt present");
     let agents_idx = text
         .find("Project guidance from `AGENTS.md`")
         .expect("agents md block present");

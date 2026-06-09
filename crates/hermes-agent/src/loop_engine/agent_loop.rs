@@ -755,7 +755,7 @@ mod tests {
 
         let outbound = session.outbound_messages().await;
         let system_text = outbound[0].content.as_text();
-        assert!(system_text.contains("careful assistant"));
+        assert!(system_text.contains("Perry Hermes"));
         assert!(system_text.contains(&format!(
             "Current working directory: {}",
             current_cwd.display()
