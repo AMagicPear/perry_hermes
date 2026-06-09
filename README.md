@@ -41,17 +41,13 @@ platform adapter
   e.g. Perry Hermes CLI, future gateway, Telegram
   owns: session_id -> AgentSession mapping and presentation
 
-AIAgent
-  shared runtime service
-  owns: provider, tool registry, config, system-prompt composition, AgentLoop
+AgentLoop
+  shared runtime service + per-turn execution engine
+  owns: provider, tool registry, config, system-prompt composition, loop execution
 
 AgentSession
   one conversation
   owns: SessionContext, message history, SessionState token facts
-
-AgentLoop
-  per-turn execution engine
-  owns: no session lifetime
 
 CompactionStrategy
   policy for rewriting messages
@@ -77,7 +73,7 @@ crates/hermes-cli
 
 crates/hermes-agent
   package: perry-hermes-agent
-  owns: AIAgent, AgentSession, AgentLoop, config, compaction, tool catalog
+  owns: AgentLoop, AgentSession, config, compaction, tool catalog
 
 crates/hermes-core
   package: perry-hermes-core
@@ -95,8 +91,7 @@ crates/hermes-skill-tools
 | Layer | Key files | Boundary |
 |---|---|---|
 | CLI adapter | [crates/hermes-cli/src/main.rs][cli-main], [crates/hermes-cli/src/tui/][tui] | Owns presentation and creates/uses an `AgentSession`; does not own prompt history. |
-| Agent runtime | [crates/hermes-agent/src/runtime_agent.rs][runtime-agent], [crates/hermes-agent/src/session.rs][session] | Owns runtime assembly and session APIs shared by CLI and future gateways. |
-| Loop engine | [crates/hermes-agent/src/loop_engine/][loop-engine] | Runs one turn, streams provider deltas, dispatches tools, and triggers compaction. |
+| Agent runtime | [crates/hermes-agent/src/loop_engine/][loop-engine], [crates/hermes-agent/src/session.rs][session] | Owns runtime assembly, loop engine, and session APIs shared by CLI and future gateways. |
 | Compaction | [crates/hermes-agent/src/compaction.rs][compaction] | Encodes the summary prompt and the current "anchors plus one summary" policy. |
 | Core contracts | [crates/hermes-core/src/][core] | Defines shared traits/types without provider, CLI, or filesystem policy. |
 | Providers | [crates/hermes-providers/src/][providers] | Translates external provider protocols into core streaming types. |
@@ -242,7 +237,7 @@ Testing guidance:
 - keep live provider calls in examples or manual checks, not automated tests
 - drive TUI behavior through `ratatui::backend::TestBackend`
 - when changing session/context behavior, add tests at the `AgentSession` or
-  `AIAgent` boundary rather than only in the CLI
+  `AgentLoop` boundary rather than only in the CLI
 
 ## License
 
@@ -252,7 +247,6 @@ MIT
 [hermes-comparison]: docs/history/hermes-comparison.md
 [cli-main]: crates/hermes-cli/src/main.rs
 [tui]: crates/hermes-cli/src/tui/
-[runtime-agent]: crates/hermes-agent/src/runtime_agent.rs
 [session]: crates/hermes-agent/src/session.rs
 [loop-engine]: crates/hermes-agent/src/loop_engine/
 [compaction]: crates/hermes-agent/src/compaction.rs

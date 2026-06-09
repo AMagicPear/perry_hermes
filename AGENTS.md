@@ -21,8 +21,7 @@ unless the current task explicitly asks for compatibility.
 ## Design Principles
 
 - A conversation is an `AgentSession`.
-- `AIAgent` is a reusable runtime service, not a session.
-- `AgentLoop` runs turns; it does not own session lifetime.
+- `AgentLoop` is a reusable runtime service that runs turns; it does not own session lifetime.
 - Platform adapters own presentation and `session_id -> AgentSession` mapping.
 - `AgentSession` owns message history and token facts.
 - Context compaction is session behavior driven by provider-reported usage.
@@ -47,9 +46,8 @@ perry-hermes-cli crate
   Perry Hermes CLI / ratatui platform adapter
 
 perry-hermes-agent crate
-  AIAgent
-  AgentSession
   AgentLoop
+  AgentSession
   SummaryCompactor
 
 perry-hermes-core crate
@@ -76,7 +74,7 @@ Key files:
 
 | File | Purpose |
 |---|---|
-| `crates/hermes-agent/src/runtime_agent.rs` | `AIAgent` construction and session-facing APIs |
+| `crates/hermes-agent/src/loop_engine/mod.rs` | `AgentLoop` construction and session-facing APIs |
 | `crates/hermes-agent/src/session.rs` | `AgentSession`, `SessionContext`, `SessionState`, message history |
 | `crates/hermes-agent/src/loop_engine/` | turn execution, provider streaming, tool dispatch, automatic compaction trigger |
 | `crates/hermes-agent/src/compaction.rs` | built-in summary compaction strategy and prompt |
@@ -101,12 +99,12 @@ Key files:
 - message history
 - `SessionState`: provider-derived token facts
 
-`AIAgent::run_session_turn` appends the user message to the session, runs the
+`AgentLoop::run_session_turn` appends the user message to the session, runs the
 current session history through `AgentLoop`, then writes the returned history
 back to the session. Failed turns that include preserved history also update
 the session.
 
-`AIAgent::compact_session` reads the session history, compacts it, and writes
+`AgentLoop::compact_session` reads the session history, compacts it, and writes
 the compacted history back only when compaction succeeds.
 
 ## Context Compaction

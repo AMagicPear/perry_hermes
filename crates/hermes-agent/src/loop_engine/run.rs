@@ -26,8 +26,8 @@ use perry_hermes_core::message::{Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason, StreamAccumulator};
 use perry_hermes_core::tool::ToolContext;
 
+use super::agent_loop::{AgentLoop, AgentRunError, FailedTurn, LoopEvent, LoopMetrics, RunResult};
 use super::metrics::{prompt_context_tokens_from_usage, validate_args};
-use super::{AgentLoop, AgentRunError, FailedTurn, LoopEvent, LoopMetrics, RunResult};
 use crate::compaction::{CompactOutcome, try_compact};
 use crate::session::AgentSession;
 

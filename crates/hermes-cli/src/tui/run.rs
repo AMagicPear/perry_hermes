@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures::StreamExt;
-use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, SessionRegistry};
+use perry_hermes_agent::{AgentLoop, AgentRunError, AgentSession, SessionRegistry};
 use perry_hermes_core::Platform;
 use perry_hermes_core::error::LoopError;
 use perry_hermes_core::tool::ToolOutput;
@@ -82,7 +82,7 @@ fn new_cli_session_key() -> String {
 
 /// Production entry point: drives the TUI against stdout / real keyboard.
 pub async fn run(
-    agent: Arc<AIAgent>,
+    agent: Arc<AgentLoop>,
     cancel: CancellationToken,
     provider_name: String,
     model_name: String,
@@ -251,7 +251,7 @@ pub async fn run_with_backend(
 }
 
 struct RunContext<'a> {
-    agent: &'a Arc<AIAgent>,
+    agent: &'a Arc<AgentLoop>,
     session: &'a AgentSession,
     input_tx: &'a mpsc::UnboundedSender<AppEvent>,
 }
@@ -891,7 +891,7 @@ mod tests {
 
     #[tokio::test]
     async fn compact_event_runs_agent_and_replaces_session_messages() {
-        let agent = Arc::new(AIAgent::new(CompactProvider, compact_config()));
+        let agent = Arc::new(AgentLoop::new(CompactProvider, compact_config()));
         let session = AgentSession::new("test", PathBuf::from("."), None);
         session
             .replace_messages(vec![

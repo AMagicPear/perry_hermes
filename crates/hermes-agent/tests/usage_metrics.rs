@@ -43,7 +43,7 @@ async fn loop_keeps_reading_after_finish_reason_to_capture_usage() {
             finish_reason: None,
         },
     ]]);
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(provider),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
@@ -117,7 +117,7 @@ async fn context_usage_includes_cached_provider_input_tokens_mid_tool_loop() {
             finish_reason: FinishReason::Stop,
         },
     ]);
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(provider),
         Arc::new(
             InMemoryRegistry::new()
@@ -190,7 +190,7 @@ async fn loop_emits_context_usage_only_from_normalized_real_usage() {
             finish_reason: Some(FinishReason::Stop),
         },
     ]]);
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(provider),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {

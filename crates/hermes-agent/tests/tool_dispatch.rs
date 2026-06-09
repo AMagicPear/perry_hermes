@@ -68,7 +68,7 @@ async fn loop_dispatches_tool_call_and_appends_tool_result_message() {
 
     let provider = ScriptedProvider::new(vec![first, second]);
     let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(provider),
         registry,
         LoopConfig {
@@ -156,7 +156,7 @@ async fn loop_routes_read_file_tool_call() {
 
     let provider = ScriptedProvider::new(vec![first, second]);
     let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(ReadFileTool::new())));
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(provider),
         registry,
         LoopConfig {
@@ -212,7 +212,7 @@ async fn loop_returns_partial_history_when_followup_provider_call_fails() {
         )),
     ]);
     let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(provider),
         registry,
         LoopConfig {
@@ -284,7 +284,7 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
         perry_hermes_core::ProviderError::Transport("stream dropped".into()),
     )]);
     let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(provider),
         registry,
         LoopConfig {

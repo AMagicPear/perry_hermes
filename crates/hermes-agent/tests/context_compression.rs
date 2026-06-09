@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use perry_hermes_agent::{
-    AIAgent, AgentLoop, AgentSession, CompactorConfig, ContextWindow, LoopConfig,
-    PerryHermesConfig, SummaryCompactor,
+    AgentLoop, AgentSession, CompactorConfig, ContextWindow, LoopConfig, PerryHermesConfig,
+    SummaryCompactor,
 };
 use perry_hermes_core::ProviderError;
 use perry_hermes_core::Usage;
@@ -106,7 +106,7 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
     let compactor =
         SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(ScriptedProvider::new(vec![first, second])),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
@@ -180,7 +180,7 @@ async fn loop_does_not_compress_until_real_context_usage_reaches_threshold() {
     let compactor =
         SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(ScriptedProvider::new(vec![first])),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
@@ -241,7 +241,7 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
     let compactor =
         SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(ScriptedProvider::new(vec![first])),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
@@ -336,7 +336,7 @@ async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
     let compactor =
         SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
-    let loop_ = AgentLoop::new(
+    let loop_ = AgentLoop::from_parts(
         Arc::new(ScriptedProvider::new(vec![first])),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
@@ -382,7 +382,7 @@ async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
 
 #[tokio::test]
 async fn session_compact_rewrites_history_with_summary_message() {
-    let agent = AIAgent::new(
+    let agent = AgentLoop::new(
         ScriptedProvider::new(vec![Completion {
             message: assistant_text("condensed"),
             usage: Usage::default(),
@@ -451,7 +451,7 @@ async fn session_compact_rewrites_history_with_summary_message() {
 
 #[tokio::test]
 async fn session_turn_owns_and_updates_message_history() {
-    let agent = AIAgent::new(
+    let agent = AgentLoop::new(
         ScriptedProvider::new(vec![Completion {
             message: assistant_text("first answer"),
             usage: Usage {
@@ -517,7 +517,7 @@ fn messages_to_text(messages: &[Message]) -> Vec<(&Role, String)> {
 
 #[tokio::test]
 async fn session_compact_rewrites_session_messages() {
-    let agent = AIAgent::new(
+    let agent = AgentLoop::new(
         ScriptedProvider::new(vec![Completion {
             message: assistant_text("condensed"),
             usage: Usage {
@@ -581,7 +581,7 @@ async fn session_compact_rewrites_session_messages() {
 
 #[tokio::test]
 async fn session_compact_reports_summary_failure() {
-    let agent = AIAgent::new(
+    let agent = AgentLoop::new(
         ScriptedProvider::from_steps(vec![
             support::ScriptedStep::Error(ProviderError::Transport("summary provider down".into())),
             support::ScriptedStep::Error(ProviderError::Transport(
@@ -628,7 +628,7 @@ async fn session_compact_reports_summary_failure() {
 
 #[tokio::test]
 async fn session_compact_compresses_medium_history_instead_of_skipping() {
-    let agent = AIAgent::new(
+    let agent = AgentLoop::new(
         ScriptedProvider::new(vec![Completion {
             message: assistant_text("condensed"),
             usage: Usage::default(),

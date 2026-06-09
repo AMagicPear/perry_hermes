@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
-use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, SessionEntry, SessionRegistry};
+use perry_hermes_agent::{AgentLoop, AgentRunError, LoopEvent, SessionEntry, SessionRegistry};
 use perry_hermes_core::Platform;
 use perry_hermes_core::commands::Command;
 
@@ -26,7 +26,7 @@ pub fn build_key(event: &GatewayEvent) -> String {
 
 /// Central orchestrator that bridges platform adapters with the agent runtime.
 pub struct GatewayRunner {
-    agent: Arc<AIAgent>,
+    agent: Arc<AgentLoop>,
     sessions: Arc<SessionRegistry>,
     config: GatewayConfig,
 }
@@ -50,7 +50,7 @@ pub enum GatewayResponse {
 }
 
 impl GatewayRunner {
-    pub fn new(agent: Arc<AIAgent>, config: GatewayConfig) -> Self {
+    pub fn new(agent: Arc<AgentLoop>, config: GatewayConfig) -> Self {
         let system_message = agent.system_message_for(&config.working_dir);
         let sessions = Arc::new(SessionRegistry::new(
             config.sessions_dir.clone(),
@@ -65,7 +65,7 @@ impl GatewayRunner {
     }
 
     /// Access the underlying agent.
-    pub fn agent(&self) -> &Arc<AIAgent> {
+    pub fn agent(&self) -> &Arc<AgentLoop> {
         &self.agent
     }
 

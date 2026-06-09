@@ -1,4 +1,4 @@
-//! End-to-end tests for the skills injection wiring in `AIAgent::from_config`.
+//! End-to-end tests for the skills injection wiring in `AgentLoop::from_config`.
 //!
 //! These tests use a scripted provider that captures the `messages`
 //! passed to its `stream` call. The captured system message is asserted
@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use futures::stream;
-use perry_hermes_agent::{AIAgent, PerryHermesConfig};
+use perry_hermes_agent::{AgentLoop, PerryHermesConfig};
 use perry_hermes_core::message::Message;
 use perry_hermes_core::provider::{CompletionDelta, CompletionStream, FinishReason, Provider};
 use tokio::sync::Mutex as AsyncMutex;
@@ -86,7 +86,7 @@ async fn runtime_new_uses_default_system_prompt_without_skills_dir() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
     let session = agent.new_session("t", PathBuf::from("/tmp"));
 
     agent
@@ -109,7 +109,7 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
     let session = agent.new_session("t", PathBuf::from("/tmp"));
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -141,7 +141,7 @@ async fn runtime_appends_skills_block_after_default_system_prompt() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
 
     let session = agent.new_session("t", PathBuf::from("/tmp"));
     agent
@@ -170,7 +170,7 @@ async fn runtime_reads_skills_when_session_is_created_not_when_agent_is_created(
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
 
     write_skill(
         &skills_dir_for(home.path()),
@@ -207,7 +207,7 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
     let session = agent.new_session("t", PathBuf::from("/tmp"));
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -229,7 +229,7 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
     let session = agent.new_session("t", PathBuf::from("/tmp"));
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -265,7 +265,7 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
     let session = agent.new_session("t", PathBuf::from("/tmp"));
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -293,7 +293,7 @@ async fn runtime_includes_working_directory_in_system_message() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
     let session = agent.new_session("cwd", PathBuf::from("/tmp/cwd-check"));
 
     agent
@@ -326,7 +326,7 @@ async fn runtime_injects_agents_md_from_session_working_dir() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
     let session = agent.new_session("agents-md", project.path().to_path_buf());
 
     agent
@@ -365,7 +365,7 @@ async fn runtime_omits_agents_md_block_when_file_absent_in_working_dir() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let agent = AIAgent::new(provider, config_for_echo());
+    let agent = AgentLoop::new(provider, config_for_echo());
     let session = agent.new_session("no-agents-md", project.path().to_path_buf());
 
     agent

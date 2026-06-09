@@ -1,8 +1,8 @@
-//! System-prompt composition for `AIAgent` and `AgentSession`.
+//! System-prompt composition for `AgentLoop` and `AgentSession`.
 //!
 //! The system prompt is a single immutable `Message` stored on
 //! `AgentSession`. It is built exactly once, at session construction,
-//! by `AIAgent::new_session`. There is no per-turn recomposition, no cache,
+//! by `AgentLoop::new_session`. There is no per-turn recomposition, no cache,
 //! and no "prepend at send time" injection step.
 
 use std::path::{Path, PathBuf};
@@ -39,8 +39,8 @@ pub fn resolve_skills_dir() -> Option<PathBuf> {
 /// Compose the prompt prefix for a newly-created session: the
 /// hardcoded [`DEFAULT_SYSTEM_PROMPT`] plus the skills block, if any.
 ///
-/// This is intentionally called from session creation, not `AIAgent`
-/// construction. A reusable `AIAgent` may create many sessions over a long
+/// This is intentionally called from session creation, not `AgentLoop`
+/// construction. A reusable `AgentLoop` may create many sessions over a long
 /// lifetime, and each new session should capture the skills available at that
 /// creation point.
 fn compose_session_prompt_prefix() -> Option<String> {
