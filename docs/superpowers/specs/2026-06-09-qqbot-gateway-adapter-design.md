@@ -135,7 +135,20 @@ pub struct QqBotConfig {
     pub app_id_env: String,         // default "QQ_BOT_APP_ID"
     pub app_secret_env: String,     // default "QQ_BOT_APP_SECRET"
     pub sandbox: bool,              // default false
-    pub intents: u32,               // default Intents::PUBLIC_MESSAGES bits
+    pub intents: u32,               // default = Intents::PUBLIC_MESSAGES bits
+}
+
+impl Default for QqBotConfig {
+    fn default() -> Self {
+        Self {
+            app_id: None,
+            app_secret: None,
+            app_id_env: "QQ_BOT_APP_ID".into(),
+            app_secret_env: "QQ_BOT_APP_SECRET".into(),
+            sandbox: false,
+            intents: 0,  // 0 sentinel → resolve() falls back to PUBLIC_MESSAGES
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -149,20 +162,25 @@ impl QqBotConfig {
     pub fn resolve(&self) -> Result<(String, String), QqBotConfigError>;
 
     /// Convert raw u32 intents into the lib's typed bitflags.
+    /// If `self.intents == 0`, returns `Intents::PUBLIC_MESSAGES` as default.
     pub fn build_intents(&self) -> qq_bot_rs::Intents;
 }
 ```
+
+`QqBotConfig` is `Deserialize` from the gateway's `config.toml` via
+`serde`; fields absent from TOML fall back to `Default::default()`.
 
 ### `QQBotAdapter` (`src/qqbot/adapter.rs`)
 
 ```rust
 pub struct QQBotAdapter {
     config: QqBotConfig,
-    cancel: CancellationToken,
 }
 
 impl QQBotAdapter {
-    pub fn new(config: QqBotConfig) -> Self;
+    pub fn new(config: QqBotConfig) -> Self {
+        Self { config }
+    }
 }
 
 #[async_trait]
@@ -173,23 +191,36 @@ impl PlatformAdapter for QQBotAdapter {
         let (app_id, app_secret) = self.config.resolve()?;
         let intents = self.config.build_intents();
 
-        // Self impls EventHandler — gateway passed in via bridge
+        // QqEventBridge impls qq_bot_rs::EventHandler — gateway is shared
+        // into the bridge so the lib's dispatch thread can call back
+        // into our gateway.
         let bridge = QqEventBridge { gateway: Arc::clone(&gateway) };
 
-        let client = qq_bot_rs::Client::builder()
+        // Sandbox mode routes requests to the QQ sandbox environment.
+        // The lib's BotBuilder distinguishes via .sandbox(true).
+        let bot = qq_bot_rs::Bot::builder()
             .credentials(qq_bot_rs::Credentials { app_id, app_secret })
+            .sandbox(self.config.sandbox)
+            .build()?;
+
+        let client = qq_bot_rs::Client::builder()
+            .bot(bot)
             .intents(intents)
             .handler(bridge)
             .build()?;
 
-        // lib's run() blocks until the WS closes fatally; outer
-        // GatewayRunner::run will cancel via disconnect().
+        // lib's run() blocks until the WS closes (transient close codes
+        // are auto-recovered internally; fatal codes 4914/4915 exit).
+        // For MVP we don't try to cancel mid-run; lib's reconnect handles
+        // transient drops. disconnect() is a no-op.
         client.run().await
             .map_err(|e| anyhow::anyhow!("qqbot client exited: {e}"))
     }
 
     async fn disconnect(&self) -> anyhow::Result<()> {
-        self.cancel.cancel();
+        // No-op for MVP. lib's run() will exit on the next fatal WS close.
+        // A future iteration can add a oneshot::Sender<()>"shutdown" channel
+        // plumbed into QqEventBridge if mid-run cancel is needed.
         Ok(())
     }
 }
@@ -198,6 +229,8 @@ impl PlatformAdapter for QQBotAdapter {
 ### `QqEventBridge` (`src/qqbot/adapter.rs`)
 
 ```rust
+use qq_bot_rs::types::message::{C2cMessage, GroupMessage, OutgoingMessage};
+
 struct QqEventBridge {
     gateway: Arc<GatewayRunner>,
 }
@@ -205,25 +238,25 @@ struct QqEventBridge {
 #[async_trait]
 impl qq_bot_rs::EventHandler for QqEventBridge {
     async fn on_c2c_message_create(&self, bot: &qq_bot_rs::Bot, msg: C2cMessage) {
-        if let Some(ev) = events::c2c_to_event(&msg) {
-            events::handle_reply(&self.gateway, &ev, |text| async move {
-                let reply = qq_bot_rs::types::OutgoingMessage::text(text);
-                bot.post_c2c_message(&msg.author.user_openid, &reply).await
-                    .map(|_| ())
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-            }).await;
-        }
+        let Some(ev) = events::c2c_to_event(&msg) else { return };
+        let user_openid = msg.author.user_openid.clone();
+        events::handle_reply(&self.gateway, &ev, move |text| async move {
+            let reply = OutgoingMessage::text(text);
+            bot.post_c2c_message(&user_openid, &reply).await
+                .map(|_| ())
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        }).await;
     }
 
     async fn on_group_at_message_create(&self, bot: &qq_bot_rs::Bot, msg: GroupMessage) {
-        if let Some(ev) = events::group_to_event(&msg) {
-            events::handle_reply(&self.gateway, &ev, |text| async move {
-                let reply = qq_bot_rs::types::OutgoingMessage::text(text);
-                bot.post_group_message(&msg.group_openid, &reply).await
-                    .map(|_| ())
-                    .map_err(|e| anyhow::anyhow!("{e}"))
-            }).await;
-        }
+        let Some(ev) = events::group_to_event(&msg) else { return };
+        let group_openid = msg.group_openid.clone();
+        events::handle_reply(&self.gateway, &ev, move |text| async move {
+            let reply = OutgoingMessage::text(text);
+            bot.post_group_message(&group_openid, &reply).await
+                .map(|_| ())
+                .map_err(|e| anyhow::anyhow!("{e}"))
+        }).await;
     }
 }
 ```
@@ -259,7 +292,16 @@ message_id, timestamp, text).
 #[derive(Debug, Clone)]
 pub struct TelegramConfig {
     pub token: Option<String>,
-    pub token_env: String,   // default "TELEGRAM_BOT_TOKEN"
+    pub token_env: String,
+}
+
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            token: None,
+            token_env: "TELEGRAM_BOT_TOKEN".into(),
+        }
+    }
 }
 
 impl TelegramConfig {
@@ -270,7 +312,8 @@ impl TelegramConfig {
 
 `TelegramAdapter::new` keeps its `(bot_token: &str)` constructor
 internally; `TelegramConfig::build_adapter` is the convenience that
-existing main() entry points can use.
+existing main() entry points can use. The two configs
+(`TelegramConfig`, `QqBotConfig`) are intentionally symmetric.
 
 ### `GatewayConfig` (`src/config.rs`)
 
