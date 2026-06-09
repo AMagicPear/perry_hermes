@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+use crate::qqbot::QqBotConfig;
 use crate::telegram::TelegramConfig;
 
 /// Configuration for the gateway and all platform adapters.
@@ -17,6 +18,8 @@ pub struct GatewayConfig {
     pub system_prompt: Option<String>,
     /// Telegram platform config; `None` disables the adapter.
     pub telegram: Option<TelegramConfig>,
+    /// QQ Bot platform config; `None` disables the adapter.
+    pub qqbot: Option<QqBotConfig>,
 }
 
 impl Default for GatewayConfig {
@@ -27,6 +30,7 @@ impl Default for GatewayConfig {
             allowed_users: HashMap::new(),
             system_prompt: None,
             telegram: None,
+            qqbot: None,
         }
     }
 }
