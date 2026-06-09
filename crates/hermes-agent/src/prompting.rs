@@ -237,8 +237,7 @@ mod tests {
 
     #[test]
     fn build_system_message_includes_default_base_prompt_and_working_dir() {
-        let msg = build_system_message(Path::new("/tmp/project"))
-            .expect("message should be Some");
+        let msg = build_system_message(Path::new("/tmp/project")).expect("message should be Some");
 
         let text = msg.content.as_text();
         assert!(text.contains("careful assistant"));
@@ -252,8 +251,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_agents_md(tmp.path(), "UNIQUE-AGENTS-MARKER-XYZ");
 
-        let msg =
-            build_system_message(tmp.path()).expect("message should be Some");
+        let msg = build_system_message(tmp.path()).expect("message should be Some");
         let text = msg.content.as_text();
 
         let base_idx = text.find("careful assistant").expect("base present");
@@ -292,8 +290,7 @@ mod tests {
         let _guard = crate::test_env::blocking_lock();
         let _cwd = CwdGuard::enter(other_cwd.path());
 
-        let msg =
-            build_system_message(session_dir.path()).expect("message should be Some");
+        let msg = build_system_message(session_dir.path()).expect("message should be Some");
         let text = msg.content.as_text();
         assert!(text.contains("FROM-SESSION-DIR"));
         // The body must appear exactly once — no double-injection.
