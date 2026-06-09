@@ -503,7 +503,11 @@ mod tests {
         let sessions = tmp.path().join("sessions");
         std::fs::create_dir_all(&sessions).unwrap();
         let registry = super::SessionRegistry::new(sessions.clone(), tmp.path().into(), None);
-        let parent = registry.get_or_create("parent_key").await;
+        // Touch the parent key so the registry's in-memory map
+        // definitely has a parent entry by the time the child is
+        // created. We don't reference it after, so silence the
+        // unused warning.
+        let _parent = registry.get_or_create("parent_key").await;
 
         let child = registry.create_sub_session("parent_key", "sub-1").await;
 
