@@ -241,7 +241,7 @@ mod tests {
         let msg = build_system_message(Path::new("/tmp/project")).expect("message should be Some");
 
         let text = msg.content.as_text();
-        assert!(text.contains("careful assistant"));
+        assert!(text.contains("Perry Hermes"));
         assert!(text.contains("Current working directory: /tmp/project"));
         assert!(!text.contains("Provider:"));
         assert!(!text.contains("Session ID:"));
@@ -255,7 +255,7 @@ mod tests {
         let msg = build_system_message(tmp.path()).expect("message should be Some");
         let text = msg.content.as_text();
 
-        let base_idx = text.find("careful assistant").expect("base present");
+        let base_idx = text.find("Perry Hermes").expect("base present");
         let agents_idx = text
             .find("UNIQUE-AGENTS-MARKER-XYZ")
             .expect("agents md present");
@@ -276,7 +276,7 @@ mod tests {
         let msg = build_system_message(tmp.path()).expect("message should be Some");
         let text = msg.content.as_text();
         assert!(!text.contains("Project guidance from `AGENTS.md`"));
-        assert!(text.contains("careful assistant"));
+        assert!(text.contains("Perry Hermes"));
     }
 
     #[test]
