@@ -299,6 +299,7 @@ default_model = "echo"
                 default_model: "MiniMax-M3".into(),
                 ..Default::default()
             },
+            gateway: perry_hermes_agent::GatewayTomlConfig::default(),
         };
         let args = Args {
             config: None,
