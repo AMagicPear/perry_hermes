@@ -205,26 +205,18 @@ impl AgentSession {
     }
 
     /// Clear the in-memory message log and token facts *without*
-    /// persisting. Used by both the public `clear_messages` (which
-    /// follows up with `persist`) and `archive_to` (which has
-    /// already moved the on-disk file out of the way and must
-    /// not recreate it).
+    /// persisting. Used by `archive_to` (which has already moved
+    /// the on-disk file out of the way and must not recreate it).
     async fn clear_in_memory_only(&self) {
         self.messages.write().await.clear();
         self.reset_token_facts().await;
-    }
-
-    pub async fn clear_messages(&self) {
-        self.clear_in_memory_only().await;
-        self.persist().await;
     }
 
     /// Reset the business log and token-tracking state. The system
     /// message is unaffected (it lives in its own field) and will
     /// reappear at the head of `outbound_messages` on the next turn.
     pub async fn reset(&self) {
-        self.messages.write().await.clear();
-        self.reset_token_facts().await;
+        self.clear_in_memory_only().await;
         self.persist().await;
     }
 
@@ -295,7 +287,7 @@ impl AgentSession {
             return Ok(placeholder);
         };
 
-        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
+        let ts = crate::session_registry::archive_timestamp();
         let target_dir = dir.join(self.session_id.as_ref());
         tokio::fs::create_dir_all(&target_dir).await?;
         let target = target_dir.join(format!("{ts}.json"));

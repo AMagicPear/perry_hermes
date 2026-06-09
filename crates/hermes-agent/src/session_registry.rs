@@ -33,6 +33,18 @@ pub struct SessionEntry {
     pub last_active: std::sync::Mutex<DateTime<Utc>>,
 }
 
+impl SessionEntry {
+    fn new(session: AgentSession) -> Arc<Self> {
+        let now = Utc::now();
+        Arc::new(Self {
+            session,
+            turn_lock: Mutex::new(()),
+            created_at: now,
+            last_active: std::sync::Mutex::new(now),
+        })
+    }
+}
+
 impl SessionRegistry {
     /// Create a new registry. Sessions are persisted as JSON files
     /// in `sessions_dir`. The `system_message`, if provided, is used
@@ -113,13 +125,7 @@ impl SessionRegistry {
                 .with_json_file_store(&store_path)
         };
 
-        let now = Utc::now();
-        let entry = Arc::new(SessionEntry {
-            session,
-            turn_lock: Mutex::new(()),
-            created_at: now,
-            last_active: std::sync::Mutex::new(now),
-        });
+        let entry = SessionEntry::new(session);
 
         self.sessions.insert(key.to_string(), Arc::clone(&entry));
         entry
@@ -203,13 +209,7 @@ impl SessionRegistry {
         // one. The fresh `turn_lock` and `created_at` are
         // intentional — a sub-agent runs independently of the
         // parent.
-        let now = Utc::now();
-        let new_entry = Arc::new(SessionEntry {
-            session: patched,
-            turn_lock: Mutex::new(()),
-            created_at: now,
-            last_active: std::sync::Mutex::new(now),
-        });
+        let new_entry = SessionEntry::new(patched);
         self.sessions.insert(child_key, new_entry.clone());
         new_entry
     }
