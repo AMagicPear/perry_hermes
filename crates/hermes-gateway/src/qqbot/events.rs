@@ -10,10 +10,10 @@ use crate::runner::GatewayRunner;
 /// QQ's protocol embeds the bot mention at the start of group @ messages.
 /// We strip the prefix so the LLM sees clean text.
 fn strip_at_mention(content: &str) -> &str {
-    if let Some(rest) = content.strip_prefix("<@!") {
-        if let Some(space_idx) = rest.find(' ') {
-            return &rest[space_idx + 1..];
-        }
+    if let Some(rest) = content.strip_prefix("<@!")
+        && let Some(space_idx) = rest.find(' ')
+    {
+        return &rest[space_idx + 1..];
     }
     content
 }
