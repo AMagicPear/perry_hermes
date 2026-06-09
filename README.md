@@ -239,6 +239,15 @@ Testing guidance:
 - when changing session/context behavior, add tests at the `AgentSession` or
   `AgentLoop` boundary rather than only in the CLI
 
+## Acknowledgments
+
+Perry Hermes builds on excellent open-source work from the Rust ecosystem:
+
+- **[teloxide](https://github.com/teloxide/teloxide)** — the Telegram bot framework that powers the Telegram platform adapter in `hermes-gateway`.
+- **[qq-bot-rs](https://github.com/yenharvey/qq-bot-rs)** — the QQ bot SDK that enables QQ/Guild integration in `hermes-gateway`.
+- **[ratatui](https://github.com/ratatui/ratatui)** — the terminal UI library behind the Perry Hermes CLI.
+- **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** by Nous Research — the original project that inspired the self-learning architecture and agent design.
+
 ## License
 
 MIT
