@@ -432,7 +432,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_role_default_is_root() {
-        assert_eq!(SessionRole::default(), SessionRole::Root);
+    async fn sub_agent_session_round_trips_through_json_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("sessions").join("session-1.json");
+        let mut session = AgentSession::new("session-1", PathBuf::from("/tmp/project"), None)
+            .with_json_file_store(path.clone());
+        session.parent_session_id = Some(Arc::from("parent_key"));
+        session.role = SessionRole::SubAgent;
+
+        session.save().await.unwrap();
+
+        let loaded = AgentSession::load_json_file(path)
+            .await
+            .expect("sub-agent snapshot should load");
+
+        assert_eq!(loaded.role, SessionRole::SubAgent);
+        assert_eq!(
+            loaded.parent_session_id.as_deref(),
+            Some("parent_key")
+        );
     }
 }
