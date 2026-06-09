@@ -97,15 +97,15 @@ impl GatewayRunner {
         }
 
         // Command handling via the unified Command enum
-        if let Some(cmd) = Command::parse(text) {
-            return match cmd {
+        if let Some(parsed) = Command::parse(text) {
+            return match parsed.command {
                 Command::Reset | Command::New => {
                     let key = build_key(&event);
                     self.sessions.reset(&key).await;
                     info!(session = %key, "session reset by user");
                     Ok(GatewayResponse::Reply("Session has been reset.".into()))
                 }
-                Command::Compact(_) => self.handle_compact(&event).await,
+                Command::Compact => self.handle_compact(&event, parsed.arg.as_deref()).await,
                 Command::Status => self.handle_status(&event).await,
                 // CLI-only commands are ignored in the gateway
                 Command::Quit | Command::Clear => Ok(GatewayResponse::Ignored),
@@ -208,12 +208,18 @@ impl GatewayRunner {
         }
     }
 
-    /// Handle /compact command.
-    async fn handle_compact(&self, event: &GatewayEvent) -> Result<GatewayResponse, GatewayError> {
+    /// Handle /compact command. `focus` is the optional argument the user
+    /// passed (e.g. the `shell` in `/compact shell`); passed through to
+    /// the agent so it can bias the compaction summary.
+    async fn handle_compact(
+        &self,
+        event: &GatewayEvent,
+        focus: Option<&str>,
+    ) -> Result<GatewayResponse, GatewayError> {
         let entry = self.session(event).await;
         let _guard = entry.turn_lock.lock().await;
 
-        match self.agent.compact_session(&entry.session, None).await {
+        match self.agent.compact_session(&entry.session, focus).await {
             Ok(event) => Ok(GatewayResponse::Reply(format!(
                 "Compaction result: {event:?}"
             ))),
