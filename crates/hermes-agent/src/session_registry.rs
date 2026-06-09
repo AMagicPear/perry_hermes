@@ -174,6 +174,52 @@ impl SessionRegistry {
         }
     }
 
+    /// Reserve a sub-agent session for the given parent. The
+    /// child key is derived as
+    /// `<parent_key>__sub_<sub_id>__<utc_ts>`. The child is
+    /// persisted with `role = SubAgent` and
+    /// `parent_session_id = parent_key`.
+    ///
+    /// This method is reserved for the future sub-agent runtime
+    /// and is not invoked by any adapter today.
+    pub async fn create_sub_session(
+        &self,
+        parent_key: &str,
+        sub_id: &str,
+    ) -> Arc<SessionEntry> {
+        let ts = archive_timestamp();
+        let child_key = format!("{parent_key}__sub_{sub_id}__{ts}");
+        let entry = self.get_or_create(&child_key).await;
+
+        // Construct a patched session that shares the message log
+        // and store (both held by Arc inside AgentSession) with
+        // the entry returned above, but with the sub-agent
+        // identity stamped on.
+        let patched = entry
+            .session
+            .clone()
+            .with_subagent_identity(Arc::from(parent_key));
+        // Persist immediately so the on-disk snapshot reflects
+        // the new identity even if the caller never appends a
+        // message.
+        let _ = patched.save().await;
+
+        // The first `get_or_create` produced an entry with an
+        // identity-less AgentSession; replace it with the patched
+        // one. The fresh `turn_lock` and `created_at` are
+        // intentional — a sub-agent runs independently of the
+        // parent.
+        let now = Utc::now();
+        let new_entry = Arc::new(SessionEntry {
+            session: patched,
+            turn_lock: Mutex::new(()),
+            created_at: now,
+            last_active: std::sync::Mutex::new(now),
+        });
+        self.sessions.insert(child_key, new_entry.clone());
+        new_entry
+    }
+
     /// Get a reference to the session for `key`, if it exists.
     pub fn get_session(&self, key: &str) -> Option<AgentSession> {
         self.sessions.get(key).map(|e| e.session.clone())
@@ -455,5 +501,34 @@ mod tests {
         let registry =
             super::SessionRegistry::new(tmp.path().join("sessions"), tmp.path().into(), None);
         assert!(registry.archive_active("nope").await.is_none());
+    }
+
+    #[tokio::test]
+    async fn create_sub_session_sets_role_and_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let registry = super::SessionRegistry::new(
+            sessions.clone(),
+            tmp.path().into(),
+            None,
+        );
+        let parent = registry.get_or_create("parent_key").await;
+
+        let child = registry
+            .create_sub_session("parent_key", "sub-1")
+            .await;
+
+        use crate::session::SessionRole;
+        assert_eq!(child.session.role, SessionRole::SubAgent);
+        assert_eq!(
+            child.session.parent_session_id.as_deref(),
+            Some("parent_key")
+        );
+        // Distinct from the parent.
+        assert_ne!(
+            child.session.session_id.as_ref(),
+            parent.session.session_id.as_ref()
+        );
     }
 }

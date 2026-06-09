@@ -119,6 +119,20 @@ impl AgentSession {
         }
     }
 
+    /// Stamp sub-agent identity on a clone. The message log, token
+    /// facts, and store are shared (they're `Arc`-wrapped inside the
+    /// session), so the clone is cheap. Used by
+    /// `SessionRegistry::create_sub_session` to mark a child session
+    /// as a `SubAgent` of the given parent without rebuilding it
+    /// from scratch.
+    pub fn with_subagent_identity(self, parent_session_id: Arc<str>) -> Self {
+        Self {
+            parent_session_id: Some(parent_session_id),
+            role: SessionRole::SubAgent,
+            ..self
+        }
+    }
+
     /// Load saved session history and token facts from `path`.
     ///
     /// The runtime working directory is intentionally taken from the current
