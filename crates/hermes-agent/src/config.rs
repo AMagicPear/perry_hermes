@@ -312,6 +312,7 @@ impl Default for AgentConfig {
 
 /// Test fixtures — re-exported from the library root for integration tests.
 /// These are unused functions in production builds; they only run during tests.
+#[allow(clippy::field_reassign_with_default)]
 pub mod test_helpers {
     //! Test fixtures — re-exported from the library root for integration tests.
     //! These are unused functions in production builds; they only run during tests.

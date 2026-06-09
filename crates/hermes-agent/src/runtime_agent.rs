@@ -249,6 +249,7 @@ fn build_loop_for_custom_provider(
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
