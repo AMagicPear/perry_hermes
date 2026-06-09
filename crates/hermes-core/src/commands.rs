@@ -183,7 +183,10 @@ mod tests {
     fn parse_basics() {
         assert_eq!(Command::parse("/reset"), Some(parsed(Command::Reset, None)));
         assert_eq!(Command::parse("/new"), Some(parsed(Command::New, None)));
-        assert_eq!(Command::parse("/status"), Some(parsed(Command::Status, None)));
+        assert_eq!(
+            Command::parse("/status"),
+            Some(parsed(Command::Status, None))
+        );
         assert_eq!(Command::parse("/quit"), Some(parsed(Command::Quit, None)));
         // Historical alias for /quit.
         assert_eq!(Command::parse("/exit"), Some(parsed(Command::Quit, None)));
@@ -192,7 +195,10 @@ mod tests {
 
     #[test]
     fn parse_compact_carries_arg_separately_from_variant() {
-        assert_eq!(Command::parse("/compact"), Some(parsed(Command::Compact, None)));
+        assert_eq!(
+            Command::parse("/compact"),
+            Some(parsed(Command::Compact, None))
+        );
         assert_eq!(
             Command::parse("/compact focus on shell"),
             Some(parsed(Command::Compact, Some("focus on shell"))),
@@ -285,7 +291,11 @@ mod tests {
 
         // Every command lists at least one platform.
         for (_, m) in Command::ALL {
-            assert!(!m.platforms.is_empty(), "ALL entry '{}' has no platform", m.name);
+            assert!(
+                !m.platforms.is_empty(),
+                "ALL entry '{}' has no platform",
+                m.name
+            );
         }
     }
 }

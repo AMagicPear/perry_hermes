@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use perry_hermes_core::commands::Command;
 use perry_hermes_core::Platform;
+use perry_hermes_core::commands::Command;
 use teloxide::prelude::*;
 use teloxide::types::{BotCommand, ChatAction, ChatKind};
 use tracing::{info, warn};

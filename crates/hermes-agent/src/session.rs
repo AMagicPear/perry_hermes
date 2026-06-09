@@ -423,6 +423,7 @@ mod tests {
 
     #[tokio::test]
     async fn json_file_store_loads_history_but_uses_current_cwd() {
+        let _guard = crate::test_env::lock().await;
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("sessions").join("session-1.json");
         let original = AgentSession::new(

@@ -10,6 +10,7 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 const SAMPLE_BODY: &[u8] = b"\
@@ -65,6 +66,7 @@ async fn stream_parses_sse_chunks() {
 async fn stream_error_preserves_body_error_source() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
+    let (close_tx, close_rx) = oneshot::channel();
 
     let server = tokio::spawn(async move {
         let (mut socket, _) = listener.accept().await.unwrap();
@@ -81,6 +83,8 @@ async fn stream_error_preserves_body_error_source() {
             .write_all(b"data: {\"choices\":[{\"delta\":{\"content\":\"partial\"},\"finish_reason\":null}]}\n\n")
             .await
             .unwrap();
+        socket.flush().await.unwrap();
+        let _ = close_rx.await;
     });
 
     let provider =
@@ -95,6 +99,7 @@ async fn stream_error_preserves_body_error_source() {
         .expect("partial chunk should parse");
     assert_eq!(first.content_delta.as_deref(), Some("partial"));
 
+    let _ = close_tx.send(());
     let err = stream.next().await.expect("body error").unwrap_err();
     server.await.unwrap();
 

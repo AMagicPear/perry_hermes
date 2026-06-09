@@ -508,6 +508,7 @@ mod tests {
 
     #[tokio::test]
     async fn load_json_session_uses_current_cwd_and_rebuilds_system_message() {
+        let _guard = crate::test_env::lock().await;
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("sessions").join("session-1.json");
         let saved = AgentSession::new(

@@ -83,7 +83,10 @@ impl GatewayRunner {
     /// Process an incoming event from any platform adapter.
     pub async fn handle_event(&self, event: GatewayEvent) -> Result<GatewayResponse, GatewayError> {
         // Authorization check — config keys on the platform's on-disk string form.
-        if !self.config.is_user_allowed(event.platform.as_str(), &event.user_id) {
+        if !self
+            .config
+            .is_user_allowed(event.platform.as_str(), &event.user_id)
+        {
             return Err(GatewayError::Unauthorized {
                 platform: event.platform,
                 user_id: event.user_id.clone(),

@@ -24,3 +24,18 @@ pub use session::AgentSession;
 pub use session_registry::{
     SessionEntry, SessionRegistry, default_sessions_dir, format_session_id,
 };
+
+#[cfg(test)]
+mod test_env {
+    use tokio::sync::{Mutex, MutexGuard};
+
+    static ENV_LOCK: Mutex<()> = Mutex::const_new(());
+
+    pub async fn lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK.lock().await
+    }
+
+    pub fn blocking_lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK.blocking_lock()
+    }
+}

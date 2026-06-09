@@ -138,9 +138,6 @@ fn working_directory_hint(working_dir: &Path) -> String {
 mod tests {
     use super::*;
     use std::path::Path;
-    use std::sync::Mutex;
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct CwdGuard {
         previous: PathBuf,
@@ -162,7 +159,7 @@ mod tests {
 
     #[test]
     fn resolve_returns_a_directory_path_that_ends_in_skills() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env::blocking_lock();
         let home = tempfile::tempdir().unwrap();
         unsafe { std::env::set_var("PERRY_HERMES_HOME", home.path()) };
         let dir = resolve_skills_dir().expect("skills dir should resolve");
@@ -172,7 +169,7 @@ mod tests {
 
     #[test]
     fn resolve_skills_dir_falls_back_to_cwd_profile_when_env_is_unset() {
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env::blocking_lock();
         let cwd = tempfile::tempdir().unwrap();
         let _cwd = CwdGuard::enter(cwd.path());
         unsafe { std::env::remove_var("HOME") };
@@ -295,7 +292,7 @@ mod tests {
 
         // Move the process cwd to a different tempdir that has no AGENTS.md.
         let other_cwd = tempfile::tempdir().unwrap();
-        let _guard = ENV_LOCK.lock().unwrap();
+        let _guard = crate::test_env::blocking_lock();
         let _cwd = CwdGuard::enter(other_cwd.path());
 
         let msg =
