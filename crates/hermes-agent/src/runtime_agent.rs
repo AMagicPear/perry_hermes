@@ -25,6 +25,17 @@ pub struct AIAgent {
 }
 
 impl AIAgent {
+    /// Low-level constructor that takes a pre-built `AgentLoop` and an
+    /// empty `system_prompt`. Production code should use
+    /// `AIAgent::from_config`, which composes skills, AGENTS.md, and
+    /// working-dir hints into the system prompt.
+    pub fn from_agent_loop(agent_loop: AgentLoop) -> Self {
+        Self {
+            agent_loop,
+            system_prompt: None,
+        }
+    }
+
     // Public constructor: takes PerryHermesConfig by value so callers can
     // move their config in. This is the public API — changing the
     // signature would break every CLI and test caller. The clippy
@@ -172,16 +183,6 @@ impl AIAgent {
             session.replace_messages(business).await;
         }
         Ok(event)
-    }
-}
-
-#[cfg(test)]
-impl AIAgent {
-    fn for_test(agent_loop: AgentLoop) -> Self {
-        Self {
-            agent_loop,
-            system_prompt: None,
-        }
     }
 }
 
@@ -588,7 +589,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let agent = AIAgent::for_test(agent_loop);
+        let agent = AIAgent::from_agent_loop(agent_loop);
 
         let session = AgentSession::new(
             "session-xyz",
