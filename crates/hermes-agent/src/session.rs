@@ -291,9 +291,7 @@ impl AgentSession {
     /// state is unchanged.
     pub async fn archive_to(&self, dir: &std::path::Path) -> std::io::Result<PathBuf> {
         let Some(store) = &self.store else {
-            let placeholder = dir
-                .join(self.session_id.as_ref())
-                .join("no-store.json");
+            let placeholder = dir.join(self.session_id.as_ref()).join("no-store.json");
             return Ok(placeholder);
         };
 
@@ -308,8 +306,8 @@ impl AgentSession {
             // Nothing on disk yet; write a snapshot of the current
             // (possibly empty) state so the archive layout is
             // uniform across runs.
-            let bytes = serde_json::to_vec_pretty(&self.snapshot().await)
-                .map_err(std::io::Error::other)?;
+            let bytes =
+                serde_json::to_vec_pretty(&self.snapshot().await).map_err(std::io::Error::other)?;
             tokio::fs::write(&target, bytes).await?;
         }
 
@@ -517,10 +515,22 @@ mod tests {
             .expect("sub-agent snapshot should load");
 
         assert_eq!(loaded.role, SessionRole::SubAgent);
-        assert_eq!(
-            loaded.parent_session_id.as_deref(),
-            Some("parent_key")
-        );
+        assert_eq!(loaded.parent_session_id.as_deref(), Some("parent_key"));
+    }
+
+    #[tokio::test]
+    async fn with_subagent_identity_preserves_log_and_stamps_role() {
+        let original = AgentSession::new("k", PathBuf::from("/tmp/p"), None);
+        original.append_message(Message::user("shared")).await;
+        let patched = original.with_subagent_identity(Arc::from("parent_x"));
+        assert_eq!(patched.role, SessionRole::SubAgent);
+        assert_eq!(patched.parent_session_id.as_deref(), Some("parent_x"));
+        // Message log is Arc-shared.
+        assert_eq!(patched.messages().await.len(), 1);
+        assert_eq!(patched.messages().await[0].content.as_text(), "shared");
+        // Other identity fields are unchanged.
+        assert_eq!(patched.session_id.as_ref(), "k");
+        assert_eq!(patched.working_dir.as_ref(), &PathBuf::from("/tmp/p"));
     }
 
     #[tokio::test]
@@ -535,7 +545,10 @@ mod tests {
         let archived = session.archive_to(&archive_dir).await.unwrap();
 
         assert!(archived.starts_with(archive_dir.join("k")));
-        assert!(archived.exists(), "archive file should exist at {archived:?}");
+        assert!(
+            archived.exists(),
+            "archive file should exist at {archived:?}"
+        );
         assert!(!active_path.exists(), "active file should be gone");
         assert!(
             session.messages().await.is_empty(),

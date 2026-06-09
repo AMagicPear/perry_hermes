@@ -176,17 +176,14 @@ impl SessionRegistry {
 
     /// Reserve a sub-agent session for the given parent. The
     /// child key is derived as
-    /// `<parent_key>__sub_<sub_id>__<utc_ts>`. The child is
-    /// persisted with `role = SubAgent` and
-    /// `parent_session_id = parent_key`.
+    /// `<parent_key>__sub_<sub_id>__<utc_ts>`. The in-memory
+    /// session is stamped with `role = SubAgent` and
+    /// `parent_session_id = parent_key`; the on-disk snapshot
+    /// picks up these fields on the next `append_message`.
     ///
     /// This method is reserved for the future sub-agent runtime
     /// and is not invoked by any adapter today.
-    pub async fn create_sub_session(
-        &self,
-        parent_key: &str,
-        sub_id: &str,
-    ) -> Arc<SessionEntry> {
+    pub async fn create_sub_session(&self, parent_key: &str, sub_id: &str) -> Arc<SessionEntry> {
         let ts = archive_timestamp();
         let child_key = format!("{parent_key}__sub_{sub_id}__{ts}");
         let entry = self.get_or_create(&child_key).await;
@@ -194,15 +191,12 @@ impl SessionRegistry {
         // Construct a patched session that shares the message log
         // and store (both held by Arc inside AgentSession) with
         // the entry returned above, but with the sub-agent
-        // identity stamped on.
+        // identity stamped on. Persistence of the new identity
+        // happens automatically on the next `append_message`.
         let patched = entry
             .session
             .clone()
             .with_subagent_identity(Arc::from(parent_key));
-        // Persist immediately so the on-disk snapshot reflects
-        // the new identity even if the caller never appends a
-        // message.
-        let _ = patched.save().await;
 
         // The first `get_or_create` produced an entry with an
         // identity-less AgentSession; replace it with the patched
@@ -508,16 +502,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let sessions = tmp.path().join("sessions");
         std::fs::create_dir_all(&sessions).unwrap();
-        let registry = super::SessionRegistry::new(
-            sessions.clone(),
-            tmp.path().into(),
-            None,
-        );
+        let registry = super::SessionRegistry::new(sessions.clone(), tmp.path().into(), None);
         let parent = registry.get_or_create("parent_key").await;
 
-        let child = registry
-            .create_sub_session("parent_key", "sub-1")
-            .await;
+        let child = registry.create_sub_session("parent_key", "sub-1").await;
 
         use crate::session::SessionRole;
         assert_eq!(child.session.role, SessionRole::SubAgent);
@@ -525,10 +513,14 @@ mod tests {
             child.session.parent_session_id.as_deref(),
             Some("parent_key")
         );
-        // Distinct from the parent.
-        assert_ne!(
-            child.session.session_id.as_ref(),
-            parent.session.session_id.as_ref()
+        // The child's session_id is derived from the formatted child
+        // key. We can't pin the exact timestamp suffix, but the
+        // prefix is deterministic. `format_session_id` replaces
+        // `-` with `_`, so "sub-1" becomes "sub_1".
+        let session_id = child.session.session_id.as_ref();
+        assert!(
+            session_id.starts_with("parent_key__sub_sub_1__"),
+            "child session_id should start with parent_key__sub_sub_1__, got {session_id}"
         );
     }
 }
