@@ -138,7 +138,7 @@ impl SessionRegistry {
         let entry = entry.clone();
         let _guard = entry.turn_lock.lock().await;
 
-        // Best-effort archive. Failure is logged inside `archive_active`.
+        // Best-effort archive. The warn below is the diagnostic if it fails.
         let archive_dir = self.sessions_dir.join(".archive");
         if let Err(err) = entry.session.archive_to(&archive_dir).await {
             tracing::warn!(
@@ -255,11 +255,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let sessions = tmp.path().join("sessions");
         std::fs::create_dir_all(&sessions).unwrap();
-        let registry = super::SessionRegistry::new(
-            sessions.clone(),
-            tmp.path().into(),
-            None,
-        );
+        let registry = super::SessionRegistry::new(sessions.clone(), tmp.path().into(), None);
         let entry = registry.get_or_create("k").await;
         entry
             .session
@@ -269,11 +265,26 @@ mod tests {
         assert!(registry.reset("k").await);
         assert!(entry.session.messages().await.is_empty());
 
-        // The prior content moved to .archive/k/<ts>.json.
+        // The prior content moved to .archive/k/<ts>.json — a real .json
+        // file containing the original "hi" message.
         let archive_dir = sessions.join(".archive").join("k");
         assert!(archive_dir.exists(), "archive dir should be created");
-        let count = std::fs::read_dir(&archive_dir).unwrap().count();
-        assert_eq!(count, 1, "one archive entry expected");
+        let entries: Vec<_> = std::fs::read_dir(&archive_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .collect();
+        assert_eq!(entries.len(), 1, "one archive entry expected");
+        let archive_path = entries[0].path();
+        assert_eq!(
+            archive_path.extension().and_then(|s| s.to_str()),
+            Some("json"),
+            "archive file should be a .json"
+        );
+        let raw = tokio::fs::read_to_string(&archive_path).await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["session_id"], "k");
+        assert_eq!(value["messages"][0]["role"], "user");
+        assert_eq!(value["messages"][0]["content"], "hi");
     }
 
     #[tokio::test]
