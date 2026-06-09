@@ -17,7 +17,7 @@ mod support;
 use support::ScriptedProvider;
 
 fn echo_config_with_compression() -> PerryHermesConfig {
-    perry_hermes_agent::test_helpers::PerryHermesConfig::for_test_echo()
+    PerryHermesConfig::for_test_echo()
 }
 
 fn user_message(text: &str) -> Message {

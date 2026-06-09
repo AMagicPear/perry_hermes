@@ -63,7 +63,7 @@ fn skills_dir_for(home: &std::path::Path) -> PathBuf {
 }
 
 fn config_for_echo() -> PerryHermesConfig {
-    perry_hermes_agent::test_helpers::PerryHermesConfig::for_test_echo()
+    PerryHermesConfig::for_test_echo()
 }
 
 fn system_text(messages: &[Message]) -> String {
