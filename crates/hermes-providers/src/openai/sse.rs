@@ -182,25 +182,6 @@ fn split_think_tag_content(
     (content, reasoning)
 }
 
-/// Test helper: drive the parser over a single byte chunk and collect
-/// every delta. Used by the unit tests below and by `tool_call_roundtrip.rs`.
-#[cfg(test)]
-pub(crate) fn parse_sse_for_test(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
-    // stream::iter on a Vec yields a Unpin stream — needed for Box::pin
-    // inside `parse_sse_chunks`.
-    let stream =
-        futures::stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::copy_from_slice(input))]);
-    let s = parse_sse_chunks(stream);
-    futures::executor::block_on(async move {
-        let mut v = Vec::new();
-        futures::pin_mut!(s);
-        while let Some(item) = s.next().await {
-            v.push(item?);
-        }
-        Ok(v)
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -209,15 +190,28 @@ pub(crate) fn parse_sse_for_test(input: &[u8]) -> Result<Vec<CompletionDelta>, P
 mod tests {
     use super::*;
 
-    fn parse_sse_bytes(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
-        parse_sse_for_test(input)
+    /// Drive the parser over a single byte chunk and collect every delta.
+    /// `stream::iter` on a `Vec` yields a `Unpin` stream, which is what
+    /// `parse_sse_chunks` expects inside `Box::pin`.
+    fn parse_sse_chunk(input: &[u8]) -> Result<Vec<CompletionDelta>, ProviderError> {
+        let stream =
+            futures::stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::copy_from_slice(input))]);
+        let s = parse_sse_chunks(stream);
+        futures::executor::block_on(async move {
+            let mut v = Vec::new();
+            futures::pin_mut!(s);
+            while let Some(item) = s.next().await {
+                v.push(item?);
+            }
+            Ok(v)
+        })
     }
 
     #[test]
     fn parses_single_text_chunk() {
         let sse =
             b"data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":null}]}\n\n";
-        let deltas = parse_sse_bytes(sse).unwrap();
+        let deltas = parse_sse_chunk(sse).unwrap();
         assert_eq!(deltas.len(), 1);
         assert_eq!(deltas[0].content_delta.as_deref(), Some("Hello"));
     }
@@ -229,7 +223,7 @@ data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"},\"finish_reason\":null}]}\n
 data: {\"choices\":[{\"delta\":{\"content\":\"lo\"},\"finish_reason\":null}]}\n\n\
 data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
 data: [DONE]\n\n";
-        let deltas = parse_sse_bytes(sse).unwrap();
+        let deltas = parse_sse_chunk(sse).unwrap();
         assert_eq!(deltas.len(), 3);
         assert_eq!(deltas[0].content_delta.as_deref(), Some("Hel"));
         assert_eq!(deltas[1].content_delta.as_deref(), Some("lo"));
@@ -239,7 +233,7 @@ data: [DONE]\n\n";
     #[test]
     fn done_marker_terminates() {
         let sse = b"data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"y\"}}]}\n\n";
-        let deltas = parse_sse_bytes(sse).unwrap();
+        let deltas = parse_sse_chunk(sse).unwrap();
         assert_eq!(deltas.len(), 1);
         assert_eq!(deltas[0].content_delta.as_deref(), Some("x"));
     }
@@ -251,7 +245,7 @@ data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_a\",\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"command\\\":\"}}]}}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"ls\\\"}\"}}]}}]}\n\n\
 data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n";
-        let deltas = parse_sse_bytes(sse).unwrap();
+        let deltas = parse_sse_chunk(sse).unwrap();
         assert_eq!(deltas.len(), 4);
         let first_tool = deltas[0].tool_call_delta.as_ref().unwrap();
         assert_eq!(first_tool.index, 0);
@@ -263,14 +257,14 @@ data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n";
     #[test]
     fn malformed_json_yields_error() {
         let sse = b"data: {not valid json}\n\n";
-        let result = parse_sse_bytes(sse);
+        let result = parse_sse_chunk(sse);
         assert!(matches!(result, Err(ProviderError::InvalidResponse(_))));
     }
 
     #[test]
     fn comment_lines_are_skipped() {
         let sse = b": this is a comment\ndata: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n";
-        let deltas = parse_sse_bytes(sse).unwrap();
+        let deltas = parse_sse_chunk(sse).unwrap();
         assert_eq!(deltas.len(), 1);
     }
 
@@ -283,7 +277,7 @@ data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n";
 data: {\"choices\":[{\"delta\":{\"content\":\"hi\"},\"finish_reason\":null}]}\n\n\
 data: {\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":4,\"total_tokens\":16,\"cached_tokens\":0}}\n\n\
 data: [DONE]\n\n";
-        let deltas = parse_sse_bytes(sse).unwrap();
+        let deltas = parse_sse_chunk(sse).unwrap();
         assert_eq!(deltas.len(), 2);
         assert_eq!(deltas[0].content_delta.as_deref(), Some("hi"));
         let usage = deltas[1]
@@ -305,7 +299,7 @@ data: {\"choices\":[{\"delta\":{\"content\":\"<think>Need\"},\"finish_reason\":n
 data: {\"choices\":[{\"delta\":{\"content\":\" to inspect</think>Answer\"},\"finish_reason\":null}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"content\":\" done\"},\"finish_reason\":null}]}\n\n\
 data: [DONE]\n\n";
-        let deltas = parse_sse_bytes(sse).unwrap();
+        let deltas = parse_sse_chunk(sse).unwrap();
 
         assert_eq!(deltas.len(), 3);
         assert_eq!(deltas[0].reasoning_delta.as_deref(), Some("Need"));
@@ -359,7 +353,7 @@ data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\n\
 data: {\"choices\":[{\"delta\":{\"content\":\"y\"}}]}\n\n\
 data: [DONE]\n\n\
 data: {\"choices\":[{\"delta\":{\"content\":\"z\"}}]}\n\n";
-        let deltas = parse_sse_bytes(sse).unwrap();
+        let deltas = parse_sse_chunk(sse).unwrap();
         assert_eq!(deltas.len(), 2);
         assert_eq!(deltas[0].content_delta.as_deref(), Some("x"));
         assert_eq!(deltas[1].content_delta.as_deref(), Some("y"));
@@ -373,7 +367,7 @@ data: {\"choices\":[{\"delta\":{\"content\":\"z\"}}]}\n\n";
         // InvalidResponse for the malformed JSON, or skip the event);
         // we only assert that the call returns rather than panicking.
         let sse = b"data: \xFF\xFE\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n";
-        let result = parse_sse_bytes(sse);
+        let result = parse_sse_chunk(sse);
         // Smoke: does not panic; returns either Ok or Err cleanly.
         let _ = result;
     }
