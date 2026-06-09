@@ -89,7 +89,9 @@ async fn run_tui(config: PerryHermesConfig, config_path: &Path) -> anyhow::Resul
 }
 
 async fn run_gateway(config: PerryHermesConfig, config_path: &Path) -> anyhow::Result<()> {
-    use perry_hermes_gateway::{GatewayConfig, GatewayRunner, QQBotAdapter, QqBotConfig, telegram::TelegramAdapter};
+    use perry_hermes_gateway::{
+        GatewayConfig, GatewayRunner, QQBotAdapter, QqBotConfig, telegram::TelegramAdapter,
+    };
 
     let agent = Arc::new(
         AIAgent::from_config(config)

@@ -64,7 +64,10 @@ impl PlatformAdapter for QQBotAdapter {
         // are auto-recovered internally; fatal codes 4914/4915 exit).
         // For MVP we don't try to cancel mid-run; lib's reconnect handles
         // transient drops. disconnect() is a no-op.
-        client.run().await.map_err(|e| anyhow::anyhow!("qqbot client exited: {e}"))
+        client
+            .run()
+            .await
+            .map_err(|e| anyhow::anyhow!("qqbot client exited: {e}"))
     }
 
     async fn disconnect(&self) -> anyhow::Result<()> {

@@ -36,9 +36,9 @@
 pub mod adapter;
 pub mod config;
 pub mod event;
+pub mod qqbot;
 pub mod runner;
 pub mod telegram;
-pub mod qqbot;
 
 pub use adapter::PlatformAdapter;
 pub use config::GatewayConfig;
