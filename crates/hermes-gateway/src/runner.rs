@@ -6,6 +6,7 @@ use tracing::{info, warn};
 
 use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, SessionEntry, SessionRegistry};
 use perry_hermes_core::Message;
+use perry_hermes_core::Platform;
 use perry_hermes_core::commands::Command;
 
 use crate::adapter::PlatformAdapter;
@@ -35,7 +36,7 @@ pub struct GatewayRunner {
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
     #[error("user {user_id} is not allowed on platform {platform}")]
-    Unauthorized { platform: String, user_id: String },
+    Unauthorized { platform: Platform, user_id: String },
     #[error("agent run failed: {0}")]
     AgentRun(#[from] AgentRunError),
 }
@@ -81,10 +82,10 @@ impl GatewayRunner {
 
     /// Process an incoming event from any platform adapter.
     pub async fn handle_event(&self, event: GatewayEvent) -> Result<GatewayResponse, GatewayError> {
-        // Authorization check
-        if !self.config.is_user_allowed(&event.platform, &event.user_id) {
+        // Authorization check — config keys on the platform's on-disk string form.
+        if !self.config.is_user_allowed(event.platform.as_str(), &event.user_id) {
             return Err(GatewayError::Unauthorized {
-                platform: event.platform.clone(),
+                platform: event.platform,
                 user_id: event.user_id.clone(),
             });
         }

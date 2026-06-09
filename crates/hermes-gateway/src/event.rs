@@ -1,5 +1,7 @@
 use chrono::{DateTime, Utc};
 
+use perry_hermes_core::Platform;
+
 /// Normalized incoming message from any platform adapter.
 ///
 /// This is the gateway's equivalent of Python's `MessageEvent` — a
@@ -7,8 +9,10 @@ use chrono::{DateTime, Utc};
 /// the gateway can process without knowing the source platform.
 #[derive(Debug, Clone)]
 pub struct GatewayEvent {
-    /// Platform identifier (e.g. "telegram", "discord").
-    pub platform: String,
+    /// Source platform. Used as the leading segment of the session key
+    /// (see [`crate::runner::build_key`]) and as the namespace for
+    /// per-platform configuration like `allowed_users`.
+    pub platform: Platform,
     /// Platform-specific chat identifier.
     pub chat_id: String,
     /// Type of chat this message came from.

@@ -8,6 +8,7 @@ use std::time::Instant;
 
 use futures::StreamExt;
 use perry_hermes_agent::{AIAgent, AgentRunError, AgentSession, SessionRegistry};
+use perry_hermes_core::Platform;
 use perry_hermes_core::error::LoopError;
 use perry_hermes_core::tool::ToolOutput;
 use ratatui::backend::{Backend, CrosstermBackend};
@@ -71,7 +72,8 @@ fn new_cli_session_key() -> String {
         .unwrap_or_default();
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
     format!(
-        "cli:run:{}-{}-{}",
+        "{}:run:{}-{}-{}",
+        Platform::Tui.as_str(),
         std::process::id(),
         now.as_nanos(),
         counter
@@ -773,7 +775,7 @@ mod tests {
             3,
             "cli session key should follow platform:chat_type:id shape; got {first}"
         );
-        assert_eq!(parts[0], "cli", "platform segment");
+        assert_eq!(parts[0], Platform::Tui.as_str(), "platform segment");
         assert_eq!(parts[1], "run", "chat_type segment");
         assert!(
             !parts[2].is_empty(),

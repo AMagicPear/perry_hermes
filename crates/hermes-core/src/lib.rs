@@ -10,6 +10,7 @@ pub mod commands;
 pub mod compaction_strategy;
 pub mod error;
 pub mod message;
+pub mod platform;
 pub mod provider;
 pub mod registry;
 pub mod tool;
@@ -21,6 +22,7 @@ pub use compaction_strategy::{
 };
 pub use error::{LoopError, ProviderError, ToolError};
 pub use message::{Content, ContentPart, Message, Role, ToolCall};
+pub use platform::Platform;
 pub use provider::{Completion, CompletionDelta, CompletionStream, FinishReason, Provider};
 pub use registry::{InMemoryRegistry, ToolSchema};
 pub use tool::{Tool, ToolContext, ToolOutput, ToolPermissions};
