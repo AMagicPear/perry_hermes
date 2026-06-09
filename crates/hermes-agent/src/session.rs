@@ -190,8 +190,18 @@ impl AgentSession {
         self.persist().await;
     }
 
-    pub async fn clear_messages(&self) {
+    /// Clear the in-memory message log and token facts *without*
+    /// persisting. Used by both the public `clear_messages` (which
+    /// follows up with `persist`) and `archive_to` (which has
+    /// already moved the on-disk file out of the way and must
+    /// not recreate it).
+    async fn clear_in_memory_only(&self) {
         self.messages.write().await.clear();
+        self.reset_token_facts().await;
+    }
+
+    pub async fn clear_messages(&self) {
+        self.clear_in_memory_only().await;
         self.persist().await;
     }
 
@@ -250,14 +260,21 @@ impl AgentSession {
         store.save(&self.snapshot().await).await
     }
 
-    /// Move the current on-disk snapshot to `dir/<session_id>/<utc_ts>.json`
-    /// and clear the in-memory history. The session retains its
-    /// `session_id` and remains usable; the next `append_message`
-    /// will recreate the file at the active path.
+    /// Move the current on-disk snapshot to
+    /// `dir/<session_id>/<utc_ts>.json` and clear the in-memory
+    /// history. The session retains its `session_id` and remains
+    /// usable; the next `append_message` will recreate the file
+    /// at the active path.
     ///
     /// If no `store` is attached, returns `Ok` with a path that
     /// was not written (used by in-memory tests and CLI startup
     /// paths that have not yet persisted).
+    ///
+    /// The file move is committed before the in-memory clear, so
+    /// a mid-method crash leaves the archive complete and the
+    /// active file gone — the next `append_message` will
+    /// recreate it. On error before the move, the in-memory
+    /// state is unchanged.
     pub async fn archive_to(&self, dir: &std::path::Path) -> std::io::Result<PathBuf> {
         let Some(store) = &self.store else {
             let placeholder = dir
@@ -285,8 +302,7 @@ impl AgentSession {
         // Clear in-memory messages without persisting. The active
         // file no longer exists; the next `append_message` will
         // recreate it via the existing `persist` path.
-        self.messages.write().await.clear();
-        self.reset_token_facts().await;
+        self.clear_in_memory_only().await;
         Ok(target)
     }
 
@@ -519,5 +535,26 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let result = session.archive_to(tmp.path()).await;
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn archive_to_writes_snapshot_when_active_file_does_not_exist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let active_path = tmp.path().join("sessions").join("k.json");
+        let session = AgentSession::new("k", PathBuf::from("/tmp/p"), None)
+            .with_json_file_store(active_path.clone());
+        // No append_message — file does not exist on disk.
+        assert!(!active_path.exists());
+
+        let archive_dir = tmp.path().join("archive");
+        let archived = session.archive_to(&archive_dir).await.unwrap();
+
+        assert!(archived.exists(), "archive snapshot should be written");
+        assert!(!active_path.exists(), "active file should still not exist");
+        // The snapshot includes the (empty) message log.
+        let raw = tokio::fs::read_to_string(&archived).await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["session_id"], "k");
+        assert_eq!(value["messages"].as_array().map(Vec::len), Some(0));
     }
 }
