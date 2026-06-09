@@ -51,6 +51,33 @@ impl From<AgentRunError> for RunError {
     }
 }
 
+/// Build a per-CLI-invocation session key.
+///
+/// The shape mirrors the gateway's [`build_key`](perry_hermes_gateway::runner::build_key):
+/// `platform:chat_type:id`. After `SessionRegistry::format_session_id`
+/// swaps `:` and `-` for `_`, the on-disk filename becomes
+/// `cli_run_{pid}_{nanos}_{counter}.json`, sitting alongside
+/// `telegram_dm_674971091.json` and the rest. Both sides therefore
+/// go through the same save/lookup mechanics in [`SessionRegistry`].
+///
+/// The id segment combines pid + monotonic clock + an in-process
+/// counter so two CLI runs in the same nanosecond still don't
+/// collide.
+fn new_cli_session_key() -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!(
+        "cli:run:{}-{}-{}",
+        std::process::id(),
+        now.as_nanos(),
+        counter
+    )
+}
+
 /// Production entry point: drives the TUI against stdout / real keyboard.
 pub async fn run(
     agent: Arc<AIAgent>,
@@ -90,7 +117,7 @@ pub async fn run(
     let sessions_dir = perry_hermes_agent::default_sessions_dir();
     let system_message = agent.system_message_for(&working_dir);
     let registry = SessionRegistry::new(sessions_dir, working_dir, system_message);
-    let entry = registry.get_or_create("cli").await;
+    let entry = registry.get_or_create(&new_cli_session_key()).await;
     let session = entry.session.clone();
 
     let result: Result<(), RunError> = async {
@@ -726,6 +753,31 @@ mod tests {
             std::env::remove_var("PERRY_HERMES_HOME");
         }
         assert_eq!(dir, tmp.path().join("sessions"));
+    }
+
+    #[test]
+    fn cli_session_key_is_unique_per_invocation_and_namespaced() {
+        // Each CLI invocation must produce its own session file, not
+        // a shared `cli.json` that overwrites prior runs. The key
+        // uses the same `platform:chat_type:id` shape as the
+        // gateway (`runner::build_key`) so both sides can be saved,
+        // listed, and resumed through the same `SessionRegistry`
+        // mechanics.
+        let first = super::new_cli_session_key();
+        let second = super::new_cli_session_key();
+        assert_ne!(first, second, "cli session keys must differ across calls");
+        let parts: Vec<&str> = first.split(':').collect();
+        assert_eq!(
+            parts.len(),
+            3,
+            "cli session key should follow platform:chat_type:id shape; got {first}"
+        );
+        assert_eq!(parts[0], "cli", "platform segment");
+        assert_eq!(parts[1], "run", "chat_type segment");
+        assert!(
+            !parts[2].is_empty(),
+            "id segment should carry the per-invocation id; got {first}"
+        );
     }
 
     #[derive(Clone, Default)]
