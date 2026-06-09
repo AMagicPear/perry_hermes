@@ -63,8 +63,59 @@ impl SessionRegistry {
         let store_path = self.sessions_dir.join(format!("{session_id}.json"));
         let system_message = self.system_message.clone();
 
-        let session = AgentSession::new(&session_id, &self.working_dir, system_message)
-            .with_json_file_store(&store_path);
+        let session = if store_path.exists() {
+            match AgentSession::load_json_file_with_system_message(
+                &store_path,
+                Some(self.working_dir.clone()),
+                system_message.clone(),
+            )
+            .await
+            {
+                Ok(loaded) => loaded,
+                Err(err) => {
+                    tracing::warn!(
+                        error = %err,
+                        path = %store_path.display(),
+                        "failed to load existing session; archiving as corrupt"
+                    );
+                    let archive_dir = self
+                        .sessions_dir
+                        .join(".archive")
+                        .join(&session_id);
+                    if let Err(create_err) =
+                        tokio::fs::create_dir_all(&archive_dir).await
+                    {
+                        tracing::warn!(
+                            error = %create_err,
+                            dir = %archive_dir.display(),
+                            "could not create corrupt-archive dir"
+                        );
+                    } else {
+                        let target = archive_dir
+                            .join(format!("{}.corrupt.json", archive_timestamp()));
+                        if let Err(rename_err) =
+                            tokio::fs::rename(&store_path, &target).await
+                        {
+                            tracing::warn!(
+                                error = %rename_err,
+                                from = %store_path.display(),
+                                to = %target.display(),
+                                "could not move corrupt session aside"
+                            );
+                        }
+                    }
+                    AgentSession::new(
+                        &session_id,
+                        &self.working_dir,
+                        system_message,
+                    )
+                    .with_json_file_store(&store_path)
+                }
+            }
+        } else {
+            AgentSession::new(&session_id, &self.working_dir, system_message)
+                .with_json_file_store(&store_path)
+        };
 
         let now = Utc::now();
         let entry = Arc::new(SessionEntry {
@@ -119,8 +170,13 @@ pub fn default_sessions_dir() -> PathBuf {
 
 /// Format a session ID from a session key.
 /// Replaces characters that are problematic in filenames.
-fn format_session_id(key: &str) -> String {
+pub(crate) fn format_session_id(key: &str) -> String {
     key.replace([':', '-'], "_")
+}
+
+/// Format a UTC timestamp suffix used for archive file names.
+pub(crate) fn archive_timestamp() -> String {
+    Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string()
 }
 
 #[cfg(test)]
@@ -166,5 +222,64 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let registry = SessionRegistry::new(tmp.path().into(), tmp.path().into(), None);
         assert!(!registry.reset("nonexistent").await);
+    }
+
+    #[tokio::test]
+    async fn get_or_create_loads_existing_snapshot() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+
+        // Pre-populate a session file at the deterministic path.
+        let key = "telegram:dm:123";
+        let session_id = super::format_session_id(key);
+        let snapshot = serde_json::json!({
+            "session_id": session_id,
+            "working_dir": "/tmp/old",
+            "system_message": null,
+            "messages": [
+                { "role": "user", "content": "hi" },
+                { "role": "assistant", "content": "hello" }
+            ],
+            "context_usage_baseline_tokens": null,
+        });
+        let path = sessions.join(format!("{session_id}.json"));
+        std::fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
+
+        let registry = super::SessionRegistry::new(sessions, tmp.path().into(), None);
+        let entry = registry.get_or_create(key).await;
+        let messages = entry.session.messages().await;
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].content.as_text(), "hi");
+        assert_eq!(messages[1].content.as_text(), "hello");
+    }
+
+    #[tokio::test]
+    async fn get_or_create_recovers_from_corrupt_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let key = "telegram:dm:123";
+        let session_id = super::format_session_id(key);
+        let path = sessions.join(format!("{session_id}.json"));
+        std::fs::write(&path, b"not json").unwrap();
+
+        let registry = super::SessionRegistry::new(sessions.clone(), tmp.path().into(), None);
+        let entry = registry.get_or_create(key).await;
+        assert!(entry.session.messages().await.is_empty());
+
+        // Original file is gone; a .corrupt-<ts>.json sibling exists.
+        assert!(!path.exists(), "corrupt active file should be moved aside");
+        let archive_dir = sessions.join(".archive").join(&session_id);
+        let entries: Vec<_> = std::fs::read_dir(&archive_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .ends_with(".corrupt.json")
+            })
+            .collect();
+        assert_eq!(entries.len(), 1, "one .corrupt.json archive entry");
     }
 }
