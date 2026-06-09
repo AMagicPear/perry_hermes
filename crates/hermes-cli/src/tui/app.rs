@@ -61,28 +61,21 @@ pub struct App {
 }
 
 impl App {
-    /// Test constructor. Leaves all fields empty / default.
-    pub fn new_for_test() -> Self {
+    /// Default state: empty scrollback, idle mode, no provider/model wired.
+    /// Tests and any caller that wants to mutate fields one by one start
+    /// from this. Production entry points use `App::new` instead.
+    pub fn new(
+        provider_name: String,
+        model_name: String,
+        max_iterations: u32,
+        context_window_size: Option<u64>,
+    ) -> Self {
         Self {
-            scrollback: Vec::new(),
-            input: String::new(),
-            cursor: 0,
-            mode: AppMode::Idle,
-            provider_name: None,
-            model_name: None,
-            iteration: 0,
-            max_iterations: 0,
-            compression_hint: None,
-            turn_started_at: None,
-            chat_scroll: 0,
-            context_window_size: None,
-            context_used_tokens: None,
-            history_width: 80,
-            active_turn_cancel: None,
-            scrollback_revision: 0,
-            cached_chat_lines: Vec::new(),
-            cached_chat_width: None,
-            cached_chat_revision: 0,
+            provider_name: Some(provider_name),
+            model_name: Some(model_name),
+            max_iterations,
+            context_window_size,
+            ..Self::default()
         }
     }
 
@@ -199,6 +192,32 @@ impl App {
             p += 1;
         }
         p
+    }
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            scrollback: Vec::new(),
+            input: String::new(),
+            cursor: 0,
+            mode: AppMode::Idle,
+            provider_name: None,
+            model_name: None,
+            iteration: 0,
+            max_iterations: 0,
+            compression_hint: None,
+            turn_started_at: None,
+            chat_scroll: 0,
+            context_window_size: None,
+            context_used_tokens: None,
+            history_width: 80,
+            active_turn_cancel: None,
+            scrollback_revision: 0,
+            cached_chat_lines: Vec::new(),
+            cached_chat_width: None,
+            cached_chat_revision: 0,
+        }
     }
 }
 
