@@ -17,8 +17,7 @@ pub use config::{
     QqBotConfig, QqBotConfigError, TelegramConfig, TelegramConfigError,
 };
 pub use loop_engine::{
-    AgentLoop, AgentRunError, ContextWindow, FailedTurn, LoopConfig, LoopEvent, LoopMetrics,
-    RunResult,
+    AgentLoop, AgentRunError, ContextWindow, LoopConfig, LoopEvent, LoopMetrics, RunResult,
 };
 pub use runtime_agent::AIAgent;
 pub use session::AgentSession;

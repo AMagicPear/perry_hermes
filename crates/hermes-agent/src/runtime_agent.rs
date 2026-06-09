@@ -26,9 +26,8 @@ pub struct AIAgent {
 
 impl AIAgent {
     /// Low-level constructor that takes a pre-built `AgentLoop` and an
-    /// empty `system_prompt`. Production code should use
-    /// `AIAgent::from_config`, which composes skills, AGENTS.md, and
-    /// working-dir hints into the system prompt.
+    /// empty `system_prompt`. Only used in tests.
+    #[cfg(test)]
     pub fn from_agent_loop(agent_loop: AgentLoop) -> Self {
         Self {
             agent_loop,
@@ -45,7 +44,11 @@ impl AIAgent {
         let selected_provider = config.resolve_provider()?;
         let provider = build_provider(&selected_provider)?;
         Ok(Self {
-            agent_loop: build_loop(Arc::from(provider), &config, &selected_provider),
+            agent_loop: build_loop_for_custom_provider(
+                Arc::from(provider),
+                &config,
+                Some(&selected_provider),
+            ),
             system_prompt: config.agent.system_prompt.clone(),
         })
     }
@@ -197,14 +200,6 @@ fn strip_system_message(messages: &[Message]) -> Vec<Message> {
         .filter(|m| m.role != perry_hermes_core::message::Role::System)
         .cloned()
         .collect()
-}
-
-fn build_loop(
-    provider: Arc<dyn Provider>,
-    config: &PerryHermesConfig,
-    selected_provider: &ResolvedProviderConfig,
-) -> AgentLoop {
-    build_loop_for_custom_provider(provider, config, Some(selected_provider))
 }
 
 fn build_loop_for_custom_provider(
@@ -561,8 +556,8 @@ mod tests {
         let provider = OneToolCallProvider {
             calls: Arc::new(Mutex::new(0)),
         };
-        let agent_loop = AgentLoop::new(
-            provider,
+        let agent_loop = AgentLoop::from_provider(
+            Arc::new(provider),
             Arc::new(registry),
             LoopConfig {
                 max_iterations: 3,

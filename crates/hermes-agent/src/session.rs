@@ -133,16 +133,6 @@ impl AgentSession {
         }
     }
 
-    /// Load saved session history and token facts from `path`.
-    ///
-    /// The runtime working directory is intentionally taken from the current
-    /// process cwd at load time, so resuming a session follows the directory
-    /// where the adapter was started. The saved `working_dir` remains part of
-    /// the snapshot format but is not reused as the active tool context.
-    pub async fn load_json_file(path: impl Into<PathBuf>) -> std::io::Result<Self> {
-        Self::load_json_file_with_system_message(path, std::env::current_dir().ok(), None).await
-    }
-
     pub(crate) async fn load_json_file_with_system_message(
         path: impl Into<PathBuf>,
         working_dir: Option<PathBuf>,
@@ -165,10 +155,6 @@ impl AgentSession {
             )),
             store: Some(JsonFileSessionStore::new(path)),
         })
-    }
-
-    pub async fn save(&self) -> std::io::Result<()> {
-        self.save_snapshot().await
     }
 
     /// The business message log. Excludes the system message; it
@@ -434,7 +420,7 @@ mod tests {
         let session = AgentSession::new("session-1", PathBuf::from("/tmp/project"), None)
             .with_json_file_store(path.clone());
 
-        session.save().await.unwrap();
+        session.reset().await;
 
         let raw = tokio::fs::read_to_string(&path)
             .await
@@ -462,9 +448,13 @@ mod tests {
         original.remember_context_usage_baseline(123).await;
 
         let current_cwd = std::env::current_dir().unwrap();
-        let restored = AgentSession::load_json_file(path)
-            .await
-            .expect("snapshot should load");
+        let restored = AgentSession::load_json_file_with_system_message(
+            path,
+            std::env::current_dir().ok(),
+            None,
+        )
+        .await
+        .expect("snapshot should load");
 
         assert_eq!(restored.session_id.as_ref(), "session-1");
         assert_eq!(restored.working_dir.as_ref(), &current_cwd);
@@ -500,11 +490,15 @@ mod tests {
         session.parent_session_id = Some(Arc::from("parent_key"));
         session.role = SessionRole::SubAgent;
 
-        session.save().await.unwrap();
+        session.reset().await;
 
-        let loaded = AgentSession::load_json_file(path)
-            .await
-            .expect("sub-agent snapshot should load");
+        let loaded = AgentSession::load_json_file_with_system_message(
+            path,
+            std::env::current_dir().ok(),
+            None,
+        )
+        .await
+        .expect("sub-agent snapshot should load");
 
         assert_eq!(loaded.role, SessionRole::SubAgent);
         assert_eq!(loaded.parent_session_id.as_deref(), Some("parent_key"));

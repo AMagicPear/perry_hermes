@@ -46,8 +46,8 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
 
     let provider = ScriptedProvider::new(vec![first, second]);
     let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
-    let loop_ = AgentLoop::new(
-        provider,
+    let loop_ = AgentLoop::from_provider(
+        Arc::new(provider),
         registry,
         LoopConfig {
             max_iterations: 5,

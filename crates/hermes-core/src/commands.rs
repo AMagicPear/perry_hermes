@@ -20,8 +20,8 @@ pub enum Command {
 }
 
 impl Command {
-    /// Parse a `/command [args]` string into a `Command`.
-    /// Returns `None` for unrecognized commands.
+    /// Parse a `/command [args]` string into a `Command`. Returns `None`
+    /// for unrecognized commands.
     pub fn parse(input: &str) -> Option<Self> {
         let trimmed = input.trim();
         let mut parts = trimmed.splitn(2, char::is_whitespace);
@@ -40,18 +40,6 @@ impl Command {
             "/quit" | "/exit" => Some(Self::Quit),
             "/clear" => Some(Self::Clear),
             _ => None,
-        }
-    }
-
-    /// Human-readable description for help / registration.
-    pub fn description(&self) -> &'static str {
-        match self {
-            Self::Reset => "Reset the current session",
-            Self::New => "Reset the current session (alias)",
-            Self::Compact(_) => "Compact the conversation context",
-            Self::Status => "Show session status",
-            Self::Quit => "Exit the application",
-            Self::Clear => "Clear scrollback",
         }
     }
 }

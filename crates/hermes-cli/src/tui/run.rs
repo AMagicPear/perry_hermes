@@ -400,11 +400,6 @@ fn dispatch_event(
             app.active_turn_cancel = None;
             match res {
                 Ok(_) => {}
-                Err(AgentRunError::Loop(LoopError::CancelledWith(_))) => {
-                    if let Some(history) = history.as_mut() {
-                        history.finish_stream(app.history_width);
-                    }
-                }
                 Err(AgentRunError::Loop(LoopError::Cancelled)) => {
                     if let Some(history) = history.as_mut() {
                         history.finish_stream(app.history_width);
@@ -430,7 +425,6 @@ fn dispatch_event(
                     let next = apply_loop_event(app, event);
                     let _ = dispatch_event(app, next, cancel, None, history)?;
                 }
-                Err(AgentRunError::Loop(LoopError::CancelledWith(_))) => {}
                 Err(AgentRunError::Loop(LoopError::Cancelled)) => {}
                 Err(e) => {
                     let line = RenderedLine::System(format!("error: {e}"));

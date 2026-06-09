@@ -64,19 +64,6 @@ impl GatewayRunner {
         }
     }
 
-    /// Construct with an existing [`SessionRegistry`] (useful for testing).
-    pub fn with_registry(
-        agent: Arc<AIAgent>,
-        config: GatewayConfig,
-        sessions: Arc<SessionRegistry>,
-    ) -> Self {
-        Self {
-            agent,
-            sessions,
-            config,
-        }
-    }
-
     /// Access the underlying agent.
     pub fn agent(&self) -> &Arc<AIAgent> {
         &self.agent

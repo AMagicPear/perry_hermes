@@ -106,8 +106,8 @@ async fn loop_emits_post_turn_compression_before_tool_dispatch() {
     let compactor =
         SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
-    let loop_ = AgentLoop::new(
-        ScriptedProvider::new(vec![first, second]),
+    let loop_ = AgentLoop::from_provider(
+        Arc::new(ScriptedProvider::new(vec![first, second])),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
             max_iterations: 5,
@@ -180,8 +180,8 @@ async fn loop_does_not_compress_until_real_context_usage_reaches_threshold() {
     let compactor =
         SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
-    let loop_ = AgentLoop::new(
-        ScriptedProvider::new(vec![first]),
+    let loop_ = AgentLoop::from_provider(
+        Arc::new(ScriptedProvider::new(vec![first])),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
             max_iterations: 5,
@@ -241,8 +241,8 @@ async fn loop_compresses_after_real_context_usage_reaches_threshold() {
     let compactor =
         SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
-    let loop_ = AgentLoop::new(
-        ScriptedProvider::new(vec![first]),
+    let loop_ = AgentLoop::from_provider(
+        Arc::new(ScriptedProvider::new(vec![first])),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
             max_iterations: 5,
@@ -336,8 +336,8 @@ async fn loop_reports_post_compact_usage_from_baseline_plus_summary_output() {
     let compactor =
         SummaryCompactor::new(CompactorConfig::default()).with_summary_provider(summary_provider);
 
-    let loop_ = AgentLoop::new(
-        ScriptedProvider::new(vec![first]),
+    let loop_ = AgentLoop::from_provider(
+        Arc::new(ScriptedProvider::new(vec![first])),
         Arc::new(InMemoryRegistry::new()),
         LoopConfig {
             max_iterations: 5,
