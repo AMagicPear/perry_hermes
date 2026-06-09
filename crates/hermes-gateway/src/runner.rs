@@ -1,3 +1,4 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
@@ -241,12 +242,8 @@ impl GatewayRunner {
         let entry = self.session(event).await;
         let messages = entry.session.messages().await;
         let key = build_key(event);
-        let session_id = key.replace([':', '-'], "_");
-        let archive_dir = self
-            .config
-            .sessions_dir
-            .join(".archive")
-            .join(&session_id);
+        let session_id = perry_hermes_agent::format_session_id(&key);
+        let archive_dir = self.config.sessions_dir.join(".archive").join(&session_id);
         let archived = count_files_in(&archive_dir).await;
 
         Ok(GatewayResponse::Reply(format!(
@@ -259,14 +256,65 @@ impl GatewayRunner {
     }
 }
 
-async fn count_files_in(dir: &std::path::Path) -> u64 {
+/// Count the regular files in `dir`. Returns 0 if the directory
+/// does not exist. Non-recoverable filesystem errors are logged
+/// via `tracing::warn!` and the scan aborts at the point of
+/// failure (returning the count seen so far).
+async fn count_files_in(dir: &Path) -> u64 {
     let mut rd = match tokio::fs::read_dir(dir).await {
         Ok(rd) => rd,
-        Err(_) => return 0,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return 0,
+        Err(err) => {
+            tracing::warn!(error = %err, dir = %dir.display(), "cannot read archive dir");
+            return 0;
+        }
     };
     let mut n = 0u64;
-    while let Ok(Some(_)) = rd.next_entry().await {
-        n += 1;
+    loop {
+        match rd.next_entry().await {
+            Ok(Some(entry)) => {
+                let is_file = matches!(
+                    entry.file_type().await,
+                    Ok(ft) if ft.is_file()
+                );
+                if is_file {
+                    n += 1;
+                }
+            }
+            Ok(None) => break,
+            Err(err) => {
+                tracing::warn!(error = %err, dir = %dir.display(), "archive dir scan aborted");
+                break;
+            }
+        }
     }
     n
+}
+
+#[cfg(test)]
+mod count_files_in_tests {
+    use super::count_files_in;
+
+    #[tokio::test]
+    async fn empty_dir_returns_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(count_files_in(tmp.path()).await, 0);
+    }
+
+    #[tokio::test]
+    async fn counts_regular_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.json"), b"x").unwrap();
+        std::fs::write(tmp.path().join("b.json"), b"x").unwrap();
+        std::fs::create_dir(tmp.path().join("nested")).unwrap();
+        // nested/ is a directory; should not inflate the count.
+        assert_eq!(count_files_in(tmp.path()).await, 2);
+    }
+
+    #[tokio::test]
+    async fn nonexistent_dir_returns_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope");
+        assert_eq!(count_files_in(&missing).await, 0);
+    }
 }

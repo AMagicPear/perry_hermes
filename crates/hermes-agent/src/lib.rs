@@ -22,4 +22,6 @@ pub use loop_engine::{
 };
 pub use runtime_agent::AIAgent;
 pub use session::AgentSession;
-pub use session_registry::{SessionEntry, SessionRegistry, default_sessions_dir};
+pub use session_registry::{
+    SessionEntry, SessionRegistry, default_sessions_dir, format_session_id,
+};

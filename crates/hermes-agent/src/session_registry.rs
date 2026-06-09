@@ -243,7 +243,7 @@ pub fn default_sessions_dir() -> PathBuf {
 
 /// Format a session ID from a session key.
 /// Replaces characters that are problematic in filenames.
-pub(crate) fn format_session_id(key: &str) -> String {
+pub fn format_session_id(key: &str) -> String {
     key.replace([':', '-'], "_")
 }
 
