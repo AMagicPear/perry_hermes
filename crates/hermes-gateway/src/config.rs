@@ -14,8 +14,6 @@ pub struct GatewayConfig {
     /// Allowed user IDs per platform. Empty map = allow all.
     /// Key: platform name (e.g. "telegram"), Value: set of allowed user IDs.
     pub allowed_users: HashMap<String, HashSet<String>>,
-    /// Optional system prompt for new sessions.
-    pub system_prompt: Option<String>,
     /// Telegram platform config; `None` disables the adapter.
     pub telegram: Option<TelegramConfig>,
     /// QQ Bot platform config; `None` disables the adapter.
@@ -28,7 +26,6 @@ impl Default for GatewayConfig {
             sessions_dir: perry_hermes_agent::default_sessions_dir(),
             working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
             allowed_users: HashMap::new(),
-            system_prompt: None,
             telegram: None,
             qqbot: None,
         }

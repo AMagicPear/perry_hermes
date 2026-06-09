@@ -78,7 +78,7 @@ fn system_text(messages: &[Message]) -> String {
 }
 
 #[tokio::test]
-async fn runtime_new_preserves_user_prompt_without_skills_dir() {
+async fn runtime_new_uses_default_system_prompt_without_skills_dir() {
     let _guard = with_env_lock().await;
     unsafe { std::env::remove_var("HOME") };
     unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
@@ -86,9 +86,7 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let mut config = config_for_echo();
-    config.agent.system_prompt = Some("ONLY-CUSTOM".into());
-    let agent = AIAgent::new(provider, config);
+    let agent = AIAgent::new(provider, config_for_echo());
     let session = agent.new_session("t", PathBuf::from("/tmp"));
 
     agent
@@ -98,7 +96,7 @@ async fn runtime_new_preserves_user_prompt_without_skills_dir() {
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    assert!(text.contains("ONLY-CUSTOM"));
+    assert!(text.contains("careful assistant"));
     assert!(text.contains("Current working directory: /tmp"));
 }
 
@@ -126,7 +124,7 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
 }
 
 #[tokio::test]
-async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
+async fn runtime_appends_skills_block_after_default_system_prompt() {
     // tempdir must live for the entire test (set HOME inside the lock, but
     // don't let tempdir get dropped when the lock-scope ends).
     let home = tempfile::tempdir().unwrap();
@@ -143,9 +141,7 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let mut config = config_for_echo();
-    config.agent.system_prompt = Some("CUSTOM-PROMPT-MARKER".into());
-    let agent = AIAgent::new(provider, config);
+    let agent = AIAgent::new(provider, config_for_echo());
 
     let session = agent.new_session("t", PathBuf::from("/tmp"));
     agent
@@ -155,11 +151,11 @@ async fn runtime_appends_skills_block_after_user_supplied_system_prompt() {
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    let custom_idx = text
-        .find("CUSTOM-PROMPT-MARKER")
-        .expect("custom prompt present");
+    let base_idx = text
+        .find("careful assistant")
+        .expect("default prompt present");
     let skills_idx = text.find("Available skills").expect("skills block present");
-    assert!(custom_idx < skills_idx);
+    assert!(base_idx < skills_idx);
     assert!(text.contains("**rust-core-style**: Rust style"));
     assert!(text.contains("Current working directory: /tmp"));
 }
@@ -174,9 +170,7 @@ async fn runtime_reads_skills_when_session_is_created_not_when_agent_is_created(
 
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
-    let mut config = config_for_echo();
-    config.agent.system_prompt = Some("CUSTOM-PROMPT-MARKER".into());
-    let agent = AIAgent::new(provider, config);
+    let agent = AIAgent::new(provider, config_for_echo());
 
     write_skill(
         &skills_dir_for(home.path()),
@@ -192,7 +186,7 @@ async fn runtime_reads_skills_when_session_is_created_not_when_agent_is_created(
 
     let msgs = captured.lock().unwrap();
     let text = system_text(&msgs);
-    assert!(text.contains("CUSTOM-PROMPT-MARKER"));
+    assert!(text.contains("careful assistant"));
     assert!(text.contains("**created-after-agent**: created later"));
 }
 

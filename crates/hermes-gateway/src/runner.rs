@@ -5,7 +5,6 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, SessionEntry, SessionRegistry};
-use perry_hermes_core::Message;
 use perry_hermes_core::Platform;
 use perry_hermes_core::commands::Command;
 
@@ -52,7 +51,7 @@ pub enum GatewayResponse {
 
 impl GatewayRunner {
     pub fn new(agent: Arc<AIAgent>, config: GatewayConfig) -> Self {
-        let system_message = config.system_prompt.as_deref().map(Message::system);
+        let system_message = agent.system_message_for(&config.working_dir);
         let sessions = Arc::new(SessionRegistry::new(
             config.sessions_dir.clone(),
             config.working_dir.clone(),

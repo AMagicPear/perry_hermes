@@ -36,15 +36,15 @@ pub fn resolve_skills_dir() -> Option<PathBuf> {
     Some(base.join("skills"))
 }
 
-/// Compose the prompt prefix for a newly-created session: the user-configured
-/// `system_prompt` (or `DEFAULT_SYSTEM_PROMPT`) plus the skills block, if any.
+/// Compose the prompt prefix for a newly-created session: the
+/// hardcoded [`DEFAULT_SYSTEM_PROMPT`] plus the skills block, if any.
 ///
 /// This is intentionally called from session creation, not `AIAgent`
 /// construction. A reusable `AIAgent` may create many sessions over a long
 /// lifetime, and each new session should capture the skills available at that
 /// creation point.
-fn compose_session_prompt_prefix(user_prompt: Option<&str>) -> Option<String> {
-    let base = user_prompt.unwrap_or(DEFAULT_SYSTEM_PROMPT);
+fn compose_session_prompt_prefix() -> Option<String> {
+    let base = DEFAULT_SYSTEM_PROMPT;
     let Some(dir) = resolve_skills_dir() else {
         return Some(base.to_string());
     };
@@ -102,20 +102,20 @@ pub fn load_agents_md_block(working_dir: &Path) -> Option<String> {
     }
 }
 
-/// Build the immutable system `Message` for a session, combining the prompt
-/// prefix (configured prompt/default + skills) with the session-scoped
-/// sections (AGENTS.md block, working directory).
+/// Build the immutable system `Message` for a session, combining the
+/// hardcoded [`DEFAULT_SYSTEM_PROMPT`] with the session-scoped sections
+/// (skills block, AGENTS.md, working directory).
 ///
-/// Returns `None` only if prompt composition is explicitly changed to produce
-/// no sections. With the current default prompt and working-directory hint,
-/// newly-created sessions always get a system message.
+/// Returns `None` only if all sections are empty. With the current default
+/// prompt and working-directory hint, newly-created sessions always get a
+/// system message.
 ///
 /// Callers should invoke this at most once per session, store the
 /// returned message in the session's log, and treat it as
 /// immutable thereafter.
-pub fn build_system_message(user_prompt: Option<&str>, working_dir: &Path) -> Option<Message> {
+pub fn build_system_message(working_dir: &Path) -> Option<Message> {
     let mut sections: Vec<String> = Vec::with_capacity(3);
-    if let Some(base) = compose_session_prompt_prefix(user_prompt) {
+    if let Some(base) = compose_session_prompt_prefix() {
         sections.push(base.trim().to_string());
     }
     if let Some(block) = load_agents_md_block(working_dir) {
@@ -228,24 +228,21 @@ mod tests {
     }
 
     #[test]
-    fn build_system_message_includes_working_dir_even_without_base_or_agents() {
-        // The working-directory hint is always present, so the
-        // system message is never empty for a configured session.
-        let msg = build_system_message(None, Path::new("/tmp/no-agents-md"))
+    fn build_system_message_includes_working_dir_even_without_agents() {
+        let msg = build_system_message(Path::new("/tmp/no-agents-md"))
             .expect("message should be Some because of working-dir hint");
         let text = msg.content.as_text();
         assert!(text.contains("Current working directory: /tmp/no-agents-md"));
     }
 
     #[test]
-    fn build_system_message_includes_base_prompt_and_working_dir() {
-        let msg = build_system_message(Some("BASE"), Path::new("/tmp/project"))
+    fn build_system_message_includes_default_base_prompt_and_working_dir() {
+        let msg = build_system_message(Path::new("/tmp/project"))
             .expect("message should be Some");
 
         let text = msg.content.as_text();
-        assert!(text.contains("BASE"));
+        assert!(text.contains("careful assistant"));
         assert!(text.contains("Current working directory: /tmp/project"));
-        // Provider and Session ID lines must not leak into the prompt.
         assert!(!text.contains("Provider:"));
         assert!(!text.contains("Session ID:"));
     }
@@ -256,10 +253,10 @@ mod tests {
         write_agents_md(tmp.path(), "UNIQUE-AGENTS-MARKER-XYZ");
 
         let msg =
-            build_system_message(Some("BASE-PROMPT"), tmp.path()).expect("message should be Some");
+            build_system_message(tmp.path()).expect("message should be Some");
         let text = msg.content.as_text();
 
-        let base_idx = text.find("BASE-PROMPT").expect("base present");
+        let base_idx = text.find("careful assistant").expect("base present");
         let agents_idx = text
             .find("UNIQUE-AGENTS-MARKER-XYZ")
             .expect("agents md present");
@@ -277,10 +274,10 @@ mod tests {
     #[test]
     fn build_system_message_omits_agents_block_when_file_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        let msg = build_system_message(Some("BASE"), tmp.path()).expect("message should be Some");
+        let msg = build_system_message(tmp.path()).expect("message should be Some");
         let text = msg.content.as_text();
         assert!(!text.contains("Project guidance from `AGENTS.md`"));
-        assert!(text.contains("BASE"));
+        assert!(text.contains("careful assistant"));
     }
 
     #[test]
@@ -296,7 +293,7 @@ mod tests {
         let _cwd = CwdGuard::enter(other_cwd.path());
 
         let msg =
-            build_system_message(Some("BASE"), session_dir.path()).expect("message should be Some");
+            build_system_message(session_dir.path()).expect("message should be Some");
         let text = msg.content.as_text();
         assert!(text.contains("FROM-SESSION-DIR"));
         // The body must appear exactly once — no double-injection.

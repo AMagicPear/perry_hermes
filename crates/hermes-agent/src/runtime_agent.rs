@@ -19,20 +19,14 @@ use crate::{
 
 pub struct AIAgent {
     agent_loop: AgentLoop,
-    /// User-configured system prompt. Skills, AGENTS.md, and working-dir
-    /// hints are folded in once when a new session is created.
-    system_prompt: Option<String>,
 }
 
 impl AIAgent {
-    /// Low-level constructor that takes a pre-built `AgentLoop` and an
-    /// empty `system_prompt`. Only used in tests.
+    /// Low-level constructor that takes a pre-built `AgentLoop`.
+    /// Only used in tests.
     #[cfg(test)]
     pub fn from_agent_loop(agent_loop: AgentLoop) -> Self {
-        Self {
-            agent_loop,
-            system_prompt: None,
-        }
+        Self { agent_loop }
     }
 
     // Public constructor: takes PerryHermesConfig by value so callers can
@@ -49,7 +43,6 @@ impl AIAgent {
                 &config,
                 Some(&selected_provider),
             ),
-            system_prompt: config.agent.system_prompt.clone(),
         })
     }
 
@@ -64,7 +57,6 @@ impl AIAgent {
                 &config,
                 selected_provider.as_ref(),
             ),
-            system_prompt: config.agent.system_prompt.clone(),
         }
     }
 
@@ -83,10 +75,10 @@ impl AIAgent {
     }
 
     /// Build the system message for a session at `working_dir`.
-    /// Includes the user's system prompt, AGENTS.md content, working
-    /// directory hint, and skills index.
+    /// Includes the hardcoded base prompt, skills index, AGENTS.md
+    /// content, and working directory hint.
     pub fn system_message_for(&self, working_dir: &std::path::Path) -> Option<Message> {
-        build_system_message(self.system_prompt.as_deref(), working_dir)
+        build_system_message(working_dir)
     }
 
     pub async fn load_json_session(
@@ -522,9 +514,7 @@ mod tests {
         saved.append_message(Message::user("saved hello")).await;
         saved.remember_context_usage_baseline(123).await;
 
-        let mut config = echo_config();
-        config.agent.system_prompt = Some("NEW SYSTEM".into());
-        let agent = AIAgent::new(perry_hermes_providers::EchoProvider::new(), config);
+        let agent = AIAgent::new(perry_hermes_providers::EchoProvider::new(), echo_config());
         let session = agent
             .load_json_session(path)
             .await
@@ -536,7 +526,7 @@ mod tests {
 
         let outbound = session.outbound_messages().await;
         let system_text = outbound[0].content.as_text();
-        assert!(system_text.contains("NEW SYSTEM"));
+        assert!(system_text.contains("careful assistant"));
         assert!(system_text.contains(&format!(
             "Current working directory: {}",
             current_cwd.display()
