@@ -81,42 +81,31 @@ impl SessionRegistry {
                 Ok(loaded) => loaded,
                 Err(err) => {
                     tracing::warn!(
-                        error = %err,
-                        path = %store_path.display(),
-                        "failed to load existing session; archiving as corrupt"
+                    error = %err,
+                    path = %store_path.display(),
+                    "failed to load existing session; archiving as corrupt"
                     );
-                    let archive_dir = self
-                        .sessions_dir
-                        .join(".archive")
-                        .join(&session_id);
-                    if let Err(create_err) =
-                        tokio::fs::create_dir_all(&archive_dir).await
-                    {
+                    let archive_dir = self.sessions_dir.join(".archive").join(&session_id);
+                    if let Err(create_err) = tokio::fs::create_dir_all(&archive_dir).await {
                         tracing::warn!(
-                            error = %create_err,
-                            dir = %archive_dir.display(),
-                            "could not create corrupt-archive dir"
+                        error = %create_err,
+                        dir = %archive_dir.display(),
+                        "could not create corrupt-archive dir"
                         );
                     } else {
-                        let target = archive_dir
-                            .join(format!("{}.corrupt.json", archive_timestamp()));
-                        if let Err(rename_err) =
-                            tokio::fs::rename(&store_path, &target).await
-                        {
+                        let target =
+                            archive_dir.join(format!("{}.corrupt.json", archive_timestamp()));
+                        if let Err(rename_err) = tokio::fs::rename(&store_path, &target).await {
                             tracing::warn!(
-                                error = %rename_err,
-                                from = %store_path.display(),
-                                to = %target.display(),
-                                "could not move corrupt session aside"
+                            error = %rename_err,
+                            from = %store_path.display(),
+                            to = %target.display(),
+                            "could not move corrupt session aside"
                             );
                         }
                     }
-                    AgentSession::new(
-                        &session_id,
-                        &self.working_dir,
-                        system_message,
-                    )
-                    .with_json_file_store(&store_path)
+                    AgentSession::new(&session_id, &self.working_dir, system_message)
+                        .with_json_file_store(&store_path)
                 }
             }
         } else {
@@ -145,6 +134,26 @@ impl SessionRegistry {
             true
         } else {
             false
+        }
+    }
+
+    /// Archive the active on-disk snapshot for `key` to
+    /// `sessions/.archive/<key>/<utc_ts>.json`. Returns `None` if
+    /// `key` has no live session.
+    pub async fn archive_active(&self, key: &str) -> Option<PathBuf> {
+        let entry = self.sessions.get(key)?.clone();
+        let _guard = entry.turn_lock.lock().await;
+        let archive_dir = self.sessions_dir.join(".archive");
+        match entry.session.archive_to(&archive_dir).await {
+            Ok(path) => Some(path),
+            Err(err) => {
+                tracing::warn!(
+                error = %err,
+                session = %key,
+                "failed to archive active session"
+                );
+                None
+            }
         }
     }
 
@@ -241,14 +250,14 @@ mod tests {
         let key = "telegram:dm:123";
         let session_id = super::format_session_id(key);
         let snapshot = serde_json::json!({
-            "session_id": session_id,
-            "working_dir": "/tmp/old",
-            "system_message": null,
-            "messages": [
-                { "role": "user", "content": "hi" },
-                { "role": "assistant", "content": "hello" }
-            ],
-            "context_usage_baseline_tokens": null,
+        "session_id": session_id,
+        "working_dir": "/tmp/old",
+        "system_message": null,
+        "messages": [
+        { "role": "user", "content": "hi" },
+        { "role": "assistant", "content": "hello" }
+        ],
+        "context_usage_baseline_tokens": null,
         });
         let path = sessions.join(format!("{session_id}.json"));
         std::fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
@@ -270,11 +279,11 @@ mod tests {
         let session_id = super::format_session_id(key);
         let path = sessions.join(format!("{session_id}.json"));
         let snapshot = serde_json::json!({
-            "session_id": session_id,
-            "working_dir": "/tmp/old",
-            "system_message": null,
-            "messages": [],
-            "context_usage_baseline_tokens": null,
+        "session_id": session_id,
+        "working_dir": "/tmp/old",
+        "system_message": null,
+        "messages": [],
+        "context_usage_baseline_tokens": null,
         });
         std::fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
 
@@ -294,13 +303,13 @@ mod tests {
         let session_id = super::format_session_id(key);
         let path = sessions.join(format!("{session_id}.json"));
         let snapshot = serde_json::json!({
-            "session_id": session_id,
-            "working_dir": "/tmp/old",
-            "system_message": null,
-            "messages": [],
-            "context_usage_baseline_tokens": null,
-            "parent_session_id": "parent_key",
-            "role": "SubAgent",
+        "session_id": session_id,
+        "working_dir": "/tmp/old",
+        "system_message": null,
+        "messages": [],
+        "context_usage_baseline_tokens": null,
+        "parent_session_id": "parent_key",
+        "role": "SubAgent",
         });
         std::fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
 
@@ -333,12 +342,39 @@ mod tests {
         let entries: Vec<_> = std::fs::read_dir(&archive_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.file_name()
-                    .to_string_lossy()
-                    .ends_with(".corrupt.json")
-            })
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".corrupt.json"))
             .collect();
         assert_eq!(entries.len(), 1, "one .corrupt.json archive entry");
+    }
+
+    #[tokio::test]
+    async fn archive_active_moves_file_and_clears_in_memory_messages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let registry = super::SessionRegistry::new(sessions.clone(), tmp.path().into(), None);
+        let entry = registry.get_or_create("k").await;
+        entry
+            .session
+            .append_message(perry_hermes_core::Message::user("hi"))
+            .await;
+
+        let archived = registry.archive_active("k").await;
+        assert!(archived.is_some(), "archive_active should return a path");
+        let archived = archived.unwrap();
+        assert!(archived.exists(), "archive file should exist");
+        assert!(entry.session.messages().await.is_empty());
+
+        // Re-getting the same key after archive starts a fresh session.
+        let entry2 = registry.get_or_create("k").await;
+        assert!(entry2.session.messages().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn archive_active_returns_none_for_missing_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let registry =
+            super::SessionRegistry::new(tmp.path().join("sessions"), tmp.path().into(), None);
+        assert!(registry.archive_active("nope").await.is_none());
     }
 }
