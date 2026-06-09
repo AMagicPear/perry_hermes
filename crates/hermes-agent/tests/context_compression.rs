@@ -1,7 +1,7 @@
 use std::sync::{Arc, Mutex};
 
 use perry_hermes_agent::{
-    AIAgent, AgentLoop, AgentSession, CompactorConfig, ContextWindow, LoopConfig, ModelConfig,
+    AIAgent, AgentLoop, AgentSession, CompactorConfig, ContextWindow, LoopConfig,
     PerryHermesConfig, SummaryCompactor,
 };
 use perry_hermes_core::ProviderError;

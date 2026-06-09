@@ -266,30 +266,9 @@ mod tests {
     use serde_json::{Value, json};
     use tokio_util::sync::CancellationToken;
 
-    use crate::config::test_helpers::*;
     use crate::config::{ModelConfig, ProviderConfig, ProviderKind};
     fn echo_config() -> PerryHermesConfig {
         PerryHermesConfig::for_test_echo()
-    }
-
-    fn provider_config(
-        name: &str,
-        kind: ProviderKind,
-        model: &str,
-        context_window_size: u64,
-    ) -> ProviderConfig {
-        ProviderConfig {
-            name: name.into(),
-            kind,
-            api_key_env: None,
-            models: vec![ModelConfig {
-                name: model.into(),
-                context_window_size,
-            }],
-            base_url: None,
-            api_key_header: None,
-            thinking: None,
-        }
     }
 
     fn echo_config_with_compression() -> PerryHermesConfig {
