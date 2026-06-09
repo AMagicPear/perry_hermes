@@ -125,16 +125,31 @@ impl SessionRegistry {
         entry
     }
 
-    /// Reset the session for `key`, clearing message history.
-    /// Returns false if no session exists.
+    /// Reset the session for `key`: archive the active on-disk
+    /// snapshot to `sessions/.archive/<key>/<ts>.json`, then
+    /// clear the in-memory history. Returns `true` if a session
+    /// existed for `key`, `false` otherwise. Archive failures
+    /// are logged via `tracing::warn!` and do not stop the
+    /// in-memory clear from running.
     pub async fn reset(&self, key: &str) -> bool {
-        if let Some(entry) = self.sessions.get(key) {
-            entry.session.reset().await;
-            *entry.last_active.lock().unwrap() = Utc::now();
-            true
-        } else {
-            false
+        let Some(entry) = self.sessions.get(key) else {
+            return false;
+        };
+        let entry = entry.clone();
+        let _guard = entry.turn_lock.lock().await;
+
+        // Best-effort archive. Failure is logged inside `archive_active`.
+        let archive_dir = self.sessions_dir.join(".archive");
+        if let Err(err) = entry.session.archive_to(&archive_dir).await {
+            tracing::warn!(
+                error = %err,
+                session = %key,
+                "reset could not archive active session; clearing in place"
+            );
         }
+        entry.session.reset().await;
+        *entry.last_active.lock().unwrap() = Utc::now();
+        true
     }
 
     /// Archive the active on-disk snapshot for `key` to
@@ -233,6 +248,32 @@ mod tests {
         assert!(registry.reset("telegram:dm:123").await);
         let session = registry.get_session("telegram:dm:123").unwrap();
         assert!(session.messages().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reset_archives_then_clears() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let registry = super::SessionRegistry::new(
+            sessions.clone(),
+            tmp.path().into(),
+            None,
+        );
+        let entry = registry.get_or_create("k").await;
+        entry
+            .session
+            .append_message(perry_hermes_core::Message::user("hi"))
+            .await;
+
+        assert!(registry.reset("k").await);
+        assert!(entry.session.messages().await.is_empty());
+
+        // The prior content moved to .archive/k/<ts>.json.
+        let archive_dir = sessions.join(".archive").join("k");
+        assert!(archive_dir.exists(), "archive dir should be created");
+        let count = std::fs::read_dir(&archive_dir).unwrap().count();
+        assert_eq!(count, 1, "one archive entry expected");
     }
 
     #[tokio::test]
