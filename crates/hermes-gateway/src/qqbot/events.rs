@@ -1,7 +1,5 @@
 //! Conversion from `qq_bot_rs` events to the gateway's `GatewayEvent`.
 
-#![allow(dead_code, unused_imports)] // populated incrementally by Tasks 7 + 8
-
 use qq_bot_rs::types::message::{C2cMessage, GroupMessage};
 
 use crate::event::{ChatType, GatewayEvent};
@@ -73,6 +71,28 @@ pub fn group_to_event(msg: &GroupMessage) -> Option<GatewayEvent> {
     })
 }
 
+/// Run a single `GatewayEvent` through the gateway and ship the reply
+/// back via the provided async `send` closure.
+///
+/// Failures are logged via `tracing`; the bridge does not retry.
+pub async fn handle_reply<F, Fut>(gateway: &GatewayRunner, event: &GatewayEvent, send: F)
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    match gateway.handle_event(event.clone()).await {
+        Ok(crate::runner::GatewayResponse::Reply(text)) => {
+            if let Err(e) = send(text).await {
+                tracing::warn!(error = %e, "qqbot: send reply failed");
+            }
+        }
+        Ok(crate::runner::GatewayResponse::Ignored) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "qqbot: gateway error");
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,7 +118,6 @@ mod tests {
         assert_eq!(strip_at_mention("<@!12345>"), "<@!12345>");
     }
 
-    use qq_bot_rs::types::message::{C2cMessageAuthor, GroupMessageAuthor};
     use serde_json::json;
 
     #[test]
