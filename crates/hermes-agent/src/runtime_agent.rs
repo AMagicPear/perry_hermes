@@ -528,9 +528,10 @@ mod tests {
             .load_json_session(path)
             .await
             .expect("session should load");
-        let current_cwd = std::env::current_dir().unwrap();
+        let current_cwd = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
+        let session_cwd = std::fs::canonicalize(session.working_dir.as_ref()).unwrap();
 
-        assert_eq!(session.working_dir.as_ref(), &current_cwd);
+        assert_eq!(session_cwd, current_cwd);
 
         let outbound = session.outbound_messages().await;
         let system_text = outbound[0].content.as_text();

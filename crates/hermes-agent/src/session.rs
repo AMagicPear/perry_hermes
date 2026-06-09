@@ -434,7 +434,7 @@ mod tests {
         original.append_message(Message::user("hello")).await;
         original.remember_context_usage_baseline(123).await;
 
-        let current_cwd = std::env::current_dir().unwrap();
+        let current_cwd = std::fs::canonicalize(std::env::current_dir().unwrap()).unwrap();
         let restored = AgentSession::load_json_file_with_system_message(
             path,
             std::env::current_dir().ok(),
@@ -444,7 +444,10 @@ mod tests {
         .expect("snapshot should load");
 
         assert_eq!(restored.session_id.as_ref(), "session-1");
-        assert_eq!(restored.working_dir.as_ref(), &current_cwd);
+        assert_eq!(
+            std::fs::canonicalize(restored.working_dir.as_ref()).unwrap(),
+            current_cwd
+        );
 
         let outbound = restored.outbound_messages().await;
         assert_eq!(outbound.len(), 2);
