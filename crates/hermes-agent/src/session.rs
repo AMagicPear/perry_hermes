@@ -5,6 +5,13 @@ use perry_hermes_core::message::Message;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum SessionRole {
+    #[default]
+    Root,
+    SubAgent,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionSnapshot {
     session_id: String,
@@ -14,7 +21,14 @@ struct SessionSnapshot {
     /// First provider-reported prompt context usage for this session.
     /// This is used after compaction to estimate:
     /// `baseline + summary_output_tokens`.
+    #[serde(default)]
     context_usage_baseline_tokens: Option<u64>,
+    /// Parent session id, if this is a sub-agent session.
+    #[serde(default)]
+    parent_session_id: Option<String>,
+    /// Root (user-facing) or SubAgent. Defaults to Root for legacy snapshots.
+    #[serde(default)]
+    role: SessionRole,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +76,8 @@ pub struct AgentSession {
     pub session_id: Arc<str>,
     pub working_dir: Arc<PathBuf>,
     pub system_message: Option<Arc<Message>>,
+    pub parent_session_id: Option<Arc<str>>,
+    pub role: SessionRole,
     messages: Arc<RwLock<Vec<Message>>>,
     /// First non-zero provider-reported prompt context usage observed for
     /// this session. In the initial turn, this usually includes the system
@@ -88,6 +104,8 @@ impl AgentSession {
             session_id: Arc::from(session_id.into()),
             working_dir: Arc::new(working_dir.into()),
             system_message: system_message.map(Arc::new),
+            parent_session_id: None,
+            role: SessionRole::Root,
             messages: Arc::new(RwLock::new(Vec::with_capacity(8))),
             context_usage_baseline_tokens: Arc::new(RwLock::new(None)),
             store: None,
@@ -125,6 +143,8 @@ impl AgentSession {
             session_id: Arc::from(snapshot.session_id),
             working_dir: Arc::new(working_dir),
             system_message: system_message.or(snapshot.system_message).map(Arc::new),
+            parent_session_id: snapshot.parent_session_id.map(Arc::from),
+            role: snapshot.role,
             messages: Arc::new(RwLock::new(snapshot.messages)),
             context_usage_baseline_tokens: Arc::new(RwLock::new(
                 snapshot.context_usage_baseline_tokens,
@@ -237,6 +257,8 @@ impl AgentSession {
             system_message: self.system_message.as_deref().cloned(),
             messages: self.messages().await,
             context_usage_baseline_tokens: *self.context_usage_baseline_tokens.read().await,
+            parent_session_id: self.parent_session_id.as_deref().map(str::to_string),
+            role: self.role,
         }
     }
 }
@@ -392,5 +414,25 @@ mod tests {
         assert_eq!(outbound[0].content.as_text(), "persisted system prompt");
         assert_eq!(outbound[1].content.as_text(), "hello");
         assert_eq!(restored.compacted_context_tokens(7).await, Some(130));
+    }
+
+    #[tokio::test]
+    async fn snapshot_round_trips_with_missing_sub_agent_fields() {
+        // A snapshot written before this change has no parent_session_id or role field.
+        let raw = br#"{
+            "session_id": "legacy",
+            "working_dir": "/tmp",
+            "system_message": null,
+            "messages": [],
+            "context_usage_baseline_tokens": null
+        }"#;
+        let snapshot: SessionSnapshot = serde_json::from_slice(raw).unwrap();
+        assert_eq!(snapshot.parent_session_id, None);
+        assert_eq!(snapshot.role, SessionRole::Root);
+    }
+
+    #[tokio::test]
+    async fn session_role_default_is_root() {
+        assert_eq!(SessionRole::default(), SessionRole::Root);
     }
 }
