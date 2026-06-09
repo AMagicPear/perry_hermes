@@ -250,6 +250,46 @@ impl AgentSession {
         store.save(&self.snapshot().await).await
     }
 
+    /// Move the current on-disk snapshot to `dir/<session_id>/<utc_ts>.json`
+    /// and clear the in-memory history. The session retains its
+    /// `session_id` and remains usable; the next `append_message`
+    /// will recreate the file at the active path.
+    ///
+    /// If no `store` is attached, returns `Ok` with a path that
+    /// was not written (used by in-memory tests and CLI startup
+    /// paths that have not yet persisted).
+    pub async fn archive_to(&self, dir: &std::path::Path) -> std::io::Result<PathBuf> {
+        let Some(store) = &self.store else {
+            let placeholder = dir
+                .join(self.session_id.as_ref())
+                .join("no-store.json");
+            return Ok(placeholder);
+        };
+
+        let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S%3fZ").to_string();
+        let target_dir = dir.join(self.session_id.as_ref());
+        tokio::fs::create_dir_all(&target_dir).await?;
+        let target = target_dir.join(format!("{ts}.json"));
+
+        if store.path.as_ref().exists() {
+            tokio::fs::rename(store.path.as_ref(), &target).await?;
+        } else {
+            // Nothing on disk yet; write a snapshot of the current
+            // (possibly empty) state so the archive layout is
+            // uniform across runs.
+            let bytes = serde_json::to_vec_pretty(&self.snapshot().await)
+                .map_err(std::io::Error::other)?;
+            tokio::fs::write(&target, bytes).await?;
+        }
+
+        // Clear in-memory messages without persisting. The active
+        // file no longer exists; the next `append_message` will
+        // recreate it via the existing `persist` path.
+        self.messages.write().await.clear();
+        self.reset_token_facts().await;
+        Ok(target)
+    }
+
     async fn snapshot(&self) -> SessionSnapshot {
         SessionSnapshot {
             session_id: self.session_id.to_string(),
@@ -451,5 +491,33 @@ mod tests {
             loaded.parent_session_id.as_deref(),
             Some("parent_key")
         );
+    }
+
+    #[tokio::test]
+    async fn archive_to_moves_file_to_target_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let active_path = tmp.path().join("sessions").join("k.json");
+        let session = AgentSession::new("k", PathBuf::from("/tmp/p"), None)
+            .with_json_file_store(active_path.clone());
+        session.append_message(Message::user("hello")).await;
+
+        let archive_dir = tmp.path().join("archive");
+        let archived = session.archive_to(&archive_dir).await.unwrap();
+
+        assert!(archived.starts_with(archive_dir.join("k")));
+        assert!(archived.exists(), "archive file should exist at {archived:?}");
+        assert!(!active_path.exists(), "active file should be gone");
+        assert!(
+            session.messages().await.is_empty(),
+            "in-memory messages should be cleared"
+        );
+    }
+
+    #[tokio::test]
+    async fn archive_to_with_no_store_returns_ok_with_no_filesystem_effect() {
+        let session = AgentSession::new("k", PathBuf::from("/tmp/p"), None);
+        let tmp = tempfile::tempdir().unwrap();
+        let result = session.archive_to(tmp.path()).await;
+        assert!(result.is_ok());
     }
 }
