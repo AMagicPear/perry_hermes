@@ -313,10 +313,14 @@ impl Default for AgentConfig {
 #[cfg(test)]
 pub mod test_helpers {
     //! Test fixtures — gated by `#[cfg(test)]` so they never ship in
-    //! release builds. Use from unit tests via
-    //! `crate::config::test_helpers::*`. Integration tests under `tests/`
-    //! cannot see this module (they are separate binaries) and should
-    //! instead use `tests/common/mod.rs` for shared helpers.
+    //! release builds. `cargo test` enables `cfg(test)` for both the
+    //! library and integration-test binaries, so integration tests in
+    //! `tests/` can import these helpers directly:
+    //!
+    //! ```ignore
+    //! use perry_hermes_agent::test_helpers::PerryHermesConfig;
+    //! let cfg = PerryHermesConfig::for_test_echo();
+    //! ```
 
     use super::*;
 
@@ -333,29 +337,6 @@ pub mod test_helpers {
                 },
                 ..Default::default()
             }
-        }
-
-        /// Empty config — no providers, no platforms, default agent.
-        pub fn for_test_empty() -> Self {
-            Self::default()
-        }
-
-        /// Config with a custom provider + agent. Use for tests that need
-        /// specific error-triggering values (e.g. wrong model name).
-        pub fn for_test_with(provider: ProviderConfig, agent: AgentConfig) -> Self {
-            Self {
-                providers: vec![provider],
-                agent,
-                ..Default::default()
-            }
-        }
-    }
-
-    impl AgentConfig {
-        /// Empty `AgentConfig` defaults — for tests that don't care about
-        /// the agent section.
-        pub fn for_test_default() -> Self {
-            Self::default()
         }
     }
 
