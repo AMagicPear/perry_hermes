@@ -1,7 +1,7 @@
 //! Runtime engine shared by CLI and future gateways.
 
 mod compaction;
-mod config;
+pub mod config;
 mod loop_engine;
 mod prompting;
 mod provider_factory;
@@ -11,6 +11,7 @@ mod session_registry;
 mod tool_catalog;
 
 pub use compaction::{CompactorConfig, SummaryCompactor};
+pub use config::test_helpers;
 pub use config::{
     AgentConfig, GatewayTomlConfig, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind,
     QqBotConfig, QqBotConfigError, TelegramConfig, TelegramConfigError,

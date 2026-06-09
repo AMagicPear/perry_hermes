@@ -13,12 +13,11 @@ use perry_hermes_core::tool::ToolContext;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
-mod common;
 mod support;
 use support::ScriptedProvider;
 
 fn echo_config_with_compression() -> PerryHermesConfig {
-    common::for_test_echo()
+    perry_hermes_agent::test_helpers::PerryHermesConfig::for_test_echo()
 }
 
 fn user_message(text: &str) -> Message {

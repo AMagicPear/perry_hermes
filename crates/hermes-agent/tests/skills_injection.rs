@@ -4,8 +4,6 @@
 //! passed to its `stream` call. The captured system message is asserted
 //! to contain (or not contain) the expected skills block.
 
-mod common;
-
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -65,7 +63,7 @@ fn skills_dir_for(home: &std::path::Path) -> PathBuf {
 }
 
 fn config_for_echo() -> PerryHermesConfig {
-    common::for_test_echo()
+    perry_hermes_agent::test_helpers::PerryHermesConfig::for_test_echo()
 }
 
 fn system_text(messages: &[Message]) -> String {

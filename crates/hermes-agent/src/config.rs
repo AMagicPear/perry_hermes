@@ -310,19 +310,16 @@ impl Default for AgentConfig {
     }
 }
 
-#[cfg(test)]
+/// Test fixtures — re-exported from the library root for integration tests.
+/// These are unused functions in production builds; they only run during tests.
 pub mod test_helpers {
-    //! Test fixtures — gated by `#[cfg(test)]` so they never ship in
-    //! release builds. `cargo test` enables `cfg(test)` for both the
-    //! library and integration-test binaries, so integration tests in
-    //! `tests/` can import these helpers directly:
-    //!
-    //! ```ignore
-    //! use perry_hermes_agent::test_helpers::PerryHermesConfig;
-    //! let cfg = PerryHermesConfig::for_test_echo();
-    //! ```
+    //! Test fixtures — re-exported from the library root for integration tests.
+    //! These are unused functions in production builds; they only run during tests.
 
     use super::*;
+
+    // Re-export types for external integration tests
+    pub use super::{AgentConfig, PerryHermesConfig, ProviderConfig};
 
     impl PerryHermesConfig {
         /// Minimal valid config: single echo provider + agent pointing at
