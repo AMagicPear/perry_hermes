@@ -241,12 +241,32 @@ impl GatewayRunner {
         let entry = self.session(event).await;
         let messages = entry.session.messages().await;
         let key = build_key(event);
+        let session_id = key.replace([':', '-'], "_");
+        let archive_dir = self
+            .config
+            .sessions_dir
+            .join(".archive")
+            .join(&session_id);
+        let archived = count_files_in(&archive_dir).await;
 
         Ok(GatewayResponse::Reply(format!(
-            "Session: {}\nMessages: {}\nWorking dir: {}",
+            "Session: {}\nMessages: {}\nWorking dir: {}\nArchived: {}",
             key,
             messages.len(),
             entry.session.working_dir.display(),
+            archived,
         )))
     }
+}
+
+async fn count_files_in(dir: &std::path::Path) -> u64 {
+    let mut rd = match tokio::fs::read_dir(dir).await {
+        Ok(rd) => rd,
+        Err(_) => return 0,
+    };
+    let mut n = 0u64;
+    while let Ok(Some(_)) = rd.next_entry().await {
+        n += 1;
+    }
+    n
 }
