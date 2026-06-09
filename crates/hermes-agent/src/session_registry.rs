@@ -138,8 +138,10 @@ impl SessionRegistry {
     }
 
     /// Archive the active on-disk snapshot for `key` to
-    /// `sessions/.archive/<key>/<utc_ts>.json`. Returns `None` if
-    /// `key` has no live session.
+    /// `sessions/.archive/<format_session_id(key)>/<utc_ts>.json`.
+    /// Returns `None` if `key` has no live session or if the
+    /// archive move fails (a `tracing::warn!` is logged in the
+    /// failure case).
     pub async fn archive_active(&self, key: &str) -> Option<PathBuf> {
         let entry = self.sessions.get(key)?.clone();
         let _guard = entry.turn_lock.lock().await;
@@ -362,7 +364,32 @@ mod tests {
         let archived = registry.archive_active("k").await;
         assert!(archived.is_some(), "archive_active should return a path");
         let archived = archived.unwrap();
+
+        // The archive lives at .archive/<format_session_id("k")>/<ts>.json
+        // = .archive/k/<ts>.json.
+        let expected_parent = sessions.join(".archive").join("k");
+        assert_eq!(
+            archived.parent(),
+            Some(expected_parent.as_path()),
+            "archive should be under sessions/.archive/k/"
+        );
         assert!(archived.exists(), "archive file should exist");
+        assert!(
+            archived
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(".json")),
+            "archive filename should end with .json"
+        );
+
+        // The archive contents deserialize back to a session with the
+        // original "hi" message.
+        let raw = tokio::fs::read_to_string(&archived).await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(value["session_id"], "k");
+        assert_eq!(value["messages"][0]["role"], "user");
+        assert_eq!(value["messages"][0]["content"], "hi");
+
         assert!(entry.session.messages().await.is_empty());
 
         // Re-getting the same key after archive starts a fresh session.

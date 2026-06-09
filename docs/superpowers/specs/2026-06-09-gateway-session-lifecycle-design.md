@@ -226,7 +226,7 @@ remains the existing `cli:run:<id>` shape (filename
 | Failure | Behavior |
 |---|---|
 | Active file present but unparseable | Rename to `.corrupt-<ts>.json`, log warn, start empty. |
-| Archive target dir not writable | `archive_active` returns `Err`; `reset` proceeds in memory and reports the failure. |
+| Archive target dir not writable | `archive_active` returns `None` and logs a `tracing::warn!`; the gateway's `/reset` proceeds in memory and reports a warning in its reply. |
 | `archive_to` called on a session with no `store` | Returns `Ok` with the would-be path; no filesystem effect. |
 | Two parallel `archive_active` for the same key | The second sees the file already moved and the in-memory messages already cleared, and produces a follow-up empty archive entry. Acceptable. |
 | Disk full during archive | Returns `Err`; the active file remains intact; user is told. |
