@@ -21,7 +21,7 @@ fn esc() -> KeyEvent {
 
 #[test]
 fn first_ctrl_c_in_awaiting_emits_cancel_in_flight() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::AwaitingModel;
     let ev = handle_key(&mut app, ctrl_c());
     assert!(matches!(ev, AppEvent::CancelInFlight));
@@ -29,7 +29,7 @@ fn first_ctrl_c_in_awaiting_emits_cancel_in_flight() {
 
 #[test]
 fn second_ctrl_c_in_any_mode_emits_quit() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Cancelling;
     let ev = handle_key(&mut app, ctrl_c());
     assert!(matches!(ev, AppEvent::Quit));
@@ -37,7 +37,7 @@ fn second_ctrl_c_in_any_mode_emits_quit() {
 
 #[test]
 fn ctrl_d_in_idle_emits_quit() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Idle;
     let ev = handle_key(&mut app, ctrl_d());
     assert!(matches!(ev, AppEvent::Quit));
@@ -45,7 +45,7 @@ fn ctrl_d_in_idle_emits_quit() {
 
 #[test]
 fn ctrl_c_in_idle_emits_quit() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Idle;
     let ev = handle_key(&mut app, ctrl_c());
     assert!(matches!(ev, AppEvent::Quit));
@@ -53,7 +53,7 @@ fn ctrl_c_in_idle_emits_quit() {
 
 #[test]
 fn esc_in_awaiting_emits_cancel_in_flight() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::AwaitingModel;
     let ev = handle_key(&mut app, esc());
     assert!(matches!(ev, AppEvent::CancelInFlight));
@@ -61,7 +61,7 @@ fn esc_in_awaiting_emits_cancel_in_flight() {
 
 #[test]
 fn esc_in_cancelling_emits_quit() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Cancelling;
     let ev = handle_key(&mut app, esc());
     assert!(matches!(ev, AppEvent::Quit));
@@ -69,7 +69,7 @@ fn esc_in_cancelling_emits_quit() {
 
 #[test]
 fn esc_in_idle_is_ignored() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Idle;
     let ev = handle_key(&mut app, esc());
     assert!(matches!(ev, AppEvent::Tick));
@@ -77,7 +77,7 @@ fn esc_in_idle_is_ignored() {
 
 #[test]
 fn ctrl_d_in_awaiting_is_ignored() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::AwaitingModel;
     let ev = handle_key(&mut app, ctrl_d());
     assert!(matches!(ev, AppEvent::Tick));

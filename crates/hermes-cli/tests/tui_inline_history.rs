@@ -46,7 +46,7 @@ fn buffer_text_from_buffer(buffer: &ratatui::buffer::Buffer) -> String {
 
 #[test]
 fn history_writer_records_lines_without_keeping_them_in_app_scrollback() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     let mut history = HistoryWrite::default();
 
     history.push(&mut app, RenderedLine::User("hi".to_string()), 80);

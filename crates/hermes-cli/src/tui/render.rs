@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn status_line_omits_context_when_unset() {
-        let app = App::new_for_test();
+        let app = App::default();
         let line = build_status_line_1(&app);
         let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         // The "iter 0/0" portion also contains a slash, so the assertion is
@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn status_line_includes_context_percent_when_set() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.context_window_size = Some(1_000_000);
         app.context_used_tokens = Some(200_000);
         let line = build_status_line_1(&app);
@@ -663,7 +663,7 @@ mod tests {
 
     #[test]
     fn status_line_uses_reported_context_usage() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.context_window_size = Some(1_000_000);
         app.context_used_tokens = Some(1_000);
         let line = build_status_line_1(&app);
@@ -675,7 +675,7 @@ mod tests {
 
     #[test]
     fn status_line_shows_compression_hint() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.compression_hint = Some("Compressed in 1200ms".to_string());
 
         let line = build_status_line_1(&app);

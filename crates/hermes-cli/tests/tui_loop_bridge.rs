@@ -12,7 +12,7 @@ use perry_hermes_core::tool::ToolOutput;
 use std::time::Duration;
 
 fn app_with_mode(mode: AppMode) -> App {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = mode;
     app
 }

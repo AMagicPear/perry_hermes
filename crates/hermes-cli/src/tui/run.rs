@@ -698,7 +698,7 @@ mod tests {
     }
 
     fn app_with_context_usage() -> App {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.context_used_tokens = Some(90_000);
         app
     }

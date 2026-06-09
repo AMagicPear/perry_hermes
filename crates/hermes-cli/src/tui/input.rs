@@ -145,7 +145,7 @@ mod tests {
 
     #[test]
     fn typing_appends_at_cursor() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "helo".to_string();
         app.cursor = 3;
         let ev = handle_key(&mut app, key(KeyCode::Char('l')));
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn backspace_deletes_before_cursor() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hello".to_string();
         app.cursor = 5;
         let ev = handle_key(&mut app, key(KeyCode::Backspace));
@@ -167,7 +167,7 @@ mod tests {
 
     #[test]
     fn backspace_respects_cursor_position() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "abcd".to_string(); // cursor position 2
         app.cursor = 2;
         handle_key(&mut app, key(KeyCode::Backspace));
@@ -177,7 +177,7 @@ mod tests {
 
     #[test]
     fn delete_removes_char_at_cursor() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "abcd".to_string();
         app.cursor = 1;
         let ev = handle_key(&mut app, key(KeyCode::Delete));
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn delete_noop_at_end() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hi".to_string();
         app.cursor = 2;
         handle_key(&mut app, key(KeyCode::Delete));
@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn left_arrow_moves_cursor_backward() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hello".to_string();
         app.cursor = 5;
         let ev = handle_key(&mut app, key(KeyCode::Left));
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn right_arrow_moves_cursor_forward() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hello".to_string();
         app.cursor = 0;
         let ev = handle_key(&mut app, key(KeyCode::Right));
@@ -217,7 +217,7 @@ mod tests {
 
     #[test]
     fn left_arrow_stays_at_start() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hi".to_string();
         let ev = handle_key(&mut app, key(KeyCode::Left));
         assert!(matches!(ev, AppEvent::Tick));
@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn right_arrow_stays_at_end() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hi".to_string();
         app.cursor = 2;
         let ev = handle_key(&mut app, key(KeyCode::Right));
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn home_moves_cursor_to_start() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hello".to_string();
         app.cursor = 3;
         let ev = handle_key(&mut app, key(KeyCode::Home));
@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn end_moves_cursor_to_end() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.mode = AppMode::AwaitingModel; // so End is not intercepted by chat scroll
         app.input = "hello".to_string();
         app.cursor = 0;
@@ -257,7 +257,7 @@ mod tests {
 
     #[test]
     fn enter_submits_input() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "hi there".to_string();
         app.cursor = 2;
         let ev = handle_key(&mut app, key(KeyCode::Enter));
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn enter_in_awaiting_model_does_not_submit_parallel_turn() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.mode = AppMode::AwaitingModel;
         app.input = "queued thought".to_string();
         app.cursor = app.input.len();
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn slash_quit_produces_quit_event() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "/quit".to_string();
         app.cursor = 5;
         let ev = handle_key(&mut app, key(KeyCode::Enter));
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn slash_exit_produces_quit_event() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "/exit".to_string();
         let ev = handle_key(&mut app, key(KeyCode::Enter));
         assert!(matches!(ev, AppEvent::Quit));
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn slash_compact_with_focus_produces_compact_event() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "/compact focus on shell commands".to_string();
         let ev = handle_key(&mut app, key(KeyCode::Enter));
         assert!(matches!(ev, AppEvent::Compact(Some(focus)) if focus == "focus on shell commands"));
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn slash_compact_without_focus_produces_compact_event() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "/compact".to_string();
         let ev = handle_key(&mut app, key(KeyCode::Enter));
         assert!(matches!(ev, AppEvent::Compact(None)));
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn slash_clear_produces_clear_event() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "/clear".to_string();
         let ev = handle_key(&mut app, key(KeyCode::Enter));
         assert!(matches!(ev, AppEvent::Clear));
@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn unknown_slash_command_is_rejected_with_system_message() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "/bogus".to_string();
         app.cursor = 6;
         let ev = handle_key(&mut app, key(KeyCode::Enter));
@@ -349,7 +349,7 @@ mod tests {
     fn cancelling_mode_ignores_typing() {
         use crate::tui::event::AppMode;
 
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.mode = AppMode::Cancelling;
         // Type a character — should be ignored.
         let ev = handle_key(
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn arrow_up_scrolls_chat_when_idle() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.mode = AppMode::Idle;
         let ev = handle_key(&mut app, key(KeyCode::Up));
         assert!(matches!(ev, AppEvent::Tick));
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn arrow_down_scrolls_chat_toward_bottom_when_idle() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.mode = AppMode::Idle;
         app.chat_scroll = 3;
         let ev = handle_key(&mut app, key(KeyCode::Down));
@@ -405,7 +405,7 @@ mod tests {
 
     #[test]
     fn clear_event_resets_scrollback_and_cache() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.push_line(RenderedLine::Assistant("hello".to_string()));
         assert!(!app.chat_lines_for_width(20).is_empty());
 
@@ -417,7 +417,7 @@ mod tests {
 
     #[test]
     fn left_arrow_in_awaiting_model_moves_cursor() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.mode = AppMode::AwaitingModel;
         app.input = "test".to_string();
         app.cursor = 4;
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn cjk_cursor_movement_by_character() {
-        let mut app = App::new_for_test();
+        let mut app = App::default();
         app.input = "你好世界".to_string();
         app.cursor = 12; // end
         // Move left past "界" (3 bytes)

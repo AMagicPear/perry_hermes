@@ -11,7 +11,7 @@ fn key(code: KeyCode) -> KeyEvent {
 
 #[test]
 fn typing_appends_to_input_buffer() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     let ev = handle_key(&mut app, key(KeyCode::Char('h')));
     assert!(matches!(ev, AppEvent::Tick));
     let ev = handle_key(&mut app, key(KeyCode::Char('i')));
@@ -21,7 +21,7 @@ fn typing_appends_to_input_buffer() {
 
 #[test]
 fn backspace_removes_last_char() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input.push_str("hello");
     app.cursor = 5;
     let ev = handle_key(&mut app, key(KeyCode::Backspace));
@@ -31,7 +31,7 @@ fn backspace_removes_last_char() {
 
 #[test]
 fn enter_submits_input() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input.push_str("hi there");
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     assert!(matches!(ev, AppEvent::Submit(text) if text == "hi there"));
@@ -40,7 +40,7 @@ fn enter_submits_input() {
 
 #[test]
 fn enter_in_awaiting_model_does_not_submit_parallel_turn() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::AwaitingModel;
     app.input.push_str("queued thought");
     app.cursor = app.input.len();
@@ -53,7 +53,7 @@ fn enter_in_awaiting_model_does_not_submit_parallel_turn() {
 
 #[test]
 fn slash_quit_produces_quit_event() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input.push_str("/quit");
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     assert!(matches!(ev, AppEvent::Quit));
@@ -62,7 +62,7 @@ fn slash_quit_produces_quit_event() {
 
 #[test]
 fn slash_exit_produces_quit_event() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input.push_str("/exit");
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     assert!(matches!(ev, AppEvent::Quit));
@@ -70,7 +70,7 @@ fn slash_exit_produces_quit_event() {
 
 #[test]
 fn slash_compact_with_focus_produces_compact_event() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input.push_str("/compact focus on shell commands");
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     assert!(matches!(ev, AppEvent::Compact(Some(focus)) if focus == "focus on shell commands"));
@@ -78,7 +78,7 @@ fn slash_compact_with_focus_produces_compact_event() {
 
 #[test]
 fn slash_compact_without_focus_produces_compact_event() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input.push_str("/compact");
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     assert!(matches!(ev, AppEvent::Compact(None)));
@@ -86,7 +86,7 @@ fn slash_compact_without_focus_produces_compact_event() {
 
 #[test]
 fn slash_clear_produces_clear_event() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input.push_str("/clear");
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     assert!(matches!(ev, AppEvent::Clear));
@@ -94,7 +94,7 @@ fn slash_clear_produces_clear_event() {
 
 #[test]
 fn unknown_slash_command_is_rejected_with_system_message() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.input.push_str("/bogus");
     let ev = handle_key(&mut app, key(KeyCode::Enter));
     match ev {
@@ -117,7 +117,7 @@ fn unknown_slash_command_is_rejected_with_system_message() {
 fn cancelling_mode_ignores_typing() {
     use perry_hermes_cli::tui::event::AppMode;
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Cancelling;
     // Type a character — should be ignored.
     let ev = handle_key(
@@ -153,7 +153,7 @@ fn cancelling_mode_ignores_typing() {
 fn arrow_up_scrolls_chat_when_idle() {
     use perry_hermes_cli::tui::event::AppMode;
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Idle;
     let ev = handle_key(&mut app, key(KeyCode::Up));
     assert!(matches!(ev, AppEvent::Tick));
@@ -164,7 +164,7 @@ fn arrow_up_scrolls_chat_when_idle() {
 fn arrow_down_scrolls_chat_toward_bottom_when_idle() {
     use perry_hermes_cli::tui::event::AppMode;
 
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.mode = AppMode::Idle;
     app.chat_scroll = 3;
     let ev = handle_key(&mut app, key(KeyCode::Down));
@@ -174,7 +174,7 @@ fn arrow_down_scrolls_chat_toward_bottom_when_idle() {
 
 #[test]
 fn clear_event_resets_scrollback_and_cache() {
-    let mut app = App::new_for_test();
+    let mut app = App::default();
     app.push_line(RenderedLine::Assistant("hello".to_string()));
     assert!(!app.chat_lines_for_width(20).is_empty());
 
