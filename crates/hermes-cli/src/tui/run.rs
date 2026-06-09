@@ -117,7 +117,8 @@ pub async fn run(
     let sessions_dir = perry_hermes_agent::default_sessions_dir();
     let system_message = agent.system_message_for(&working_dir);
     let registry = SessionRegistry::new(sessions_dir, working_dir, system_message);
-    let entry = registry.get_or_create(&new_cli_session_key()).await;
+    let cli_key = new_cli_session_key();
+    let entry = registry.get_or_create(&cli_key).await;
     let session = entry.session.clone();
 
     let result: Result<(), RunError> = async {
@@ -179,6 +180,12 @@ pub async fn run(
     if let Err(e) = disable_raw_mode() {
         eprintln!("[perry-hermes] warning: failed to disable raw mode: {e}");
     }
+
+    // Best-effort archive of this CLI run's session. Failure is
+    // logged inside `archive_active` and does not affect the run
+    // result returned to the caller.
+    let _ = registry.archive_active(&cli_key).await;
+
     result
 }
 
