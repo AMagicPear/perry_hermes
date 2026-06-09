@@ -75,11 +75,7 @@ pub async fn run(
     .map_err(|e| RunError::Tui(e.to_string()))?;
 
     let (input_tx, mut input_rx) = mpsc::unbounded_channel::<AppEvent>();
-    let mut app = App::new_for_test();
-    app.provider_name = Some(provider_name);
-    app.model_name = Some(model_name);
-    app.max_iterations = max_iterations;
-    app.context_window_size = context_window_size;
+    let mut app = App::new(provider_name, model_name, max_iterations, context_window_size);
     let mut history = HistoryWrite::default();
 
     let mut events = EventStream::new();
@@ -180,11 +176,7 @@ pub async fn run_with_backend(
         },
     )
     .map_err(|e| RunError::Tui(e.to_string()))?;
-    let mut app = App::new_for_test();
-    app.provider_name = Some(provider_name);
-    app.model_name = Some(model_name);
-    app.max_iterations = max_iterations;
-    app.context_window_size = context_window_size;
+    let mut app = App::new(provider_name, model_name, max_iterations, context_window_size);
     let mut history = HistoryWrite::default();
 
     loop {
