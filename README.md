@@ -27,6 +27,10 @@ separated.
 - **Ratatui TUI**: the CLI is an adapter around the shared runtime/session
   model, with slash commands, streaming output, cancellation, and compact status
   events.
+- **Multi-platform gateway**: `hermes-gateway` dispatches conversations across
+  Telegram (via [teloxide](https://github.com/teloxide/teloxide)) and QQ/Guild
+  (via [qq-bot-rs](https://github.com/yenharvey/qq-bot-rs)), sharing the same
+  `AgentSession` model as the CLI.
 - **Self-learning target**: the roadmap points toward Hermes Agent-style
   learning from experience, skill generation, and skill refinement; comparison
   notes live in [docs/history/hermes-comparison.md][hermes-comparison].
@@ -38,7 +42,7 @@ UI and not by the agent runtime.
 
 ```text
 platform adapter
-  e.g. Perry Hermes CLI, future gateway, Telegram
+  e.g. Perry Hermes CLI, hermes-gateway (Telegram, QQ/Guild)
   owns: session_id -> AgentSession mapping and presentation
 
 AgentLoop
@@ -66,6 +70,10 @@ prompt history. In the current CLI, the TUI owns scrollback only; `AgentSession`
 owns the actual model context.
 
 ```text
+crates/hermes-gateway
+  package: perry-hermes-gateway
+  owns: platform adapters (Telegram, QQ/Guild), session dispatch, gateway runner
+
 crates/hermes-cli
   package: perry-hermes-cli
   binary: perry-hermes
@@ -91,7 +99,8 @@ crates/hermes-skill-tools
 | Layer | Key files | Boundary |
 |---|---|---|
 | CLI adapter | [crates/hermes-cli/src/main.rs][cli-main], [crates/hermes-cli/src/tui/][tui] | Owns presentation and creates/uses an `AgentSession`; does not own prompt history. |
-| Agent runtime | [crates/hermes-agent/src/loop_engine/][loop-engine], [crates/hermes-agent/src/session.rs][session] | Owns runtime assembly, loop engine, and session APIs shared by CLI and future gateways. |
+| Gateway | [crates/hermes-gateway/src/][gateway] | Dispatches `AgentSession` across Telegram and QQ/Guild platform adapters; shares the same runtime as the CLI. |
+| Agent runtime | [crates/hermes-agent/src/loop_engine/][loop-engine], [crates/hermes-agent/src/session.rs][session] | Owns runtime assembly, loop engine, and session APIs shared by CLI and gateway. |
 | Compaction | [crates/hermes-agent/src/compaction.rs][compaction] | Encodes the summary prompt and the current "anchors plus one summary" policy. |
 | Core contracts | [crates/hermes-core/src/][core] | Defines shared traits/types without provider, CLI, or filesystem policy. |
 | Providers | [crates/hermes-providers/src/][providers] | Translates external provider protocols into core streaming types. |
@@ -262,3 +271,4 @@ MIT
 [core]: crates/hermes-core/src/
 [providers]: crates/hermes-providers/src/
 [skill-tools]: crates/hermes-skill-tools/src/
+[gateway]: crates/hermes-gateway/src/
