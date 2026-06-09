@@ -51,8 +51,15 @@ impl SessionRegistry {
         }
     }
 
-    /// Get an existing session or create a new one.
-    /// Returns an `Arc` so all callers share the same `turn_lock`.
+    /// Get an existing session, load it from disk, or create a new
+    /// one. The on-disk snapshot is at
+    /// `sessions_dir/<format_session_id(key)>.json`; if it exists
+    /// and is parseable, it is loaded. If it exists but is not
+    /// parseable, the corrupt file is moved to
+    /// `.archive/<key>/<ts>.corrupt.json` and a fresh empty
+    /// session is constructed so the caller is not blocked.
+    /// Returns an `Arc` so all callers share the same
+    /// `turn_lock`.
     pub async fn get_or_create(&self, key: &str) -> Arc<SessionEntry> {
         if let Some(entry) = self.sessions.get(key) {
             *entry.last_active.lock().unwrap() = Utc::now();
@@ -252,6 +259,58 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].content.as_text(), "hi");
         assert_eq!(messages[1].content.as_text(), "hello");
+    }
+
+    #[tokio::test]
+    async fn get_or_create_loads_empty_messages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let key = "telegram:dm:empty";
+        let session_id = super::format_session_id(key);
+        let path = sessions.join(format!("{session_id}.json"));
+        let snapshot = serde_json::json!({
+            "session_id": session_id,
+            "working_dir": "/tmp/old",
+            "system_message": null,
+            "messages": [],
+            "context_usage_baseline_tokens": null,
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
+
+        let registry = super::SessionRegistry::new(sessions, tmp.path().into(), None);
+        let entry = registry.get_or_create(key).await;
+        assert!(entry.session.messages().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_or_create_loads_sub_agent_identity() {
+        use crate::session::SessionRole;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let sessions = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions).unwrap();
+        let key = "telegram:dm:sub";
+        let session_id = super::format_session_id(key);
+        let path = sessions.join(format!("{session_id}.json"));
+        let snapshot = serde_json::json!({
+            "session_id": session_id,
+            "working_dir": "/tmp/old",
+            "system_message": null,
+            "messages": [],
+            "context_usage_baseline_tokens": null,
+            "parent_session_id": "parent_key",
+            "role": "SubAgent",
+        });
+        std::fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
+
+        let registry = super::SessionRegistry::new(sessions, tmp.path().into(), None);
+        let entry = registry.get_or_create(key).await;
+        assert_eq!(entry.session.role, SessionRole::SubAgent);
+        assert_eq!(
+            entry.session.parent_session_id.as_deref(),
+            Some("parent_key")
+        );
     }
 
     #[tokio::test]
