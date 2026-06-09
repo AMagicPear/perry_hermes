@@ -45,7 +45,7 @@ pub use config::GatewayConfig;
 pub use event::{ChatType, GatewayEvent};
 // Re-export the project-wide Command enum from hermes-core.
 pub use perry_hermes_core::commands::Command;
-pub use qqbot::{QQBotAdapter, QqBotConfig, QqBotConfigError};
+pub use qqbot::{QQBotAdapter, QqBotConfig};
 pub use runner::{GatewayError, GatewayResponse, GatewayRunner};
 // Re-export session types from hermes-agent for convenience.
 pub use perry_hermes_agent::{SessionEntry, SessionRegistry};

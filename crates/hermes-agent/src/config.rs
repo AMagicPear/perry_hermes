@@ -9,6 +9,162 @@ pub struct PerryHermesConfig {
     pub providers: Vec<ProviderConfig>,
     #[serde(default)]
     pub agent: AgentConfig,
+    #[serde(default)]
+    pub gateway: GatewayTomlConfig,
+}
+
+// ---------------------------------------------------------------------------
+// Gateway platform config — owned by hermes-agent because the TOML schema
+// is shared with config.toml. hermes-gateway consumes these types from
+// `perry_hermes_agent::config` and builds the runtime PlatformAdapters.
+// ---------------------------------------------------------------------------
+
+/// `[gateway]` block in config.toml. Each sub-block is optional; `None`
+/// means that platform is not enabled.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+pub struct GatewayTomlConfig {
+    #[serde(default)]
+    pub telegram: Option<TelegramConfig>,
+    #[serde(default)]
+    pub qqbot: Option<QqBotConfig>,
+}
+
+/// Telegram adapter config. The `token_env` default is `TELEGRAM_BOT_TOKEN`;
+/// `allowed_users` mirrors the `GatewayConfig.allowed_users` map for the
+/// `"telegram"` key.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct TelegramConfig {
+    /// Env var name holding the bot token.
+    #[serde(default = "default_telegram_token_env")]
+    pub token_env: String,
+    /// Optional explicit token (overrides env lookup).
+    #[serde(default)]
+    pub token: Option<String>,
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+}
+
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            token_env: default_telegram_token_env(),
+            token: None,
+            allowed_users: Vec::new(),
+        }
+    }
+}
+
+fn default_telegram_token_env() -> String {
+    "TELEGRAM_BOT_TOKEN".into()
+}
+
+/// QQ Bot adapter config. `app_id_env` / `app_secret_env` default to
+/// `QQ_BOT_APP_ID` / `QQ_BOT_APP_SECRET`.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct QqBotConfig {
+    /// Env var name holding the app ID.
+    #[serde(default = "default_qqbot_app_id_env")]
+    pub app_id_env: String,
+    /// Env var name holding the app secret.
+    #[serde(default = "default_qqbot_app_secret_env")]
+    pub app_secret_env: String,
+    /// Optional explicit app ID (overrides env lookup).
+    #[serde(default)]
+    pub app_id: Option<String>,
+    /// Optional explicit app secret.
+    #[serde(default)]
+    pub app_secret: Option<String>,
+    /// Use the QQ sandbox environment.
+    #[serde(default)]
+    pub sandbox: bool,
+    /// Subscribed intent bitmask. 0 means `Intents::PUBLIC_MESSAGES`.
+    #[serde(default)]
+    pub intents: u32,
+    #[serde(default)]
+    pub allowed_users: Vec<String>,
+}
+
+impl Default for QqBotConfig {
+    fn default() -> Self {
+        Self {
+            app_id_env: default_qqbot_app_id_env(),
+            app_secret_env: default_qqbot_app_secret_env(),
+            app_id: None,
+            app_secret: None,
+            sandbox: false,
+            intents: 0,
+            allowed_users: Vec::new(),
+        }
+    }
+}
+
+fn default_qqbot_app_id_env() -> String {
+    "QQ_BOT_APP_ID".into()
+}
+
+fn default_qqbot_app_secret_env() -> String {
+    "QQ_BOT_APP_SECRET".into()
+}
+
+// ---------------------------------------------------------------------------
+// Config errors
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, thiserror::Error)]
+pub enum TelegramConfigError {
+    #[error("telegram: {var} env var not set and no value in config")]
+    MissingCredential { var: String },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum QqBotConfigError {
+    #[error("qqbot: {var} env var not set and no value in config")]
+    MissingCredential { var: String },
+}
+
+// ---------------------------------------------------------------------------
+// Resolve methods — read env vars with the configured names, falling back
+// to explicit values in the config. hermes-gateway consumes these to build
+// the runtime PlatformAdapters.
+// ---------------------------------------------------------------------------
+
+impl TelegramConfig {
+    /// Returns a valid bot token, reading `token_env` from the env if
+    /// `self.token` is `None`.
+    pub fn resolve(&self) -> Result<String, TelegramConfigError> {
+        if let Some(t) = &self.token {
+            return Ok(t.clone());
+        }
+        match std::env::var(&self.token_env) {
+            Ok(v) if !v.is_empty() => Ok(v),
+            _ => Err(TelegramConfigError::MissingCredential {
+                var: self.token_env.clone(),
+            }),
+        }
+    }
+}
+
+impl QqBotConfig {
+    /// Returns `(app_id, app_secret)`. Falls back to env vars when
+    /// `self.app_id` / `self.app_secret` are `None`.
+    pub fn resolve(&self) -> Result<(String, String), QqBotConfigError> {
+        let app_id = match &self.app_id {
+            Some(v) => v.clone(),
+            None => read_env(&self.app_id_env)?,
+        };
+        let app_secret = match &self.app_secret {
+            Some(v) => v.clone(),
+            None => read_env(&self.app_secret_env)?,
+        };
+        Ok((app_id, app_secret))
+    }
+}
+
+fn read_env(var: &str) -> Result<String, QqBotConfigError> {
+    match std::env::var(var) {
+        Ok(v) if !v.is_empty() => Ok(v),
+        _ => Err(QqBotConfigError::MissingCredential { var: var.into() }),
+    }
 }
 
 impl PerryHermesConfig {
@@ -150,6 +306,75 @@ impl Default for AgentConfig {
             system_prompt: None,
             context_compression_enabled: default_context_compression_enabled(),
             context_compression_threshold_percent: None,
+        }
+    }
+}
+
+#[cfg(test)]
+pub mod test_helpers {
+    //! Test fixtures — gated by `#[cfg(test)]` so they never ship in
+    //! release builds. Use from unit tests via
+    //! `crate::config::test_helpers::*`. Integration tests under `tests/`
+    //! cannot see this module (they are separate binaries) and should
+    //! instead use `tests/common/mod.rs` for shared helpers.
+
+    use super::*;
+
+    impl PerryHermesConfig {
+        /// Minimal valid config: single echo provider + agent pointing at
+        /// it, no platforms. The "happy path" fixture.
+        pub fn for_test_echo() -> Self {
+            Self {
+                providers: vec![ProviderConfig::for_test_echo()],
+                agent: AgentConfig {
+                    default_provider: "local".into(),
+                    default_model: "echo".into(),
+                    ..AgentConfig::default()
+                },
+                ..Default::default()
+            }
+        }
+
+        /// Empty config — no providers, no platforms, default agent.
+        pub fn for_test_empty() -> Self {
+            Self::default()
+        }
+
+        /// Config with a custom provider + agent. Use for tests that need
+        /// specific error-triggering values (e.g. wrong model name).
+        pub fn for_test_with(provider: ProviderConfig, agent: AgentConfig) -> Self {
+            Self {
+                providers: vec![provider],
+                agent,
+                ..Default::default()
+            }
+        }
+    }
+
+    impl AgentConfig {
+        /// Empty `AgentConfig` defaults — for tests that don't care about
+        /// the agent section.
+        pub fn for_test_default() -> Self {
+            Self::default()
+        }
+    }
+
+    impl ProviderConfig {
+        /// Single echo provider — baseline for tests that exercise config
+        /// parsing or `resolve_provider`.
+        pub fn for_test_echo() -> Self {
+            Self {
+                name: "local".into(),
+                kind: ProviderKind::Echo,
+                api_key_env: None,
+                models: vec![ModelConfig {
+                    name: "echo".into(),
+                    context_window_size: 128_000,
+                }],
+                base_url: None,
+                api_key_header: None,
+                thinking: None,
+            }
         }
     }
 }

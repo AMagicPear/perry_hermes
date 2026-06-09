@@ -264,21 +264,10 @@ mod tests {
     use serde_json::{Value, json};
     use tokio_util::sync::CancellationToken;
 
+    use crate::config::test_helpers::*;
     use crate::config::{ModelConfig, ProviderConfig, ProviderKind};
     fn echo_config() -> PerryHermesConfig {
-        PerryHermesConfig {
-            providers: vec![provider_config(
-                "local",
-                ProviderKind::Echo,
-                "echo",
-                128_000,
-            )],
-            agent: crate::config::AgentConfig {
-                default_provider: "local".into(),
-                default_model: "echo".into(),
-                ..Default::default()
-            },
-        }
+        PerryHermesConfig::for_test_echo()
     }
 
     fn provider_config(
@@ -354,6 +343,7 @@ mod tests {
                 default_model: "missing-model".into(),
                 ..Default::default()
             },
+            gateway: Default::default(),
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -385,6 +375,7 @@ mod tests {
                 default_model: "gpt-4o-mini".into(),
                 ..Default::default()
             },
+            gateway: Default::default(),
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -416,6 +407,7 @@ mod tests {
                 default_model: "gpt-4o-mini".into(),
                 ..Default::default()
             },
+            gateway: Default::default(),
         };
         let err = AIAgent::from_config(config)
             .err()
@@ -447,6 +439,7 @@ mod tests {
                 default_model: "missing-model".into(),
                 ..Default::default()
             },
+            gateway: Default::default(),
         };
 
         let err = AIAgent::from_config(config)

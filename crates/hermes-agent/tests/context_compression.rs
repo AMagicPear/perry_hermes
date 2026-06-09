@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use perry_hermes_agent::{
     AIAgent, AgentLoop, AgentSession, CompactorConfig, ContextWindow, LoopConfig, ModelConfig,
-    PerryHermesConfig, ProviderConfig, ProviderKind, SummaryCompactor,
+    PerryHermesConfig, SummaryCompactor,
 };
 use perry_hermes_core::ProviderError;
 use perry_hermes_core::Usage;
@@ -13,30 +13,12 @@ use perry_hermes_core::tool::ToolContext;
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
 
+mod common;
 mod support;
 use support::ScriptedProvider;
 
 fn echo_config_with_compression() -> PerryHermesConfig {
-    PerryHermesConfig {
-        providers: vec![ProviderConfig {
-            name: "local".into(),
-            kind: ProviderKind::Echo,
-            api_key_env: None,
-            models: vec![ModelConfig {
-                name: "echo".into(),
-                context_window_size: 128_000,
-            }],
-            base_url: None,
-            api_key_header: None,
-            thinking: None,
-        }],
-        agent: perry_hermes_agent::AgentConfig {
-            default_provider: "local".into(),
-            default_model: "echo".into(),
-            context_compression_enabled: true,
-            ..Default::default()
-        },
-    }
+    common::for_test_echo()
 }
 
 fn user_message(text: &str) -> Message {

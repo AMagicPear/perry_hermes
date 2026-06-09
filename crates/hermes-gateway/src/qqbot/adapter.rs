@@ -10,8 +10,18 @@ use async_trait::async_trait;
 use qq_bot_rs::types::message::{C2cMessage, GroupMessage, OutgoingMessage};
 
 use crate::adapter::PlatformAdapter;
-use crate::qqbot::config::QqBotConfig;
+use crate::qqbot::QqBotConfig;
 use crate::runner::GatewayRunner;
+
+/// Convert a raw intent `u32` bitmask from the config into the lib's
+/// typed `Intents`. `0` falls back to `PUBLIC_MESSAGES` (C2C + group @).
+fn build_intents(bits: u32) -> qq_bot_rs::Intents {
+    if bits == 0 {
+        qq_bot_rs::Intents::PUBLIC_MESSAGES
+    } else {
+        qq_bot_rs::Intents::from_bits_truncate(bits)
+    }
+}
 
 /// Adapter that runs a QQ Bot v2 client and dispatches inbound events.
 pub struct QQBotAdapter {
@@ -32,7 +42,7 @@ impl PlatformAdapter for QQBotAdapter {
 
     async fn run(&self, gateway: Arc<GatewayRunner>) -> anyhow::Result<()> {
         let (app_id, app_secret) = self.config.resolve()?;
-        let intents = self.config.build_intents();
+        let intents = build_intents(self.config.intents);
 
         let bridge = QqEventBridge {
             gateway: Arc::clone(&gateway),

@@ -11,7 +11,10 @@ mod session_registry;
 mod tool_catalog;
 
 pub use compaction::{CompactorConfig, SummaryCompactor};
-pub use config::{AgentConfig, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind};
+pub use config::{
+    AgentConfig, GatewayTomlConfig, ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind,
+    QqBotConfig, QqBotConfigError, TelegramConfig, TelegramConfigError,
+};
 pub use loop_engine::{
     AgentLoop, AgentRunError, ContextWindow, FailedTurn, LoopConfig, LoopEvent, LoopMetrics,
     RunResult,

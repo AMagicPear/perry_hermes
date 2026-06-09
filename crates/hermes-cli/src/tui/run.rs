@@ -701,6 +701,7 @@ mod tests {
                 context_compression_enabled: true,
                 ..Default::default()
             },
+            gateway: Default::default(),
         }
     }
 
