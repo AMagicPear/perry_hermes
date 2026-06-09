@@ -56,7 +56,8 @@ A few small helpers (`AIAgent::for_test`, `parse_sse_for_test`, `AgentConfig::fo
 
 **`crates/hermes-agent/src/config.rs`:**
 
-- Change `#[cfg(test)] pub mod test_helpers` to `#[cfg(any(test, feature = "test-utils"))] pub mod test_helpers`. Add a `test-utils` feature declaration in `Cargo.toml` only if needed for external consumers; for an internal integration test, `cargo test` already satisfies the `test` half of the predicate. (Documented in the `test_helpers` module's leading comment.)
+- **No `cfg` change required.** Keep the existing `#[cfg(test)] pub mod test_helpers` gate. `cargo test` sets `cfg(test)` for both the library and integration test binaries, so integration tests **already** have access to the library's `#[cfg(test)] pub mod`. The existing `tests/common/mod.rs` is redundant — it is not a workaround for a Rust limitation, it is historical duplication.
+- Update the leading `test_helpers` module comment (currently lines 314-320) to remove the false claim that integration tests cannot see `cfg(test)` items, and to point integration tests at `perry_hermes_agent::test_helpers::*` directly.
 - Delete `AgentConfig::for_test_default()` (lines 357-359): pure `Self::default()`, no value.
 - Delete `PerryHermesConfig::for_test_empty()` (lines 339-341): pure `Self::default()`, no value.
 - Keep `PerryHermesConfig::for_test_echo()`, `PerryHermesConfig::for_test_with()`, and `ProviderConfig::for_test_echo()` — each contains real field construction logic.
@@ -90,7 +91,7 @@ A few small helpers (`AIAgent::for_test`, `parse_sse_for_test`, `AgentConfig::fo
 1. `cargo test --workspace` passes (all unit + integration tests).
 2. `cargo clippy --workspace --all-targets` reports no new warnings.
 3. Net LOC reduction ≥ 65 lines across the changed files.
-4. No release binary references `test_helpers` — the `#[cfg(any(test, feature = "test-utils"))]` gate keeps it out of `cargo build --release` and `cargo publish`.
+4. No release binary references `test_helpers` — the `#[cfg(test)] pub mod test_helpers` gate keeps it out of `cargo build --release` and `cargo publish`.
 5. The `App` struct still has all 20 public fields exposed (no behavior change for direct field access in tests).
 
 ## Out of Scope
@@ -101,6 +102,6 @@ A few small helpers (`AIAgent::for_test`, `parse_sse_for_test`, `AgentConfig::fo
 
 ## Risk
 
-- The `cfg` gate change (`#[cfg(test)]` → `#[cfg(any(test, feature = "test-utils"))]`) makes the module visible to **more** build configurations in principle, but the `feature = "test-utils"` half is opt-in and the `test` half was the only configuration that ever built the lib before. Real risk: none.
+- No `cfg` gate change is needed. The module stays `#[cfg(test)] pub mod test_helpers`. The only thing that goes away is the duplicate `tests/common/mod.rs` — both code paths are exposed by `cargo test`'s `cfg(test)` setting, so no new build configuration gains visibility.
 - The `App::new` constructor changes the call signature in two production sites; both are internal to `hermes-cli` and both will be updated in the same change.
 - Integration tests changing their import path is a 1-line edit per test file; trivial blast radius.
