@@ -10,7 +10,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use clap::{Parser, Subcommand};
 
-use perry_hermes_agent::{AIAgent, PerryHermesConfig};
+use perry_hermes_agent::{AgentLoop, PerryHermesConfig};
 
 mod config_path;
 
@@ -70,7 +70,7 @@ async fn run_tui(config: PerryHermesConfig, config_path: &Path) -> anyhow::Resul
     let context_window_size = Some(selected_provider.context_window_size);
 
     let agent = Arc::new(
-        AIAgent::from_config(config)
+        AgentLoop::from_config(config)
             .with_context(|| format!("failed to build agent from {}", config_path.display()))?,
     );
 
@@ -94,7 +94,7 @@ async fn run_gateway(config: PerryHermesConfig, config_path: &Path) -> anyhow::R
     };
 
     let agent = Arc::new(
-        AIAgent::from_config(config)
+        AgentLoop::from_config(config)
             .with_context(|| format!("failed to build agent from {}", config_path.display()))?,
     );
 

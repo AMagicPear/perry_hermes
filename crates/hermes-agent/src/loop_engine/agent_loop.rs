@@ -1,64 +1,219 @@
+//! The agent loop — calls the LLM, reacts to `finish_reason`, dispatches
+//! tools, returns a `RunResult`.
+//!
+//! Sub-modules:
+//! - `metrics` — provider usage helpers + `validate_args`
+//! - `run` — the state machine (`run`, `drive_turn`, `handle_finish_reason`, `dispatch_tool_calls`)
+
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
-use perry_hermes_core::message::Message;
-use perry_hermes_core::provider::Provider;
-use perry_hermes_core::tool::{ToolContext, ToolPermissions};
 use tokio::sync::Mutex as TokioMutex;
 use tokio_util::sync::CancellationToken;
+
+use perry_hermes_core::compaction_strategy::{
+    CompactionStrategy, CompressionSkipReason, CompressionTrigger,
+};
+use perry_hermes_core::error::{LoopError, ProviderError, ToolError};
+use perry_hermes_core::message::{Message, ToolCall};
+use perry_hermes_core::provider::{Provider, ToolCallDelta};
+use perry_hermes_core::registry::InMemoryRegistry;
+use perry_hermes_core::tool::{ToolContext, ToolOutput};
 
 use crate::config::{PerryHermesConfig, ResolvedProviderConfig};
 use crate::prompting::{build_system_message, resolve_skills_dir};
 use crate::provider_factory::build_provider;
 use crate::session::AgentSession;
 use crate::tool_catalog::build_registry;
-use crate::{
-    AgentLoop, AgentRunError, CompactorConfig, ContextWindow, LoopConfig, LoopEvent, RunResult,
-    SummaryCompactor,
-};
+use crate::{CompactorConfig, SummaryCompactor, loop_engine};
 
-pub struct AIAgent {
-    agent_loop: AgentLoop,
+pub struct AgentLoop {
+    pub(crate) provider: Arc<dyn Provider>,
+    pub(crate) registry: Arc<InMemoryRegistry>,
+    pub(crate) config: LoopConfig,
 }
 
-impl AIAgent {
-    /// Low-level constructor that takes a pre-built `AgentLoop`.
-    /// Only used in tests.
-    #[cfg(test)]
-    pub fn from_agent_loop(agent_loop: AgentLoop) -> Self {
-        Self { agent_loop }
+#[derive(Clone)]
+pub struct LoopConfig {
+    pub max_iterations: u32,
+    pub max_duration: Duration,
+    pub system_prompt: Option<String>,
+    /// Optional context compaction strategy. None = no compaction.
+    pub compaction_strategy: Option<Arc<TokioMutex<dyn CompactionStrategy>>>,
+    /// Model context window and compression threshold used with real
+    /// provider usage.
+    pub context_window: Option<ContextWindow>,
+    /// Focus topic for manual `/compact [focus]`.
+    pub focus_topic: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContextWindow {
+    pub max_tokens: u64,
+    pub compression_threshold_ratio: f64,
+}
+
+impl ContextWindow {
+    pub fn threshold_tokens(self) -> u64 {
+        (self.max_tokens as f64 * self.compression_threshold_ratio) as u64
     }
 
-    // Public constructor: takes PerryHermesConfig by value so callers can
-    // move their config in. This is the public API — changing the
-    // signature would break every CLI and test caller. The clippy
-    // suggestion to take &PerryHermesConfig is rejected intentionally.
-    #[allow(clippy::needless_pass_by_value)]
+    pub fn should_compress(self, used_tokens: u64) -> bool {
+        used_tokens >= self.threshold_tokens()
+    }
+}
+
+impl std::fmt::Debug for LoopConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LoopConfig")
+            .field("max_iterations", &self.max_iterations)
+            .field("max_duration", &self.max_duration)
+            .field("system_prompt", &self.system_prompt)
+            .field("compaction_strategy", &"<dyn CompactionStrategy>")
+            .field("context_window", &self.context_window)
+            .field("focus_topic", &self.focus_topic)
+            .finish()
+    }
+}
+
+impl Default for LoopConfig {
+    fn default() -> Self {
+        Self {
+            max_iterations: 90,
+            max_duration: Duration::from_secs(60 * 10),
+            system_prompt: None,
+            compaction_strategy: None,
+            context_window: None,
+            focus_topic: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LoopMetrics {
+    pub iterations: u32,
+    pub tool_calls: u32,
+    pub input_tokens: u64,
+    pub cached_input_tokens: u64,
+    pub output_tokens: u64,
+    pub duration: Duration,
+    pub compressions: u32,
+}
+
+#[derive(Debug, Clone)]
+pub struct RunResult {
+    pub final_message: Message,
+    pub messages: Vec<Message>,
+    pub metrics: LoopMetrics,
+}
+
+#[derive(Debug, Clone)]
+pub struct FailedTurn {
+    pub messages: Vec<Message>,
+    pub error: String,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum AgentRunError {
+    #[error(transparent)]
+    Loop(#[from] LoopError),
+    #[error("provider error with partial response: {source}")]
+    FailedTurn {
+        failed_turn: FailedTurn,
+        #[source]
+        source: ProviderError,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum LoopEvent {
+    Thinking,
+    ContentDelta(String),
+    ReasoningDelta(String),
+    ToolCallPartial(ToolCallDelta),
+    AssistantMessage(Message),
+    ToolCallStarted {
+        call: ToolCall,
+        iteration: u32,
+    },
+    ToolCallFinished {
+        call: ToolCall,
+        result: Result<ToolOutput, ToolError>,
+    },
+    LengthLimit,
+    IterationsExhausted,
+    Cancelled,
+    ContextUsageUpdated {
+        used_tokens: u64,
+    },
+    CompressionCompleted {
+        trigger: CompressionTrigger,
+        /// Provider-reported prompt context tokens that caused automatic
+        /// compression. `None` for manual `/compact`.
+        context_tokens: Option<u64>,
+        /// Best known post-compaction context usage, derived from the first
+        /// prompt-context baseline plus the summary call's output tokens.
+        compacted_tokens: Option<u64>,
+        duration: Duration,
+    },
+    CompressionSkipped {
+        reason: CompressionSkipReason,
+    },
+    CompressionFailed {
+        trigger: CompressionTrigger,
+        error: String,
+    },
+}
+
+impl AgentLoop {
+    // ── Low-level constructor ──────────────────────────────────────────
+
+    /// Low-level constructor: takes pre-built provider, registry, and
+    /// loop config. Prefer [`AgentLoop::from_config`] or
+    /// [`AgentLoop::new`] for production use; this is mainly for tests
+    /// that need precise control over the components.
+    pub fn from_parts(
+        provider: Arc<dyn Provider>,
+        registry: Arc<InMemoryRegistry>,
+        config: LoopConfig,
+    ) -> Self {
+        Self {
+            provider,
+            registry,
+            config,
+        }
+    }
+
+    // ── High-level constructors ────────────────────────────────────────
+
+    /// Build an `AgentLoop` from a [`PerryHermesConfig`], resolving the
+    /// provider from the config.
+    ///
+    /// This is the primary production constructor.
     pub fn from_config(config: PerryHermesConfig) -> anyhow::Result<Self> {
         let selected_provider = config.resolve_provider()?;
         let provider = build_provider(&selected_provider)?;
-        Ok(Self {
-            agent_loop: build_loop_for_custom_provider(
-                Arc::from(provider),
-                &config,
-                Some(&selected_provider),
-            ),
-        })
+        Ok(build_loop_for_custom_provider(
+            Arc::from(provider),
+            &config,
+            Some(&selected_provider),
+        ))
     }
 
-    // Public constructor: takes PerryHermesConfig by value so callers can
-    // move their config in (public API; see from_config comment).
-    #[allow(clippy::needless_pass_by_value)]
+    /// Build an `AgentLoop` with a custom provider, using the given
+    /// config for all other settings (tool registry, compaction, etc.).
+    ///
+    /// Public constructor: takes PerryHermesConfig by value so callers can
+    /// move their config in. This is the public API — changing the
+    /// signature would break every CLI and test caller. The clippy
+    /// suggestion to take &PerryHermesConfig is rejected intentionally.
     pub fn new(provider: impl Provider + 'static, config: PerryHermesConfig) -> Self {
         let selected_provider = config.resolve_provider().ok();
-        Self {
-            agent_loop: build_loop_for_custom_provider(
-                Arc::new(provider),
-                &config,
-                selected_provider.as_ref(),
-            ),
-        }
+        build_loop_for_custom_provider(Arc::new(provider), &config, selected_provider.as_ref())
     }
+
+    // ── Session management ─────────────────────────────────────────────
 
     /// Construct a new `AgentSession`, computing the immutable system
     /// message for this session. The system message is stored at
@@ -81,6 +236,8 @@ impl AIAgent {
         build_system_message(working_dir)
     }
 
+    /// Load a previously persisted session from a JSON snapshot,
+    /// rebuilding the system message for the current working directory.
     pub async fn load_json_session(
         &self,
         path: impl Into<PathBuf>,
@@ -91,6 +248,10 @@ impl AIAgent {
             .await
     }
 
+    // ── Running a turn ─────────────────────────────────────────────────
+
+    /// Run a single conversational turn: append the user's text to the
+    /// session, then drive the agent loop to completion.
     pub async fn run_session_turn(
         &self,
         user_text: &str,
@@ -141,24 +302,15 @@ impl AIAgent {
         let ctx = ToolContext {
             session_id: session.session_id.to_string(),
             working_dir: session.working_dir.as_ref().clone(),
-            permissions: ToolPermissions { subprocess: true },
+            permissions: perry_hermes_core::tool::ToolPermissions { subprocess: true },
         };
-        self.agent_loop
-            .run(messages, ctx, session, cancel, on_event)
-            .await
+        self.run(messages, ctx, session, cancel, on_event).await
     }
 
-    async fn compact_messages_for_session(
-        &self,
-        messages: Vec<Message>,
-        focus_topic: Option<&str>,
-        session: &AgentSession,
-    ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
-        self.agent_loop
-            .compact_messages(messages, focus_topic, session)
-            .await
-    }
+    // ── Compaction ─────────────────────────────────────────────────────
 
+    /// Compact a session's message history, replacing the business log
+    /// with the compacted result.
     pub async fn compact_session(
         &self,
         session: &AgentSession,
@@ -179,7 +331,85 @@ impl AIAgent {
         }
         Ok(event)
     }
+
+    async fn compact_messages_for_session(
+        &self,
+        messages: Vec<Message>,
+        focus_topic: Option<&str>,
+        session: &AgentSession,
+    ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
+        self.compact_messages(messages, focus_topic, session).await
+    }
+
+    // ── Core loop engine methods ───────────────────────────────────────
+
+    /// Run the compaction strategy against `messages`, returning the
+    /// compacted message list and a `LoopEvent` describing the outcome.
+    pub async fn compact_messages(
+        &self,
+        mut messages: Vec<Message>,
+        focus_topic: Option<&str>,
+        session: &AgentSession,
+    ) -> Result<(Vec<Message>, LoopEvent), AgentRunError> {
+        let Some(engine) = &self.config.compaction_strategy else {
+            return Ok((
+                messages,
+                LoopEvent::CompressionSkipped {
+                    reason: CompressionSkipReason::Disabled,
+                },
+            ));
+        };
+        let outcome = crate::compaction::try_compact(
+            engine,
+            &mut messages,
+            focus_topic,
+            self.config.focus_topic.as_deref(),
+        )
+        .await
+        .unwrap_or_else(|| crate::compaction::CompactOutcome::Failed {
+            error: "compression failed".into(),
+        });
+        let event = match outcome {
+            crate::compaction::CompactOutcome::Compressed {
+                duration,
+                summary_output_tokens,
+            } => {
+                let compacted_tokens = session
+                    .compacted_context_tokens(summary_output_tokens)
+                    .await;
+                LoopEvent::CompressionCompleted {
+                    trigger: CompressionTrigger::Manual,
+                    context_tokens: None,
+                    compacted_tokens,
+                    duration,
+                }
+            }
+            crate::compaction::CompactOutcome::Skipped(reason) => {
+                LoopEvent::CompressionSkipped { reason }
+            }
+            crate::compaction::CompactOutcome::Failed { error } => LoopEvent::CompressionFailed {
+                trigger: CompressionTrigger::Manual,
+                error,
+            },
+        };
+        Ok((messages, event))
+    }
+
+    /// Run the agent loop: stream completions from the provider, dispatch
+    /// tool calls, handle compaction, and return a `RunResult`.
+    pub async fn run(
+        &self,
+        initial_messages: Vec<Message>,
+        ctx: ToolContext,
+        session: &AgentSession,
+        cancel: CancellationToken,
+        on_event: impl FnMut(LoopEvent) + Send,
+    ) -> Result<RunResult, AgentRunError> {
+        loop_engine::run::run(self, initial_messages, ctx, session, cancel, on_event).await
+    }
 }
+
+// ── Private helpers ───────────────────────────────────────────────────
 
 /// Drop any leading system message(s) from a list of messages.
 /// Used by the session to translate between the loop's outbound
@@ -210,8 +440,7 @@ fn build_loop_for_custom_provider(
         let compactor_config = CompactorConfig::default();
         Some(Arc::new(TokioMutex::new(
             SummaryCompactor::new(compactor_config).with_summary_provider(Arc::clone(&provider)),
-        ))
-            as Arc<TokioMutex<dyn perry_hermes_core::CompactionStrategy>>)
+        )) as Arc<TokioMutex<dyn CompactionStrategy>>)
     } else {
         None
     };
@@ -222,7 +451,7 @@ fn build_loop_for_custom_provider(
             .context_compression_threshold_percent
             .unwrap_or(0.50),
     });
-    AgentLoop::new(
+    AgentLoop::from_parts(
         provider,
         registry,
         LoopConfig {
@@ -245,15 +474,15 @@ mod tests {
     use futures::stream;
     use perry_hermes_core::message::Message;
     use perry_hermes_core::provider::{
-        CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta,
+        CompletionDelta, CompletionStream, FinishReason, ToolCallDelta,
     };
-    use perry_hermes_core::registry::{InMemoryRegistry, ToolSchema};
-    use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
+    use perry_hermes_core::registry::ToolSchema;
+    use perry_hermes_core::tool::{Tool, ToolOutput};
     use perry_hermes_core::{ProviderError, ToolError, Usage};
     use serde_json::{Value, json};
-    use tokio_util::sync::CancellationToken;
 
     use crate::config::{ModelConfig, ProviderConfig, ProviderKind};
+
     fn echo_config() -> PerryHermesConfig {
         PerryHermesConfig::for_test_echo()
     }
@@ -267,13 +496,13 @@ mod tests {
     #[test]
     fn from_config_succeeds_for_echo_provider() {
         let agent =
-            AIAgent::from_config(echo_config()).expect("echo should build with no env vars");
+            AgentLoop::from_config(echo_config()).expect("echo should build with no env vars");
         drop(agent);
     }
 
     #[tokio::test]
     async fn from_config_wires_compaction_strategy_when_enabled() {
-        let agent = AIAgent::from_config(echo_config_with_compression())
+        let agent = AgentLoop::from_config(echo_config_with_compression())
             .expect("echo should build with compression enabled");
         let session = AgentSession::new("s", PathBuf::from("/tmp"), None);
         session.append_message(Message::user("first")).await;
@@ -313,7 +542,7 @@ mod tests {
             },
             gateway: Default::default(),
         };
-        let err = AIAgent::from_config(config)
+        let err = AgentLoop::from_config(config)
             .err()
             .expect("expected from_config to fail");
         let msg = format!("{err:#}");
@@ -345,7 +574,7 @@ mod tests {
             },
             gateway: Default::default(),
         };
-        let err = AIAgent::from_config(config)
+        let err = AgentLoop::from_config(config)
             .err()
             .expect("expected from_config to fail");
         let msg = format!("{err:#}");
@@ -377,7 +606,7 @@ mod tests {
             },
             gateway: Default::default(),
         };
-        let err = AIAgent::from_config(config)
+        let err = AgentLoop::from_config(config)
             .err()
             .expect("expected from_config to fail");
         let msg = format!("{err:#}");
@@ -410,7 +639,7 @@ mod tests {
             gateway: Default::default(),
         };
 
-        let err = AIAgent::from_config(config)
+        let err = AgentLoop::from_config(config)
             .err()
             .expect("expected failure");
         let msg = format!("{err:#}");
@@ -420,7 +649,7 @@ mod tests {
     #[test]
     fn new_with_custom_provider_and_default_config() {
         use perry_hermes_providers::EchoProvider;
-        let agent = AIAgent::new(EchoProvider::new(), PerryHermesConfig::default());
+        let agent = AgentLoop::new(EchoProvider::new(), PerryHermesConfig::default());
         drop(agent);
     }
 
@@ -514,7 +743,7 @@ mod tests {
         saved.append_message(Message::user("saved hello")).await;
         saved.remember_context_usage_baseline(123).await;
 
-        let agent = AIAgent::new(perry_hermes_providers::EchoProvider::new(), echo_config());
+        let agent = AgentLoop::new(perry_hermes_providers::EchoProvider::new(), echo_config());
         let session = agent
             .load_json_session(path)
             .await
@@ -548,7 +777,7 @@ mod tests {
         let provider = OneToolCallProvider {
             calls: Arc::new(Mutex::new(0)),
         };
-        let agent_loop = AgentLoop::new(
+        let agent = AgentLoop::from_parts(
             Arc::new(provider),
             Arc::new(registry),
             LoopConfig {
@@ -556,7 +785,6 @@ mod tests {
                 ..Default::default()
             },
         );
-        let agent = AIAgent::from_agent_loop(agent_loop);
 
         let session = AgentSession::new(
             "session-xyz",

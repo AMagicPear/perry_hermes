@@ -13,7 +13,7 @@ See the [workspace README](../../README.md) for the overall project.
 use std::sync::Arc;
 use perry_hermes_gateway::{GatewayConfig, GatewayRunner, telegram::TelegramAdapter};
 
-# async fn example(agent: Arc<perry_hermes_agent::AIAgent>) -> anyhow::Result<()> {
+# async fn example(agent: Arc<perry_hermes_agent::AgentLoop>) -> anyhow::Result<()> {
 let config = GatewayConfig::default();
 let runner = GatewayRunner::new(agent, config);
 let telegram = Arc::new(TelegramAdapter::new("BOT_TOKEN"));
@@ -31,7 +31,7 @@ directly to `TelegramAdapter::new`).
 use std::sync::Arc;
 use perry_hermes_gateway::{GatewayConfig, GatewayRunner, QQBotAdapter, QqBotConfig};
 
-# async fn example(agent: Arc<perry_hermes_agent::AIAgent>) -> anyhow::Result<()> {
+# async fn example(agent: Arc<perry_hermes_agent::AgentLoop>) -> anyhow::Result<()> {
 let config = GatewayConfig::default();
 let runner = GatewayRunner::new(agent, config);
 let qqbot = Arc::new(QQBotAdapter::new(QqBotConfig::default()));

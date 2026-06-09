@@ -257,7 +257,7 @@ async fn compact_command_emits_compress_request() {
     drop(input_tx);
 
     // The test only asserts the TUI accepts and dispatches the event without
-    // panicking; the actual compression call lives in `AIAgent::run_compact`
+    // panicking; the actual compression call lives in `AgentLoop::compact_session`
     // and is exercised by `perry-hermes-agent`'s context-compression tests.
     let result = run_with_backend(
         backend,

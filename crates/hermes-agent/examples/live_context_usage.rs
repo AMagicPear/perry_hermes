@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use perry_hermes_agent::{AIAgent, AgentRunError, LoopEvent, PerryHermesConfig};
+use perry_hermes_agent::{AgentLoop, AgentRunError, LoopEvent, PerryHermesConfig};
 use perry_hermes_core::LoopError;
 use perry_hermes_core::message::Content;
 use tokio_util::sync::CancellationToken;
@@ -46,7 +46,7 @@ async fn main() {
         selected_provider.context_window_size
     );
 
-    let agent = match AIAgent::from_config(config) {
+    let agent = match AgentLoop::from_config(config) {
         Ok(agent) => agent,
         Err(err) => {
             eprintln!("error: failed to build agent: {err}");

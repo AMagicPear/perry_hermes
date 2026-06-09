@@ -15,7 +15,7 @@ pub use app::App;
 pub use event::{AppEvent, AppMode, RenderedLine};
 pub use run::{run, run_with_backend};
 
-/// Build the `on_event` closure to pass to `AIAgent::run_messages`. Each
+/// Build the `on_event` closure to pass to `AgentLoop::run_messages_for_session`. Each
 /// `LoopEvent` is forwarded into the TUI's main loop as an `AppEvent::Loop`.
 pub fn make_on_event(tx: mpsc::UnboundedSender<AppEvent>) -> impl FnMut(LoopEvent) + Send {
     move |ev: LoopEvent| {

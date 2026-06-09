@@ -46,14 +46,7 @@ async fn loop_turns_invalid_tool_args_into_tool_error_message_and_continues() {
 
     let provider = ScriptedProvider::new(vec![first, second]);
     let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
-    let loop_ = AgentLoop::new(
-        Arc::new(provider),
-        registry,
-        LoopConfig {
-            max_iterations: 5,
-            ..Default::default()
-        },
-    );
+    let loop_ = AgentLoop::from_parts(Arc::new(provider), registry, LoopConfig::default());
 
     let ctx = ToolContext {
         session_id: "test".into(),

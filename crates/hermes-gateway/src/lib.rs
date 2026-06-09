@@ -7,7 +7,7 @@
 //!
 //! # Architecture
 //!
-//! - [`GatewayRunner`] — central orchestrator: owns the [`AIAgent`] and
+//! - [`GatewayRunner`] — central orchestrator: owns the [`AgentLoop`] and
 //!   [`SessionRegistry`], dispatches incoming events.
 //! - [`PlatformAdapter`] — trait for platform-specific adapters.
 //! - [`SessionRegistry`] — concurrent session store keyed by
@@ -24,7 +24,7 @@
 //!     QQBotAdapter, QqBotConfig,
 //! };
 //!
-//! # fn example(agent: Arc<perry_hermes_agent::AIAgent>) {
+//! # fn example(agent: Arc<perry_hermes_agent::AgentLoop>) {
 //! let config = GatewayConfig::default();
 //! let runner = GatewayRunner::new(agent, config);
 //! let telegram = Arc::new(TelegramAdapter::new("BOT_TOKEN"));
