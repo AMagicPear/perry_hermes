@@ -229,8 +229,7 @@ impl GatewayRunner {
         let entry = self.session(event).await;
         let messages = entry.session.messages().await;
         let key = build_key(event);
-        let session_id = perry_hermes_agent::format_session_id(&key);
-        let archive_dir = self.config.sessions_dir.join(".archive").join(&session_id);
+        let archive_dir = self.config.sessions_dir.join(".archive");
         let archived = count_files_in(&archive_dir).await;
 
         Ok(GatewayResponse::Reply(format!(

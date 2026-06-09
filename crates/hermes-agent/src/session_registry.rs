@@ -97,24 +97,17 @@ impl SessionRegistry {
                     path = %store_path.display(),
                     "failed to load existing session; archiving as corrupt"
                     );
-                    let archive_dir = self.sessions_dir.join(".archive").join(&session_id);
-                    if let Err(create_err) = tokio::fs::create_dir_all(&archive_dir).await {
+                    let archive_dir = self.sessions_dir.join(".archive");
+                    let _ = tokio::fs::create_dir_all(&archive_dir).await;
+                    let corrupt_target = archive_dir
+                        .join(format!("{session_id}_{}.corrupt.json", archive_timestamp()));
+                    if let Err(rename_err) = tokio::fs::rename(&store_path, &corrupt_target).await {
                         tracing::warn!(
-                        error = %create_err,
-                        dir = %archive_dir.display(),
-                        "could not create corrupt-archive dir"
+                        error = %rename_err,
+                        from = %store_path.display(),
+                        to = %corrupt_target.display(),
+                        "could not move corrupt session aside"
                         );
-                    } else {
-                        let target =
-                            archive_dir.join(format!("{}.corrupt.json", archive_timestamp()));
-                        if let Err(rename_err) = tokio::fs::rename(&store_path, &target).await {
-                            tracing::warn!(
-                            error = %rename_err,
-                            from = %store_path.display(),
-                            to = %target.display(),
-                            "could not move corrupt session aside"
-                            );
-                        }
                     }
                     AgentSession::new(&session_id, &self.working_dir, system_message)
                         .with_json_file_store(&store_path)
@@ -132,7 +125,7 @@ impl SessionRegistry {
     }
 
     /// Reset the session for `key`: archive the active on-disk
-    /// snapshot to `sessions/.archive/<key>/<ts>.json`, then
+    /// snapshot to `sessions/.archive/<key>_<ts>.json`, then
     /// clear the in-memory history. Returns `true` if a session
     /// existed for `key`, `false` otherwise. Archive failures
     /// are logged via `tracing::warn!` and do not stop the
@@ -159,7 +152,7 @@ impl SessionRegistry {
     }
 
     /// Archive the active on-disk snapshot for `key` to
-    /// `sessions/.archive/<format_session_id(key)>/<utc_ts>.json`.
+    /// `sessions/.archive/<format_session_id(key)>_<utc_ts>.json`.
     /// Returns `None` if `key` has no live session or if the
     /// archive move fails (a `tracing::warn!` is logged in the
     /// failure case).
@@ -305,13 +298,13 @@ mod tests {
         assert!(registry.reset("k").await);
         assert!(entry.session.messages().await.is_empty());
 
-        // The prior content moved to .archive/k/<ts>.json — a real .json
+        // The prior content moved to .archive/k_<ts>.json — a real .json
         // file containing the original "hi" message.
-        let archive_dir = sessions.join(".archive").join("k");
-        assert!(archive_dir.exists(), "archive dir should be created");
+        let archive_dir = sessions.join(".archive");
         let entries: Vec<_> = std::fs::read_dir(&archive_dir)
             .unwrap()
             .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("k_"))
             .collect();
         assert_eq!(entries.len(), 1, "one archive entry expected");
         let archive_path = entries[0].path();
@@ -430,13 +423,18 @@ mod tests {
         let entry = registry.get_or_create(key).await;
         assert!(entry.session.messages().await.is_empty());
 
-        // Original file is gone; a .corrupt-<ts>.json sibling exists.
+        // Original file is gone; a .corrupt-<ts>.json sibling exists
+        // under .archive/ with the session_id as prefix.
         assert!(!path.exists(), "corrupt active file should be moved aside");
-        let archive_dir = sessions.join(".archive").join(&session_id);
+        let archive_dir = sessions.join(".archive");
         let entries: Vec<_> = std::fs::read_dir(&archive_dir)
             .unwrap()
             .filter_map(|e| e.ok())
-            .filter(|e| e.file_name().to_string_lossy().ends_with(".corrupt.json"))
+            .filter(|e| {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with(&*session_id) && name.ends_with(".corrupt.json")
+            })
             .collect();
         assert_eq!(entries.len(), 1, "one .corrupt.json archive entry");
     }
@@ -457,21 +455,20 @@ mod tests {
         assert!(archived.is_some(), "archive_active should return a path");
         let archived = archived.unwrap();
 
-        // The archive lives at .archive/<format_session_id("k")>/<ts>.json
-        // = .archive/k/<ts>.json.
-        let expected_parent = sessions.join(".archive").join("k");
+        // The archive lives at .archive/k_<ts>.json.
+        let expected_parent = sessions.join(".archive");
         assert_eq!(
             archived.parent(),
             Some(expected_parent.as_path()),
-            "archive should be under sessions/.archive/k/"
+            "archive should be under sessions/.archive/"
         );
         assert!(archived.exists(), "archive file should exist");
         assert!(
             archived
                 .file_name()
                 .and_then(|n| n.to_str())
-                .is_some_and(|n| n.ends_with(".json")),
-            "archive filename should end with .json"
+                .is_some_and(|n| n.starts_with("k_") && n.ends_with(".json")),
+            "archive filename should start with k_ and end with .json"
         );
 
         // The archive contents deserialize back to a session with the

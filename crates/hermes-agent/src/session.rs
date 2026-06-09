@@ -253,7 +253,7 @@ impl AgentSession {
     }
 
     /// Move the current on-disk snapshot to
-    /// `dir/<session_id>/<utc_ts>.json` and clear the in-memory
+    /// `dir/<session_id>_<utc_ts>.json` and clear the in-memory
     /// history. The session retains its `session_id` and remains
     /// usable; the next `append_message` will recreate the file
     /// at the active path.
@@ -261,37 +261,24 @@ impl AgentSession {
     /// If no `store` is attached, returns `Ok` with a path that
     /// was not written (used by in-memory tests and CLI startup
     /// paths that have not yet persisted).
-    ///
-    /// The file move is committed before the in-memory clear, so
-    /// a mid-method crash leaves the archive complete and the
-    /// active file gone — the next `append_message` will
-    /// recreate it. On error before the move, the in-memory
-    /// state is unchanged.
     pub async fn archive_to(&self, dir: &std::path::Path) -> std::io::Result<PathBuf> {
         let Some(store) = &self.store else {
-            let placeholder = dir.join(self.session_id.as_ref()).join("no-store.json");
+            let placeholder = dir.join(format!("{}_no-store.json", self.session_id));
             return Ok(placeholder);
         };
 
         let ts = crate::session_registry::archive_timestamp();
-        let target_dir = dir.join(self.session_id.as_ref());
-        tokio::fs::create_dir_all(&target_dir).await?;
-        let target = target_dir.join(format!("{ts}.json"));
+        let target = dir.join(format!("{}_{ts}.json", self.session_id));
+        tokio::fs::create_dir_all(dir).await?;
 
         if store.path.as_ref().exists() {
             tokio::fs::rename(store.path.as_ref(), &target).await?;
         } else {
-            // Nothing on disk yet; write a snapshot of the current
-            // (possibly empty) state so the archive layout is
-            // uniform across runs.
             let bytes =
                 serde_json::to_vec_pretty(&self.snapshot().await).map_err(std::io::Error::other)?;
             tokio::fs::write(&target, bytes).await?;
         }
 
-        // Clear in-memory messages without persisting. The active
-        // file no longer exists; the next `append_message` will
-        // recreate it via the existing `persist` path.
         self.clear_in_memory_only().await;
         Ok(target)
     }
@@ -530,7 +517,14 @@ mod tests {
         let archive_dir = tmp.path().join("archive");
         let archived = session.archive_to(&archive_dir).await.unwrap();
 
-        assert!(archived.starts_with(archive_dir.join("k")));
+        assert_eq!(archived.parent().unwrap(), archive_dir);
+        assert!(
+            archived
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("k_")),
+            "archive filename should start with k_"
+        );
         assert!(
             archived.exists(),
             "archive file should exist at {archived:?}"

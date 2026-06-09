@@ -9,8 +9,8 @@
 // after shutdown begins with an empty session - matching the
 // manual smoke test described in the plan ("Messages:0 (the new
 // run) and Archived:1 (the previous run)").
-// - A corrupt active JSON file is quarantined under
-// `.archive/<key>/` instead of crashing the registry.
+// - A corrupt active JSON file is quarantined to
+// `.archive/<key>_<ts>.corrupt.json` instead of crashing the registry.
 // - `reset` archives the active snapshot, then leaves an empty
 // active file behind for the next session to load.
 
@@ -83,12 +83,16 @@ async fn registry_archive_active_moves_file_and_restart_starts_empty() {
     let active = sessions_dir.join(format!("{session_id}.json"));
     assert!(!active.exists(), "archive must move the active file aside");
 
-    let archive_dir = sessions_dir.join(".archive").join(&session_id);
-    assert_eq!(std::fs::read_dir(&archive_dir).unwrap().count(), 1);
+    let archive_dir = sessions_dir.join(".archive");
+    let archive_count = std::fs::read_dir(&archive_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&*session_id))
+        .count();
+    assert_eq!(archive_count, 1);
 
     // Second "process": no active file on disk, so the registry
-    // produces a fresh empty session (matches the plan's smoke test:
-    // "Messages:0 (the new run) and Archived:1 (the previous run)").
+    // produces a fresh empty session.
     {
         let registry =
             SessionRegistry::new(sessions_dir.clone(), PathBuf::from("/tmp/project"), None);
@@ -111,12 +115,16 @@ async fn registry_corrupt_file_is_quarantined_and_session_starts_empty() {
     let entry = registry.get_or_create(key).await;
     assert!(entry.session.messages().await.is_empty());
 
-    // The bad file is now under .archive/<key>/<ts>.corrupt.json.
-    let quarantine = sessions_dir.join(".archive").join(&session_id);
+    // The bad file is now under .archive/<key>_<ts>.corrupt.json.
+    let quarantine = sessions_dir.join(".archive");
     let quarantined: Vec<_> = std::fs::read_dir(&quarantine)
         .unwrap()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_name().to_string_lossy().ends_with(".corrupt.json"))
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(&*session_id) && name.ends_with(".corrupt.json")
+        })
         .collect();
     assert_eq!(quarantined.len(), 1);
     assert!(!active.exists(), "corrupt active file should be gone");
@@ -144,9 +152,14 @@ async fn reset_archives_then_starts_fresh_on_next_get_or_create() {
         assert!(entry.session.messages().await.is_empty());
     }
 
-    // The archive holds one entry.
-    let archive_dir = sessions_dir.join(".archive").join(&session_id);
-    assert_eq!(std::fs::read_dir(&archive_dir).unwrap().count(), 1);
+    // The archive holds one entry matching the session id prefix.
+    let archive_dir = sessions_dir.join(".archive");
+    let archive_count = std::fs::read_dir(&archive_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&*session_id))
+        .count();
+    assert_eq!(archive_count, 1);
 
     // A fresh registry sees the active file (empty after reset) and
     // loads an empty message log.

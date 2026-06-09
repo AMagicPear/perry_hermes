@@ -230,7 +230,7 @@ fn build_loop_for_custom_provider(
             .context_compression_threshold_percent
             .unwrap_or(0.50),
     });
-    AgentLoop::from_provider(
+    AgentLoop::new(
         provider,
         registry,
         LoopConfig {
@@ -556,7 +556,7 @@ mod tests {
         let provider = OneToolCallProvider {
             calls: Arc::new(Mutex::new(0)),
         };
-        let agent_loop = AgentLoop::from_provider(
+        let agent_loop = AgentLoop::new(
             Arc::new(provider),
             Arc::new(registry),
             LoopConfig {

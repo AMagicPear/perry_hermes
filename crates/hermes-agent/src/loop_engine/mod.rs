@@ -164,7 +164,7 @@ pub enum LoopEvent {
 }
 
 impl AgentLoop {
-    pub fn from_provider(
+    pub fn new(
         provider: Arc<dyn Provider>,
         registry: Arc<InMemoryRegistry>,
         config: LoopConfig,
