@@ -117,7 +117,7 @@ pub async fn run(
 
     let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let sessions_dir = perry_hermes_agent::default_sessions_dir();
-    let system_message = agent.system_message_for(&working_dir);
+    let system_message = agent.system_message_for(&working_dir).await;
     let registry = SessionRegistry::new(sessions_dir, working_dir, system_message);
     let cli_key = new_cli_session_key();
     let entry = registry.get_or_create(&cli_key).await;

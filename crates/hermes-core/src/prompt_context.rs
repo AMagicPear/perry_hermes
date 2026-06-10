@@ -1,6 +1,7 @@
 //! `PromptContextBlock` — a context fragment loaded at session
 //! creation and frozen into the system prompt.
 
+use std::path::Path;
 use async_trait::async_trait;
 
 /// A context fragment loaded at session creation and frozen into
@@ -32,4 +33,12 @@ pub trait PromptContextBlock: Send + Sync {
 
     /// Load and render the block. `None` → caller skips this block.
     async fn load(&self) -> Option<String>;
+
+    /// Load the block scoped to a specific working directory.
+    /// Override this in blocks that need per-session working directory
+    /// resolution (e.g. `AgentsMdBlock`). Default implementation calls
+    /// `load()`.
+    async fn load_for(&self, _working_dir: &Path) -> Option<String> {
+        self.load().await
+    }
 }

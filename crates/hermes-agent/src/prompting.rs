@@ -151,7 +151,10 @@ pub async fn build_system_message(
         sections.push(base.trim().to_string());
     }
     for block in blocks {
-        if let Some(body) = block.load().await {
+        // All blocks support per-session working directory resolution
+        // via load_for; AgentsMdBlock uses it to read from the session's
+        // cwd rather than the process cwd at agent-construction time.
+        if let Some(body) = block.load_for(working_dir).await {
             sections.push(format!("{}\n\n{}", block.name(), body));
         }
     }
@@ -192,6 +195,10 @@ impl PromptContextBlock for AgentsMdBlock {
     async fn load(&self) -> Option<String> {
         // Sync I/O on a small file; no contention.
         load_agents_md_block(&self.working_dir)
+    }
+
+    async fn load_for(&self, working_dir: &Path) -> Option<String> {
+        load_agents_md_block(working_dir)
     }
 }
 

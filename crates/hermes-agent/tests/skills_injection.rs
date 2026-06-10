@@ -87,7 +87,7 @@ async fn runtime_new_uses_default_system_prompt_without_skills_dir() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("t", PathBuf::from("/tmp"));
+    let session = agent.new_session("t", PathBuf::from("/tmp")).await;
 
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -110,7 +110,7 @@ async fn runtime_uses_default_system_prompt_when_config_omits_it_and_skills_dir_
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("t", PathBuf::from("/tmp"));
+    let session = agent.new_session("t", PathBuf::from("/tmp")).await;
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
@@ -143,7 +143,7 @@ async fn runtime_appends_skills_block_after_default_system_prompt() {
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
 
-    let session = agent.new_session("t", PathBuf::from("/tmp"));
+    let session = agent.new_session("t", PathBuf::from("/tmp")).await;
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
@@ -176,7 +176,7 @@ async fn runtime_reads_skills_when_session_is_created_not_when_agent_is_created(
         "---\nname: created-after-agent\ndescription: \"created later\"\n---\nbody\n",
     );
 
-    let session = agent.new_session("t", PathBuf::from("/tmp"));
+    let session = agent.new_session("t", PathBuf::from("/tmp")).await;
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
@@ -206,7 +206,7 @@ async fn runtime_does_not_fail_construction_when_skills_dir_has_parse_errors() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("t", PathBuf::from("/tmp"));
+    let session = agent.new_session("t", PathBuf::from("/tmp")).await;
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
@@ -228,7 +228,7 @@ async fn runtime_uses_default_system_prompt_when_home_is_unset() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("t", PathBuf::from("/tmp"));
+    let session = agent.new_session("t", PathBuf::from("/tmp")).await;
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
@@ -264,7 +264,7 @@ async fn runtime_injects_skills_index_into_system_prompt_when_skills_dir_present
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("t", PathBuf::from("/tmp"));
+    let session = agent.new_session("t", PathBuf::from("/tmp")).await;
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
         .await
@@ -292,7 +292,7 @@ async fn runtime_includes_working_directory_in_system_message() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("cwd", PathBuf::from("/tmp/cwd-check"));
+    let session = agent.new_session("cwd", PathBuf::from("/tmp/cwd-check")).await;
 
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -325,7 +325,7 @@ async fn runtime_injects_agents_md_from_session_working_dir() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("agents-md", project.path().to_path_buf());
+    let session = agent.new_session("agents-md", project.path().to_path_buf()).await;
 
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -364,7 +364,7 @@ async fn runtime_omits_agents_md_block_when_file_absent_in_working_dir() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("no-agents-md", project.path().to_path_buf());
+    let session = agent.new_session("no-agents-md", project.path().to_path_buf()).await;
 
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})

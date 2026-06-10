@@ -57,7 +57,8 @@ async fn main() {
     let session = agent.new_session(
         "live-context-usage",
         std::env::current_dir().unwrap_or_default(),
-    );
+    )
+    .await;
     let cancel = CancellationToken::new();
     let prompts = [
         "Please remember this live context probe marker: perry-hermes-context-usage. Reply in one short sentence.",
