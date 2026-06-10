@@ -26,7 +26,7 @@ futures = "0.3"
 # Serde
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1.1"
 
 # Errors
 thiserror = "2"
@@ -36,7 +36,7 @@ anyhow = "1"
 tracing = "0.1"
 
 # JSON Schema validation for tool dispatch
-jsonschema = "0.18"
+jsonschema = "0.46"
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -49,13 +49,13 @@ reqwest = { version = "0.13", features = ["json", "stream"] }
 bytes = "1"
 
 # Telegram bot
-teloxide = { version = "0.13", features = ["macros"] }
+teloxide = { version = "0.17", features = ["macros"] }
 
 # Concurrent map
 dashmap = "6"
 
 # HTTP mock server (dev-dep on perry-hermes-providers)
-httpmock = "0.7"
+httpmock = "0.8"
 
 # Time
 chrono = { version = "0.4", default-features = false, features = ["serde", "clock"] }

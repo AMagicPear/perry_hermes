@@ -20,15 +20,11 @@ pub fn validate_args(
     args: &serde_json::Value,
     schema: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
-    use jsonschema::{Draft, JSONSchema};
-    let compiled = JSONSchema::options()
-        .with_draft(Draft::Draft7)
-        .compile(schema)
+    let validator = jsonschema::draft7::options()
+        .build(schema)
         .map_err(|e| format!("schema compile: {e}"))?;
-    let result = compiled.validate(args);
-    if let Err(errors) = result {
-        let msgs: Vec<String> = errors.map(|e| e.to_string()).collect();
-        return Err(msgs.join("; "));
+    if let Err(e) = validator.validate(args) {
+        return Err(e.to_string());
     }
     Ok(args.clone())
 }

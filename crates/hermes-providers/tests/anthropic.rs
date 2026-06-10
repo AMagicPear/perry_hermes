@@ -46,20 +46,13 @@ async fn anthropic_provider_posts_messages_request_with_headers_and_tools() {
                 .path("/v1/messages")
                 .header("x-api-key", "test-key")
                 .header("anthropic-version", "2023-06-01")
-                .matches(|req| {
-                    req.headers
-                        .as_ref()
-                        .map(|headers| {
-                            headers
-                                .iter()
-                                .all(|(name, _)| !name.eq_ignore_ascii_case("accept-encoding"))
-                        })
-                        .unwrap_or(true)
+                .is_true(|req| {
+                    req.headers()
+                        .iter()
+                        .all(|(name, _)| name.as_str() != "accept-encoding")
                 })
-                .matches(|req| {
-                    let Some(body) = &req.body else {
-                        return false;
-                    };
+                .is_true(|req| {
+                    let body = req.body().as_ref();
                     let Ok(json) = serde_json::from_slice::<serde_json::Value>(body) else {
                         return false;
                     };
@@ -230,9 +223,9 @@ async fn anthropic_provider_serializes_prior_tool_results_as_user_tool_result_bl
         .mock_async(|when, then| {
             when.method(POST)
                 .path("/v1/messages")
-                .body_contains(r#""type":"tool_use""#)
-                .body_contains(r#""tool_use_id":"toolu_1""#)
-                .body_contains(r#""content":"done""#);
+                .body_includes(r#""type":"tool_use""#)
+                .body_includes(r#""tool_use_id":"toolu_1""#)
+                .body_includes(r#""content":"done""#);
             then.status(200)
                 .header("content-type", "text/event-stream")
                 .body("event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":1}}\n\n");
