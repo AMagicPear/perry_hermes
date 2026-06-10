@@ -348,18 +348,16 @@ mod tests {
         assert_eq!(text.matches("FROM-SESSION-DIR").count(), 1);
     }
 
-    // New tests for the block-list abstraction.
-    use std::sync::Arc as _Arc;
-
-    use async_trait::async_trait as _async_trait;
-    use perry_hermes_core::prompt_context::PromptContextBlock as _PCB;
+    // New tests for the block-list abstraction. The parent module's
+    // `use` statements (`Arc`, `async_trait`, `PromptContextBlock`) are
+    // in scope here, so no extra imports are needed.
 
     struct StaticBlock {
         name: &'static str,
         body: Option<&'static str>,
     }
 
-    #[async_trait::async_trait]
+    #[async_trait]
     impl PromptContextBlock for StaticBlock {
         fn name(&self) -> &str {
             self.name

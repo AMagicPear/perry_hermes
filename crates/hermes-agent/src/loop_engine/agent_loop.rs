@@ -18,6 +18,7 @@ use perry_hermes_core::compaction_strategy::{
 use perry_hermes_core::error::{LoopError, ProviderError, ToolError};
 use perry_hermes_core::message::{Message, ToolCall};
 use perry_hermes_core::provider::{Provider, ToolCallDelta};
+use perry_hermes_core::prompt_context::PromptContextBlock;
 use perry_hermes_core::registry::InMemoryRegistry;
 use perry_hermes_core::tool::{ToolContext, ToolOutput};
 
@@ -46,6 +47,10 @@ pub struct LoopConfig {
     pub context_window: Option<ContextWindow>,
     /// Focus topic for manual `/compact [focus]`.
     pub focus_topic: Option<String>,
+    /// Context blocks to inject into the system prompt at session
+    /// creation. Each block is loaded once via `block.load().await`
+    /// and the rendered result is frozen in `AgentSession.system_message`.
+    pub blocks: Vec<Arc<dyn PromptContextBlock>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +78,10 @@ impl std::fmt::Debug for LoopConfig {
             .field("compaction_strategy", &"<dyn CompactionStrategy>")
             .field("context_window", &self.context_window)
             .field("focus_topic", &self.focus_topic)
+            .field(
+                "blocks",
+                &format_args!("<[{} dyn PromptContextBlock]>", self.blocks.len()),
+            )
             .finish()
     }
 }
@@ -86,6 +95,7 @@ impl Default for LoopConfig {
             compaction_strategy: None,
             context_window: None,
             focus_topic: None,
+            blocks: Vec::new(),
         }
     }
 }
@@ -219,21 +229,26 @@ impl AgentLoop {
     /// message for this session. The system message is stored at
     /// `AgentSession::system_message` and never recomposed on subsequent
     /// turns.
-    pub fn new_session(
+    pub async fn new_session(
         &self,
         session_id: impl Into<String>,
         working_dir: impl Into<PathBuf>,
     ) -> AgentSession {
         let working_dir = working_dir.into();
-        let system_message = self.system_message_for(&working_dir);
+        let system_message = self.system_message_for(&working_dir).await;
         AgentSession::new(session_id, working_dir, system_message)
     }
 
     /// Build the system message for a session at `working_dir`.
     /// Includes the hardcoded base prompt, skills index, AGENTS.md
-    /// content, and working directory hint.
-    pub fn system_message_for(&self, working_dir: &std::path::Path) -> Option<Message> {
-        build_system_message(working_dir)
+    /// content, and working directory hint. The blocks list is taken
+    /// from the `LoopConfig` (empty in tests; populated in production
+    /// by `build_loop_for_custom_provider`).
+    pub async fn system_message_for(
+        &self,
+        working_dir: &std::path::Path,
+    ) -> Option<Message> {
+        build_system_message(working_dir, &self.config.blocks).await
     }
 
     /// Load a previously persisted session from a JSON snapshot,
@@ -243,7 +258,7 @@ impl AgentLoop {
         path: impl Into<PathBuf>,
     ) -> std::io::Result<AgentSession> {
         let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let system_message = self.system_message_for(&working_dir);
+        let system_message = self.system_message_for(&working_dir).await;
         AgentSession::load_json_file_with_system_message(path, Some(working_dir), system_message)
             .await
     }
