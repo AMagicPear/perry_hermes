@@ -113,7 +113,12 @@ impl Tool for MemoryTool {
                         ToolError::InvalidArgs("content required for 'add'".into())
                     })?;
                 match self.store.add(target, content.to_string()).await {
-                    Ok(value) => success_json(target, &value.entries, value.entry_count),
+                    Ok(value) => success_json(
+                        target,
+                        &value.entries,
+                        value.entry_count,
+                        value.message.as_deref(),
+                    ),
                     Err(err) => error_json(&err),
                 }
             }
@@ -131,7 +136,12 @@ impl Tool for MemoryTool {
                         ToolError::InvalidArgs("content required for 'replace'".into())
                     })?;
                 match self.store.replace(target, old, new.to_string()).await {
-                    Ok(value) => success_json(target, &value.entries, value.entry_count),
+                    Ok(value) => success_json(
+                        target,
+                        &value.entries,
+                        value.entry_count,
+                        value.message.as_deref(),
+                    ),
                     Err(err) => error_json(&err),
                 }
             }
@@ -143,12 +153,17 @@ impl Tool for MemoryTool {
                         ToolError::InvalidArgs("old_text required for 'remove'".into())
                     })?;
                 match self.store.remove(target, old).await {
-                    Ok(value) => success_json(target, &value.entries, value.entry_count),
+                    Ok(value) => success_json(
+                        target,
+                        &value.entries,
+                        value.entry_count,
+                        value.message.as_deref(),
+                    ),
                     Err(err) => error_json(&err),
                 }
             }
             "read" => match self.store.read(target).await {
-                Ok(value) => success_json(target, &value.entries, value.entry_count),
+                Ok(value) => success_json(target, &value.entries, value.entry_count, None),
                 Err(err) => error_json(&err),
             },
             other => {
@@ -178,13 +193,24 @@ fn parse_target(value: Option<&Value>) -> Result<MemoryTarget, ToolError> {
     }
 }
 
-fn success_json(target: MemoryTarget, entries: &[String], entry_count: usize) -> Value {
-    serde_json::json!({
+fn success_json(
+    target: MemoryTarget,
+    entries: &[String],
+    entry_count: usize,
+    message: Option<&str>,
+) -> Value {
+    let mut obj = serde_json::json!({
         "success": true,
         "target": target,
         "entries": entries,
         "entry_count": entry_count,
-    })
+    });
+    if let Some(msg) = message {
+        obj.as_object_mut()
+            .unwrap()
+            .insert("message".to_string(), serde_json::json!(msg));
+    }
+    obj
 }
 
 fn error_json(err: &MemoryError) -> Value {
@@ -396,5 +422,53 @@ mod tests {
         let v: Value = serde_json::from_str(&out.content).unwrap();
         assert_eq!(v["success"], true);
         assert_eq!(v["entry_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn success_response_includes_message_field() {
+        let dir = temp_dir();
+        let store = create_store(dir.path().to_path_buf()).await;
+        let tool = MemoryTool::new(store);
+
+        // First add — message should be "Entry added."
+        let out = tool
+            .execute(
+                json!({ "action": "add", "target": "memory", "content": "x" }),
+                ctx(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(v["message"], "Entry added.");
+
+        // Re-add same — message should report no duplicate
+        let out = tool
+            .execute(
+                json!({ "action": "add", "target": "memory", "content": "x" }),
+                ctx(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_str(&out.content).unwrap();
+        assert!(v["message"].as_str().unwrap().contains("no duplicate"));
+    }
+
+    #[tokio::test]
+    async fn read_response_omits_message_field() {
+        let dir = temp_dir();
+        let store = create_store(dir.path().to_path_buf()).await;
+        let tool = MemoryTool::new(store);
+        let out = tool
+            .execute(
+                json!({ "action": "read", "target": "memory" }),
+                ctx(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_str(&out.content).unwrap();
+        assert!(v.get("message").is_none(), "read has no message field");
     }
 }
