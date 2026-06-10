@@ -5,7 +5,7 @@
 //! lives in `hermes-agent::prompting` next to the other prompt blocks.
 
 pub mod store;
-// pub mod tool;
-// pub use tool::MemoryTool;
+pub mod tool;
 
 pub use store::{MemoryConfig, MemoryError, MemoryOpResult, MemoryReadResult, MemoryStore, MemoryTarget};
+pub use tool::MemoryTool;
