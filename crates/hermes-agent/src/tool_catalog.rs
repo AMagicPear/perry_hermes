@@ -38,12 +38,12 @@ pub fn build_registry(
         reg = reg.register(Arc::new(SkillViewTool::new(skills_dir.to_path_buf())));
     }
 
-    if !disabled_toolsets.iter().any(|s| s == "memory") {
-        if let Some(store) = memory_store {
-            reg = reg.register(Arc::new(
-                perry_hermes_skill_tools::tools::memory::MemoryTool::new(store),
-            ));
-        }
+    if !disabled_toolsets.iter().any(|s| s == "memory")
+        && let Some(store) = memory_store
+    {
+        reg = reg.register(Arc::new(
+            perry_hermes_skill_tools::tools::memory::MemoryTool::new(store),
+        ));
     }
     reg
 }
