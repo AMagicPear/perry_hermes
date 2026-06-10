@@ -12,7 +12,11 @@ use perry_hermes_skill_tools::tools::{
 /// `skills_dir` is the resolved local skills directory (see
 /// `crate::prompting::resolve_skills_dir`). It is read-only at this phase —
 /// the four file / skills tools only need the path to find skill files.
-pub fn build_registry(disabled_toolsets: &[String], skills_dir: &Path) -> InMemoryRegistry {
+pub fn build_registry(
+    disabled_toolsets: &[String],
+    skills_dir: &Path,
+    memory_store: Option<Arc<perry_hermes_skill_tools::tools::memory::MemoryStore>>,
+) -> InMemoryRegistry {
     let mut reg = InMemoryRegistry::new();
 
     // Accept both `terminal` (new) and `core` (legacy) so existing TOML
@@ -33,6 +37,14 @@ pub fn build_registry(disabled_toolsets: &[String], skills_dir: &Path) -> InMemo
         reg = reg.register(Arc::new(SkillListTool::new(skills_dir.to_path_buf())));
         reg = reg.register(Arc::new(SkillViewTool::new(skills_dir.to_path_buf())));
     }
+
+    if !disabled_toolsets.iter().any(|s| s == "memory")
+        && let Some(store) = memory_store
+    {
+        reg = reg.register(Arc::new(
+            perry_hermes_skill_tools::tools::memory::MemoryTool::new(store),
+        ));
+    }
     reg
 }
 
@@ -47,21 +59,21 @@ mod tests {
 
     #[test]
     fn runtime_disables_terminal_toolset_from_registry() {
-        let registry = build_registry(&["terminal".to_string()], &test_skills_dir());
+        let registry = build_registry(&["terminal".to_string()], &test_skills_dir(), None);
         let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
         assert!(!names.iter().any(|n| n == "terminal"));
     }
 
     #[test]
     fn legacy_core_disables_shell_tool() {
-        let registry = build_registry(&["core".to_string()], &test_skills_dir());
+        let registry = build_registry(&["core".to_string()], &test_skills_dir(), None);
         let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
         assert!(!names.iter().any(|n| n == "terminal"));
     }
 
     #[test]
     fn file_toolset_disables_read_write_patch_and_search() {
-        let registry = build_registry(&["file".to_string()], &test_skills_dir());
+        let registry = build_registry(&["file".to_string()], &test_skills_dir(), None);
         let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
         assert!(!names.iter().any(|n| n == "read_file"));
         assert!(!names.iter().any(|n| n == "write_file"));
@@ -71,7 +83,7 @@ mod tests {
 
     #[test]
     fn skills_toolset_disables_list_and_view() {
-        let registry = build_registry(&["skills".to_string()], &test_skills_dir());
+        let registry = build_registry(&["skills".to_string()], &test_skills_dir(), None);
         let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
         assert!(!names.iter().any(|n| n == "skills_list"));
         assert!(!names.iter().any(|n| n == "skill_view"));
@@ -79,7 +91,7 @@ mod tests {
 
     #[test]
     fn default_registry_includes_all_seven_tools() {
-        let registry = build_registry(&[], &test_skills_dir());
+        let registry = build_registry(&[], &test_skills_dir(), None);
         let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
         assert!(names.iter().any(|n| n == "terminal"));
         assert!(names.iter().any(|n| n == "read_file"));
@@ -92,7 +104,7 @@ mod tests {
 
     #[test]
     fn patch_schema_carries_reference_parameters() {
-        let registry = build_registry(&[], &test_skills_dir());
+        let registry = build_registry(&[], &test_skills_dir(), None);
         let patch = registry
             .get("patch")
             .expect("patch must be registered")
@@ -113,7 +125,7 @@ mod tests {
 
     #[test]
     fn search_files_schema_carries_reference_parameters() {
-        let registry = build_registry(&[], &test_skills_dir());
+        let registry = build_registry(&[], &test_skills_dir(), None);
         let search = registry
             .get("search_files")
             .expect("search_files must be registered")
@@ -134,5 +146,28 @@ mod tests {
                 "search_files missing parameter {key}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn memory_tool_registers_when_store_provided() {
+        use perry_hermes_skill_tools::tools::memory::{MemoryConfig, MemoryStore};
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            MemoryStore::load(MemoryConfig {
+                memories_dir: tmp.path().to_path_buf(),
+            })
+            .await
+            .unwrap(),
+        );
+        let registry = build_registry(&[], &test_skills_dir(), Some(store));
+        let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
+        assert!(names.iter().any(|n| n == "memory"));
+    }
+
+    #[test]
+    fn memory_tool_absent_when_no_store_provided() {
+        let registry = build_registry(&[], &test_skills_dir(), None);
+        let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
+        assert!(!names.iter().any(|n| n == "memory"));
     }
 }

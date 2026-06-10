@@ -51,7 +51,9 @@ pub enum GatewayResponse {
 
 impl GatewayRunner {
     pub fn new(agent: Arc<AgentLoop>, config: GatewayConfig) -> Self {
-        let system_message = agent.system_message_for(&config.working_dir);
+        // One-shot startup call — block_on is acceptable here.
+        let system_message =
+            futures::executor::block_on(agent.system_message_for(&config.working_dir));
         let sessions = Arc::new(SessionRegistry::new(
             config.sessions_dir.clone(),
             config.working_dir.clone(),

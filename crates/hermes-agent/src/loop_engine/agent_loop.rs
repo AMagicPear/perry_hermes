@@ -17,12 +17,16 @@ use perry_hermes_core::compaction_strategy::{
 };
 use perry_hermes_core::error::{LoopError, ProviderError, ToolError};
 use perry_hermes_core::message::{Message, ToolCall};
+use perry_hermes_core::prompt_context::PromptContextBlock;
 use perry_hermes_core::provider::{Provider, ToolCallDelta};
 use perry_hermes_core::registry::InMemoryRegistry;
 use perry_hermes_core::tool::{ToolContext, ToolOutput};
 
 use crate::config::{PerryHermesConfig, ResolvedProviderConfig};
-use crate::prompting::{build_system_message, resolve_skills_dir};
+use crate::prompting::{
+    AgentsMdBlock, HomeLayoutBlock, MemoryBlock, build_system_message, resolve_memories_dir,
+    resolve_skills_dir,
+};
 use crate::provider_factory::build_provider;
 use crate::session::AgentSession;
 use crate::tool_catalog::build_registry;
@@ -46,6 +50,10 @@ pub struct LoopConfig {
     pub context_window: Option<ContextWindow>,
     /// Focus topic for manual `/compact [focus]`.
     pub focus_topic: Option<String>,
+    /// Context blocks to inject into the system prompt at session
+    /// creation. Each block is loaded once via `block.load().await`
+    /// and the rendered result is frozen in `AgentSession.system_message`.
+    pub blocks: Vec<Arc<dyn PromptContextBlock>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -73,6 +81,10 @@ impl std::fmt::Debug for LoopConfig {
             .field("compaction_strategy", &"<dyn CompactionStrategy>")
             .field("context_window", &self.context_window)
             .field("focus_topic", &self.focus_topic)
+            .field(
+                "blocks",
+                &format_args!("<[{} dyn PromptContextBlock]>", self.blocks.len()),
+            )
             .finish()
     }
 }
@@ -81,11 +93,12 @@ impl Default for LoopConfig {
     fn default() -> Self {
         Self {
             max_iterations: 90,
-            max_duration: Duration::from_secs(60 * 10),
+            max_duration: Duration::MAX,
             system_prompt: None,
             compaction_strategy: None,
             context_window: None,
             focus_topic: None,
+            blocks: Vec::new(),
         }
     }
 }
@@ -219,21 +232,23 @@ impl AgentLoop {
     /// message for this session. The system message is stored at
     /// `AgentSession::system_message` and never recomposed on subsequent
     /// turns.
-    pub fn new_session(
+    pub async fn new_session(
         &self,
         session_id: impl Into<String>,
         working_dir: impl Into<PathBuf>,
     ) -> AgentSession {
         let working_dir = working_dir.into();
-        let system_message = self.system_message_for(&working_dir);
+        let system_message = self.system_message_for(&working_dir).await;
         AgentSession::new(session_id, working_dir, system_message)
     }
 
     /// Build the system message for a session at `working_dir`.
     /// Includes the hardcoded base prompt, skills index, AGENTS.md
-    /// content, and working directory hint.
-    pub fn system_message_for(&self, working_dir: &std::path::Path) -> Option<Message> {
-        build_system_message(working_dir)
+    /// content, and working directory hint. The blocks list is taken
+    /// from the `LoopConfig` (empty in tests; populated in production
+    /// by `build_loop_for_custom_provider`).
+    pub async fn system_message_for(&self, working_dir: &std::path::Path) -> Option<Message> {
+        build_system_message(working_dir, &self.config.blocks).await
     }
 
     /// Load a previously persisted session from a JSON snapshot,
@@ -243,7 +258,7 @@ impl AgentLoop {
         path: impl Into<PathBuf>,
     ) -> std::io::Result<AgentSession> {
         let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let system_message = self.system_message_for(&working_dir);
+        let system_message = self.system_message_for(&working_dir).await;
         AgentSession::load_json_file_with_system_message(path, Some(working_dir), system_message)
             .await
     }
@@ -435,7 +450,38 @@ fn build_loop_for_custom_provider(
             .join(".perry_hermes")
             .join("skills")
     });
-    let registry = Arc::new(build_registry(&config.agent.disabled_toolsets, &skills_dir));
+    let memories_dir = resolve_memories_dir().unwrap_or_else(|| {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(".perry_hermes")
+            .join("memories")
+    });
+
+    // Load the memory store synchronously. The store is small and
+    // bound to disk I/O for two files; spawn a one-shot blocking
+    // read so we don't block the async runtime.
+    let memory_store = {
+        let cfg = perry_hermes_skill_tools::tools::memory::MemoryConfig {
+            memories_dir: memories_dir.clone(),
+        };
+        match futures::executor::block_on(
+            perry_hermes_skill_tools::tools::memory::MemoryStore::load(cfg),
+        ) {
+            Ok(store) => Some(Arc::new(store)),
+            Err(err) => {
+                tracing::warn!(
+                    "failed to load memory store: {err}; continuing without memory blocks"
+                );
+                None
+            }
+        }
+    };
+
+    let registry = Arc::new(build_registry(
+        &config.agent.disabled_toolsets,
+        &skills_dir,
+        memory_store.clone(),
+    ));
     let compaction_strategy = if config.agent.context_compression_enabled {
         let compactor_config = CompactorConfig::default();
         Some(Arc::new(TokioMutex::new(
@@ -451,6 +497,17 @@ fn build_loop_for_custom_provider(
             .context_compression_threshold_percent
             .unwrap_or(0.50),
     });
+
+    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mut blocks: Vec<Arc<dyn PromptContextBlock>> = vec![
+        Arc::new(HomeLayoutBlock),
+        Arc::new(AgentsMdBlock::new(working_dir)),
+    ];
+    if let Some(store) = &memory_store {
+        blocks.push(Arc::new(MemoryBlock::memory(store.clone())));
+        blocks.push(Arc::new(MemoryBlock::user(store.clone())));
+    }
+
     AgentLoop::from_parts(
         provider,
         registry,
@@ -459,6 +516,7 @@ fn build_loop_for_custom_provider(
             system_prompt: None,
             compaction_strategy,
             context_window,
+            blocks,
             ..Default::default()
         },
     )
@@ -493,8 +551,8 @@ mod tests {
         config
     }
 
-    #[test]
-    fn from_config_succeeds_for_echo_provider() {
+    #[tokio::test]
+    async fn from_config_succeeds_for_echo_provider() {
         let agent =
             AgentLoop::from_config(echo_config()).expect("echo should build with no env vars");
         drop(agent);
@@ -646,8 +704,8 @@ mod tests {
         assert!(msg.contains("model"));
     }
 
-    #[test]
-    fn new_with_custom_provider_and_default_config() {
+    #[tokio::test]
+    async fn new_with_custom_provider_and_default_config() {
         use perry_hermes_providers::EchoProvider;
         let agent = AgentLoop::new(EchoProvider::new(), PerryHermesConfig::default());
         drop(agent);

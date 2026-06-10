@@ -22,7 +22,9 @@ async fn main() {
 
     let provider = OpenAiProvider::new(&api_key, &model).with_base_url(&base_url);
     let agent = AgentLoop::new(provider, PerryHermesConfig::default());
-    let session = agent.new_session("live-tool-use", std::env::current_dir().unwrap_or_default());
+    let session = agent
+        .new_session("live-tool-use", std::env::current_dir().unwrap_or_default())
+        .await;
     let cancel = CancellationToken::new();
 
     let started = std::time::Instant::now();

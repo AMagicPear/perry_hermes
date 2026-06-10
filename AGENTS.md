@@ -85,6 +85,37 @@ Key files:
 | `docs/gateway.md` | gateway design and implementation spec (draft) |
 | `docs/tooling-alignment.md` | agent-self-use tooling gap analysis + 4-PR repair plan |
 
+## PERRY_HERMES_HOME Layout
+
+All runtime state lives under `PERRY_HERMES_HOME` (env var override, or
+`$HOME/.perry_hermes`, or `./.perry_hermes`).
+
+```text
+$PERRY_HERMES_HOME/
+├── config.toml                    # Main config (providers, agent, gateway)
+├── memories/
+│   ├── MEMORY.md                  # Agent notes and environment facts
+│   └── USER.md                    # User profile
+├── sessions/
+│   ├── <session_id>.json          # Active session snapshots
+│   └── .archive/                  # Archived/reset sessions
+└── skills/
+    └── <category>/
+        └── <skill-name>/
+            ├── SKILL.md           # Skill definition (required)
+            ├── references/        # Reference docs
+            ├── scripts/           # Helper scripts
+            └── workflows/         # Workflow templates
+```
+
+Directory resolution is centralized in `perry-hermes-core::home`
+(`resolve_home_dir()` / `resolve_subdir()`). All crates use this
+single resolver instead of reimplementing the fallback chain.
+
+The agent is made self-aware of this layout via `HomeLayoutBlock`,
+a `PromptContextBlock` that renders the directory tree into the
+system prompt at session creation time.
+
 ## Session Model
 
 `AgentSession` is the unit that should map to a human-visible conversation:

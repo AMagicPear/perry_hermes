@@ -271,9 +271,10 @@ pub(super) fn temp_sibling(target: &Path) -> Result<PathBuf, String> {
 }
 
 fn current_profile_from_perry_hermes_home() -> Option<String> {
-    let home = std::env::var_os("PERRY_HERMES_HOME")?;
-    let path = PathBuf::from(home);
+    let path = perry_hermes_core::home::resolve_home_dir()?;
     let parent = path.parent()?;
+    // If home dir is `<root>/profiles/<name>`, parent is `<root>/profiles`
+    // and the profile name is the last component of `path`.
     if parent.file_name().and_then(|s| s.to_str()) == Some("profiles") {
         return path
             .file_name()
@@ -284,11 +285,11 @@ fn current_profile_from_perry_hermes_home() -> Option<String> {
 }
 
 fn perry_hermes_config_path() -> String {
-    let base = std::env::var_os("PERRY_HERMES_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))
-        .unwrap_or_else(|| PathBuf::from("~/.perry_hermes"));
-    base.join("config.toml").to_string_lossy().into_owned()
+    perry_hermes_core::home::resolve_home_dir()
+        .unwrap_or_else(|| PathBuf::from("~/.perry_hermes"))
+        .join("config.toml")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn normalize_path_string(input: &str) -> String {

@@ -8,6 +8,7 @@ description = "Core types and traits for Perry Hermes"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }
+tempfile.workspace = true
 
 [dependencies]
 async-trait.workspace = true
