@@ -40,6 +40,25 @@ pub fn resolve_skills_dir() -> Option<PathBuf> {
     Some(base.join("skills"))
 }
 
+/// Resolve the local memories directory, mirroring the rules used by
+/// [`resolve_skills_dir`].
+///
+/// 1. `PERRY_HERMES_HOME` env var if set
+/// 2. else `$HOME/.perry_hermes`
+/// 3. else `./.perry_hermes`
+/// 4. append `/memories`
+pub fn resolve_memories_dir() -> Option<PathBuf> {
+    let base = std::env::var_os("PERRY_HERMES_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".perry_hermes")))
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|cwd| cwd.join(".perry_hermes"))
+        })?;
+    Some(base.join("memories"))
+}
+
 /// Compose the prompt prefix for a newly-created session: the
 /// hardcoded [`DEFAULT_SYSTEM_PROMPT`] plus the skills block, if any.
 ///
@@ -176,10 +195,63 @@ impl PromptContextBlock for AgentsMdBlock {
     }
 }
 
+/// Global block that reads the live entries from a [`MemoryStore`]
+/// and renders them as a system-prompt section. One block per
+/// [`MemoryTarget`].
+///
+/// The block reads from the in-memory `LiveState` rather than the
+/// disk file. The agent calls `build_system_message` once per session
+/// and freezes the result in `AgentSession.system_message`, so the
+/// rendered block is effectively immutable for the session's lifetime
+/// even though the store itself is mutable.
+pub struct MemoryBlock {
+    store: Arc<perry_hermes_skill_tools::tools::memory::MemoryStore>,
+    target: perry_hermes_skill_tools::tools::memory::MemoryTarget,
+    name_label: &'static str,
+}
+
+impl MemoryBlock {
+    pub fn memory(
+        store: Arc<perry_hermes_skill_tools::tools::memory::MemoryStore>,
+    ) -> Self {
+        Self {
+            store,
+            target: perry_hermes_skill_tools::tools::memory::MemoryTarget::Memory,
+            name_label: "MEMORY",
+        }
+    }
+
+    pub fn user(
+        store: Arc<perry_hermes_skill_tools::tools::memory::MemoryStore>,
+    ) -> Self {
+        Self {
+            store,
+            target: perry_hermes_skill_tools::tools::memory::MemoryTarget::User,
+            name_label: "USER",
+        }
+    }
+}
+
+#[async_trait]
+impl PromptContextBlock for MemoryBlock {
+    fn name(&self) -> &str {
+        self.name_label
+    }
+
+    async fn load(&self) -> Option<String> {
+        let entries = self.store.entries(self.target).await;
+        if entries.is_empty() {
+            return None;
+        }
+        Some(entries.join("\n\n"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::path::Path;
+    use perry_hermes_skill_tools::tools::memory::MemoryTarget;
 
     struct CwdGuard {
         previous: PathBuf,
@@ -424,5 +496,54 @@ mod tests {
         let z_idx = text.find("Z_BLOCK").expect("z block present");
         let dir_idx = text.find("Current working directory: /tmp/last").expect("dir");
         assert!(z_idx < dir_idx);
+    }
+
+    #[test]
+    fn resolve_memories_dir_returns_path_ending_in_memories() {
+        let _guard = crate::test_env::blocking_lock();
+        let home = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("PERRY_HERMES_HOME", home.path()) };
+        let dir = resolve_memories_dir().expect("memories dir should resolve");
+        assert_eq!(
+            dir.file_name().and_then(|s| s.to_str()),
+            Some("memories")
+        );
+        unsafe { std::env::remove_var("PERRY_HERMES_HOME") };
+    }
+
+    #[tokio::test]
+    async fn memory_block_loads_entries_joined_by_blank_line() {
+        use perry_hermes_skill_tools::tools::memory::{MemoryConfig, MemoryStore};
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            MemoryStore::load(MemoryConfig {
+                memories_dir: tmp.path().to_path_buf(),
+            })
+            .await
+            .unwrap(),
+        );
+        store.add(MemoryTarget::Memory, "first".into()).await.unwrap();
+        store.add(MemoryTarget::Memory, "second".into()).await.unwrap();
+
+        let block = MemoryBlock::memory(store);
+        let body = block.load().await.expect("non-empty store should load");
+        assert_eq!(body, "first\n\nsecond");
+        assert_eq!(block.name(), "MEMORY");
+    }
+
+    #[tokio::test]
+    async fn memory_block_returns_none_for_empty_store() {
+        use perry_hermes_skill_tools::tools::memory::{MemoryConfig, MemoryStore};
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(
+            MemoryStore::load(MemoryConfig {
+                memories_dir: tmp.path().to_path_buf(),
+            })
+            .await
+            .unwrap(),
+        );
+        let block = MemoryBlock::user(store);
+        assert!(block.load().await.is_none());
+        assert_eq!(block.name(), "USER");
     }
 }
