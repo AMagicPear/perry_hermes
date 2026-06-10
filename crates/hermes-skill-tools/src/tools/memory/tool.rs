@@ -118,9 +118,7 @@ impl Tool for MemoryTool {
                 let content = args
                     .get("content")
                     .and_then(|v| v.as_str())
-                    .ok_or_else(|| {
-                        ToolError::InvalidArgs("content required for 'add'".into())
-                    })?;
+                    .ok_or_else(|| ToolError::InvalidArgs("content required for 'add'".into()))?;
                 match self.store.add(target, content.to_string()).await {
                     Ok(value) => success_json(
                         target,
@@ -235,11 +233,9 @@ mod tests {
     use serde_json::json;
 
     async fn create_store(path: std::path::PathBuf) -> Arc<MemoryStore> {
-        let store = MemoryStore::load(super::super::store::MemoryConfig {
-            memories_dir: path,
-        })
-        .await
-        .unwrap();
+        let store = MemoryStore::load(super::super::store::MemoryConfig { memories_dir: path })
+            .await
+            .unwrap();
         Arc::new(store)
     }
 
@@ -314,11 +310,7 @@ mod tests {
         let store = create_store(dir.path().to_path_buf()).await;
         let tool = MemoryTool::new(store);
         let err = tool
-            .execute(
-                json!({ "action": "read" }),
-                ctx(),
-                CancellationToken::new(),
-            )
+            .execute(json!({ "action": "read" }), ctx(), CancellationToken::new())
             .await
             .unwrap_err();
         assert!(matches!(err, ToolError::InvalidArgs(_)));

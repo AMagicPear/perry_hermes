@@ -17,13 +17,16 @@ use perry_hermes_core::compaction_strategy::{
 };
 use perry_hermes_core::error::{LoopError, ProviderError, ToolError};
 use perry_hermes_core::message::{Message, ToolCall};
-use perry_hermes_core::provider::{Provider, ToolCallDelta};
 use perry_hermes_core::prompt_context::PromptContextBlock;
+use perry_hermes_core::provider::{Provider, ToolCallDelta};
 use perry_hermes_core::registry::InMemoryRegistry;
 use perry_hermes_core::tool::{ToolContext, ToolOutput};
 
 use crate::config::{PerryHermesConfig, ResolvedProviderConfig};
-use crate::prompting::{build_system_message, resolve_memories_dir, resolve_skills_dir, AgentsMdBlock, MemoryBlock};
+use crate::prompting::{
+    AgentsMdBlock, HomeLayoutBlock, MemoryBlock, build_system_message, resolve_memories_dir,
+    resolve_skills_dir,
+};
 use crate::provider_factory::build_provider;
 use crate::session::AgentSession;
 use crate::tool_catalog::build_registry;
@@ -90,7 +93,7 @@ impl Default for LoopConfig {
     fn default() -> Self {
         Self {
             max_iterations: 90,
-            max_duration: Duration::from_secs(60 * 10),
+            max_duration: Duration::MAX,
             system_prompt: None,
             compaction_strategy: None,
             context_window: None,
@@ -244,10 +247,7 @@ impl AgentLoop {
     /// content, and working directory hint. The blocks list is taken
     /// from the `LoopConfig` (empty in tests; populated in production
     /// by `build_loop_for_custom_provider`).
-    pub async fn system_message_for(
-        &self,
-        working_dir: &std::path::Path,
-    ) -> Option<Message> {
+    pub async fn system_message_for(&self, working_dir: &std::path::Path) -> Option<Message> {
         build_system_message(working_dir, &self.config.blocks).await
     }
 
@@ -469,7 +469,9 @@ fn build_loop_for_custom_provider(
         ) {
             Ok(store) => Some(Arc::new(store)),
             Err(err) => {
-                tracing::warn!("failed to load memory store: {err}; continuing without memory blocks");
+                tracing::warn!(
+                    "failed to load memory store: {err}; continuing without memory blocks"
+                );
                 None
             }
         }
@@ -497,9 +499,10 @@ fn build_loop_for_custom_provider(
     });
 
     let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let mut blocks: Vec<Arc<dyn PromptContextBlock>> = vec![Arc::new(
-        AgentsMdBlock::new(working_dir),
-    )];
+    let mut blocks: Vec<Arc<dyn PromptContextBlock>> = vec![
+        Arc::new(HomeLayoutBlock),
+        Arc::new(AgentsMdBlock::new(working_dir)),
+    ];
     if let Some(store) = &memory_store {
         blocks.push(Arc::new(MemoryBlock::memory(store.clone())));
         blocks.push(Arc::new(MemoryBlock::user(store.clone())));

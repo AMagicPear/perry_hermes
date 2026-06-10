@@ -7,5 +7,7 @@
 pub mod store;
 pub mod tool;
 
-pub use store::{MemoryConfig, MemoryError, MemoryOpResult, MemoryReadResult, MemoryStore, MemoryTarget};
+pub use store::{
+    MemoryConfig, MemoryError, MemoryOpResult, MemoryReadResult, MemoryStore, MemoryTarget,
+};
 pub use tool::MemoryTool;

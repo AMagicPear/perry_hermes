@@ -128,7 +128,9 @@ impl MemoryStore {
         }
 
         fresh.push(content);
-        write_file(&path, &fresh).await.map_err(|e| MemoryError::Io(e.to_string()))?;
+        write_file(&path, &fresh)
+            .await
+            .map_err(|e| MemoryError::Io(e.to_string()))?;
 
         // Update live state.
         {
@@ -175,7 +177,9 @@ impl MemoryStore {
             1 => {
                 let (idx, _) = matches[0];
                 entries[idx] = new.to_string();
-                write_file(&path, &entries).await.map_err(|e| MemoryError::Io(e.to_string()))?;
+                write_file(&path, &entries)
+                    .await
+                    .map_err(|e| MemoryError::Io(e.to_string()))?;
                 self.set_entries(target, entries.clone()).await;
                 Ok(success_result(target, &entries, Some("Entry replaced.")))
             }
@@ -186,7 +190,9 @@ impl MemoryStore {
                     // All matches identical — replace the first.
                     let (idx, _) = matches[0];
                     entries[idx] = new.to_string();
-                    write_file(&path, &entries).await.map_err(|e| MemoryError::Io(e.to_string()))?;
+                    write_file(&path, &entries)
+                        .await
+                        .map_err(|e| MemoryError::Io(e.to_string()))?;
                     self.set_entries(target, entries.clone()).await;
                     Ok(success_result(target, &entries, Some("Entry replaced.")))
                 } else {
@@ -224,7 +230,9 @@ impl MemoryStore {
             1 => {
                 let (idx, _) = matches[0];
                 entries.remove(idx);
-                write_file(&path, &entries).await.map_err(|e| MemoryError::Io(e.to_string()))?;
+                write_file(&path, &entries)
+                    .await
+                    .map_err(|e| MemoryError::Io(e.to_string()))?;
                 self.set_entries(target, entries.clone()).await;
                 Ok(success_result(target, &entries, Some("Entry removed.")))
             }
@@ -234,7 +242,9 @@ impl MemoryStore {
                 if unique.len() == 1 {
                     let (idx, _) = matches[0];
                     entries.remove(idx);
-                    write_file(&path, &entries).await.map_err(|e| MemoryError::Io(e.to_string()))?;
+                    write_file(&path, &entries)
+                        .await
+                        .map_err(|e| MemoryError::Io(e.to_string()))?;
                     self.set_entries(target, entries.clone()).await;
                     Ok(success_result(target, &entries, Some("Entry removed.")))
                 } else {
@@ -414,11 +424,7 @@ mod tests {
     #[tokio::test]
     async fn load_reads_existing_files() {
         let (dir, cfg) = temp_cfg();
-        std::fs::write(
-            dir.path().join("MEMORY.md"),
-            "alpha\n§\nbeta\n§\ngamma",
-        )
-        .unwrap();
+        std::fs::write(dir.path().join("MEMORY.md"), "alpha\n§\nbeta\n§\ngamma").unwrap();
         let store = MemoryStore::load(cfg).await.unwrap();
         let entries = store.entries(MemoryTarget::Memory).await;
         assert_eq!(entries, vec!["alpha", "beta", "gamma"]);
@@ -428,7 +434,10 @@ mod tests {
     async fn add_appends_to_disk_and_state() {
         let (dir, cfg) = temp_cfg();
         let store = MemoryStore::load(cfg).await.unwrap();
-        let result = store.add(MemoryTarget::Memory, "hello".into()).await.unwrap();
+        let result = store
+            .add(MemoryTarget::Memory, "hello".into())
+            .await
+            .unwrap();
         assert_eq!(result.entry_count, 1);
         assert_eq!(result.entries, vec!["hello"]);
         let on_disk = std::fs::read_to_string(dir.path().join("MEMORY.md")).unwrap();
@@ -460,7 +469,10 @@ mod tests {
     async fn replace_with_one_match_substitutes() {
         let (dir, cfg) = temp_cfg();
         let store = MemoryStore::load(cfg).await.unwrap();
-        store.add(MemoryTarget::Memory, "old text".into()).await.unwrap();
+        store
+            .add(MemoryTarget::Memory, "old text".into())
+            .await
+            .unwrap();
         store
             .replace(MemoryTarget::Memory, "old text", "new text".to_string())
             .await
@@ -485,8 +497,14 @@ mod tests {
     async fn replace_with_ambiguous_distinct_matches_errors() {
         let (_dir, cfg) = temp_cfg();
         let store = MemoryStore::load(cfg).await.unwrap();
-        store.add(MemoryTarget::Memory, "abc one".into()).await.unwrap();
-        store.add(MemoryTarget::Memory, "abc two".into()).await.unwrap();
+        store
+            .add(MemoryTarget::Memory, "abc one".into())
+            .await
+            .unwrap();
+        store
+            .add(MemoryTarget::Memory, "abc two".into())
+            .await
+            .unwrap();
         let err = store
             .replace(MemoryTarget::Memory, "abc", "x".to_string())
             .await
@@ -498,8 +516,14 @@ mod tests {
     async fn replace_with_identical_matches_replaces_first() {
         let (_dir, cfg) = temp_cfg();
         let store = MemoryStore::load(cfg).await.unwrap();
-        store.add(MemoryTarget::Memory, "same".into()).await.unwrap();
-        store.add(MemoryTarget::Memory, "same".into()).await.unwrap();
+        store
+            .add(MemoryTarget::Memory, "same".into())
+            .await
+            .unwrap();
+        store
+            .add(MemoryTarget::Memory, "same".into())
+            .await
+            .unwrap();
         store
             .replace(MemoryTarget::Memory, "same", "different".to_string())
             .await
@@ -513,8 +537,14 @@ mod tests {
     async fn remove_deletes_matching_entry() {
         let (_dir, cfg) = temp_cfg();
         let store = MemoryStore::load(cfg).await.unwrap();
-        store.add(MemoryTarget::Memory, "alpha".into()).await.unwrap();
-        store.add(MemoryTarget::Memory, "beta".into()).await.unwrap();
+        store
+            .add(MemoryTarget::Memory, "alpha".into())
+            .await
+            .unwrap();
+        store
+            .add(MemoryTarget::Memory, "beta".into())
+            .await
+            .unwrap();
         store.remove(MemoryTarget::Memory, "alpha").await.unwrap();
         let entries = store.entries(MemoryTarget::Memory).await;
         assert_eq!(entries, vec!["beta"]);
@@ -568,7 +598,10 @@ mod tests {
         // re-create it on demand.
         let (dir, cfg) = temp_cfg();
         let store = MemoryStore::load(cfg).await.unwrap();
-        store.add(MemoryTarget::Memory, "entry".into()).await.unwrap();
+        store
+            .add(MemoryTarget::Memory, "entry".into())
+            .await
+            .unwrap();
 
         let lock_path = dir.path().join("MEMORY.md.lock");
         assert!(

@@ -1,8 +1,8 @@
 //! `PromptContextBlock` — a context fragment loaded at session
 //! creation and frozen into the system prompt.
 
-use std::path::Path;
 use async_trait::async_trait;
+use std::path::Path;
 
 /// A context fragment loaded at session creation and frozen into
 /// the system prompt. Implementations own their I/O.

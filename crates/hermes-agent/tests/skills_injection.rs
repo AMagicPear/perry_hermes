@@ -292,7 +292,9 @@ async fn runtime_includes_working_directory_in_system_message() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("cwd", PathBuf::from("/tmp/cwd-check")).await;
+    let session = agent
+        .new_session("cwd", PathBuf::from("/tmp/cwd-check"))
+        .await;
 
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -325,7 +327,9 @@ async fn runtime_injects_agents_md_from_session_working_dir() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("agents-md", project.path().to_path_buf()).await;
+    let session = agent
+        .new_session("agents-md", project.path().to_path_buf())
+        .await;
 
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})
@@ -364,7 +368,9 @@ async fn runtime_omits_agents_md_block_when_file_absent_in_working_dir() {
     let provider = CaptureProvider::default();
     let captured = Arc::clone(&provider.captured);
     let agent = AgentLoop::new(provider, config_for_echo());
-    let session = agent.new_session("no-agents-md", project.path().to_path_buf()).await;
+    let session = agent
+        .new_session("no-agents-md", project.path().to_path_buf())
+        .await;
 
     agent
         .run_session_turn("hi", &session, CancellationToken::new(), |_| {})

@@ -53,16 +53,26 @@ pub(crate) async fn run(
     loop {
         if cancel.is_cancelled() {
             on_event(LoopEvent::Cancelled);
-            return Err(AgentRunError::Loop(LoopError::Cancelled));
+            return Err(build_failed_turn_or_plain(
+                messages,
+                initial_len,
+                LoopError::Cancelled,
+            ));
         }
         if metrics.iterations >= engine.config.max_iterations {
             on_event(LoopEvent::IterationsExhausted);
-            return Err(AgentRunError::Loop(LoopError::MaxIterations(
-                metrics.iterations,
-            )));
+            return Err(build_failed_turn_or_plain(
+                messages,
+                initial_len,
+                LoopError::MaxIterations(metrics.iterations),
+            ));
         }
         if started.elapsed() > engine.config.max_duration {
-            return Err(AgentRunError::Loop(LoopError::Timeout(started.elapsed())));
+            return Err(build_failed_turn_or_plain(
+                messages,
+                initial_len,
+                LoopError::Timeout(started.elapsed()),
+            ));
         }
 
         let tools = engine.registry.schemas();
@@ -367,5 +377,30 @@ fn build_failed_turn(
         }
     } else {
         AgentRunError::Loop(LoopError::Provider(error))
+    }
+}
+
+/// Like `build_failed_turn` but for non-provider loop errors (Timeout,
+/// Cancelled, MaxIterations). If assistant/tool messages were already
+/// accumulated, wraps them in a `FailedTurn` so the caller can persist
+/// them; otherwise returns a plain `LoopError`.
+fn build_failed_turn_or_plain(
+    messages: Vec<Message>,
+    initial_len: usize,
+    error: LoopError,
+) -> AgentRunError {
+    if messages.len() > initial_len {
+        let error_text = format!("Turn interrupted by error: {error}");
+        let mut messages = messages;
+        messages.push(Message::assistant(error_text.clone()));
+        AgentRunError::FailedTurn {
+            failed_turn: FailedTurn {
+                messages,
+                error: error_text,
+            },
+            source: ProviderError::Other(error.to_string()),
+        }
+    } else {
+        AgentRunError::Loop(error)
     }
 }

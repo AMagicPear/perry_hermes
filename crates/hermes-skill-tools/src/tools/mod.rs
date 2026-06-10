@@ -1,7 +1,7 @@
 pub mod bash;
 pub mod files;
-pub mod memory;
 mod linked_files;
+pub mod memory;
 mod skill_list;
 mod skill_view;
 

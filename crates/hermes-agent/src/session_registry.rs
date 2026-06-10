@@ -221,13 +221,8 @@ impl SessionRegistry {
 
 /// Compute the default sessions directory.
 pub fn default_sessions_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("PERRY_HERMES_HOME") {
-        return PathBuf::from(home).join("sessions");
-    }
-    if let Ok(home) = std::env::var("HOME") {
-        return PathBuf::from(home).join(".perry_hermes").join("sessions");
-    }
-    PathBuf::from(".perry_hermes").join("sessions")
+    perry_hermes_core::home::resolve_subdir("sessions")
+        .unwrap_or_else(|| PathBuf::from(".perry_hermes").join("sessions"))
 }
 
 /// Format a session ID from a session key.
