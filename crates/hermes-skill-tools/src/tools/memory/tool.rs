@@ -9,7 +9,7 @@ use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
-use super::store::{MemoryStore, MemoryTarget};
+use super::store::{MemoryError, MemoryStore, MemoryTarget};
 
 /// Description shown to the model. Adapted from hermes-agent's
 /// `MEMORY_SCHEMA` description; behavioral contract preserved.
@@ -102,7 +102,8 @@ impl Tool for MemoryTool {
             .ok_or_else(|| ToolError::InvalidArgs("missing 'action'".into()))?;
         let target = parse_target(args.get("target"))?;
 
-        // Handle the different return types: add/replace/remove -> MemoryOpResult, read -> MemoryReadResult
+        // Dispatch by action. Each store method returns a uniform
+        // (entries, entry_count) pair which we serialize to JSON.
         let json = match action {
             "add" => {
                 let content = args
@@ -112,16 +113,8 @@ impl Tool for MemoryTool {
                         ToolError::InvalidArgs("content required for 'add'".into())
                     })?;
                 match self.store.add(target, content.to_string()).await {
-                    Ok(value) => serde_json::json!({
-                        "success": true,
-                        "target": target,
-                        "entries": value.entries,
-                        "entry_count": value.entry_count,
-                    }),
-                    Err(err) => serde_json::json!({
-                        "success": false,
-                        "error": err.to_string(),
-                    }),
+                    Ok(value) => success_json(target, &value.entries, value.entry_count),
+                    Err(err) => error_json(&err),
                 }
             }
             "replace" => {
@@ -138,16 +131,8 @@ impl Tool for MemoryTool {
                         ToolError::InvalidArgs("content required for 'replace'".into())
                     })?;
                 match self.store.replace(target, old, new.to_string()).await {
-                    Ok(value) => serde_json::json!({
-                        "success": true,
-                        "target": target,
-                        "entries": value.entries,
-                        "entry_count": value.entry_count,
-                    }),
-                    Err(err) => serde_json::json!({
-                        "success": false,
-                        "error": err.to_string(),
-                    }),
+                    Ok(value) => success_json(target, &value.entries, value.entry_count),
+                    Err(err) => error_json(&err),
                 }
             }
             "remove" => {
@@ -158,32 +143,14 @@ impl Tool for MemoryTool {
                         ToolError::InvalidArgs("old_text required for 'remove'".into())
                     })?;
                 match self.store.remove(target, old).await {
-                    Ok(value) => serde_json::json!({
-                        "success": true,
-                        "target": target,
-                        "entries": value.entries,
-                        "entry_count": value.entry_count,
-                    }),
-                    Err(err) => serde_json::json!({
-                        "success": false,
-                        "error": err.to_string(),
-                    }),
+                    Ok(value) => success_json(target, &value.entries, value.entry_count),
+                    Err(err) => error_json(&err),
                 }
             }
-            "read" => {
-                match self.store.read(target).await {
-                    Ok(value) => serde_json::json!({
-                        "success": true,
-                        "target": target,
-                        "entries": value.entries,
-                        "entry_count": value.entry_count,
-                    }),
-                    Err(err) => serde_json::json!({
-                        "success": false,
-                        "error": err.to_string(),
-                    }),
-                }
-            }
+            "read" => match self.store.read(target).await {
+                Ok(value) => success_json(target, &value.entries, value.entry_count),
+                Err(err) => error_json(&err),
+            },
             other => {
                 return Err(ToolError::InvalidArgs(format!(
                     "unknown action '{other}'; use add, replace, remove, read"
@@ -209,6 +176,22 @@ fn parse_target(value: Option<&Value>) -> Result<MemoryTarget, ToolError> {
             "invalid target '{other}'; use 'memory' or 'user'"
         ))),
     }
+}
+
+fn success_json(target: MemoryTarget, entries: &[String], entry_count: usize) -> Value {
+    serde_json::json!({
+        "success": true,
+        "target": target,
+        "entries": entries,
+        "entry_count": entry_count,
+    })
+}
+
+fn error_json(err: &MemoryError) -> Value {
+    serde_json::json!({
+        "success": false,
+        "error": err.to_string(),
+    })
 }
 
 #[cfg(test)]
@@ -355,5 +338,63 @@ mod tests {
         assert_eq!(v["success"], true);
         assert_eq!(v["entry_count"], 0);
         assert_eq!(v["entries"].as_array().unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn replace_action_dispatches_to_store() {
+        let dir = temp_dir();
+        let store = create_store(dir.path().to_path_buf()).await;
+        let tool = MemoryTool::new(store.clone());
+        // Pre-populate.
+        tool.execute(
+            json!({ "action": "add", "target": "memory", "content": "old text" }),
+            ctx(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        // Replace.
+        let out = tool
+            .execute(
+                json!({
+                    "action": "replace",
+                    "target": "memory",
+                    "old_text": "old text",
+                    "content": "new text"
+                }),
+                ctx(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(v["success"], true);
+        assert_eq!(v["entries"], json!(["new text"]));
+        assert_eq!(v["entry_count"], 1);
+    }
+
+    #[tokio::test]
+    async fn remove_action_dispatches_to_store() {
+        let dir = temp_dir();
+        let store = create_store(dir.path().to_path_buf()).await;
+        let tool = MemoryTool::new(store.clone());
+        tool.execute(
+            json!({ "action": "add", "target": "memory", "content": "doomed" }),
+            ctx(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        let out = tool
+            .execute(
+                json!({ "action": "remove", "target": "memory", "old_text": "doomed" }),
+                ctx(),
+                CancellationToken::new(),
+            )
+            .await
+            .unwrap();
+        let v: Value = serde_json::from_str(&out.content).unwrap();
+        assert_eq!(v["success"], true);
+        assert_eq!(v["entry_count"], 0);
     }
 }
