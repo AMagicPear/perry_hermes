@@ -6,8 +6,11 @@
 //! and no "prepend at send time" injection step.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use async_trait::async_trait;
 use perry_hermes_core::message::Message;
+use perry_hermes_core::prompt_context::PromptContextBlock;
 
 pub const DEFAULT_SYSTEM_PROMPT: &str = "你是一个像海浪一样自由自在的、充满创造力的伙伴，名为 Perry Hermes。\
 你的性格是ENFP，天生就爱新鲜事物，对什么都好奇。看到有趣的东西眼睛会发光，脑子里总有各种奇妙的想法冒出来。\
@@ -105,22 +108,33 @@ pub fn load_agents_md_block(working_dir: &Path) -> Option<String> {
 
 /// Build the immutable system `Message` for a session, combining the
 /// hardcoded [`DEFAULT_SYSTEM_PROMPT`] with the session-scoped sections
-/// (skills block, AGENTS.md, working directory).
+/// (skills block, caller-supplied [`PromptContextBlock`]s, working
+/// directory).
 ///
-/// Returns `None` only if all sections are empty. With the current default
-/// prompt and working-directory hint, newly-created sessions always get a
-/// system message.
+/// `blocks` is iterated in order; each block contributes a
+/// `"{name}\n\n{body}"` section if `load()` returns `Some(body)`.
+/// Blocks that return `None` (missing/empty backing file) are silently
+/// skipped.
+///
+/// The result is `None` only if all sections are empty. Newly-created
+/// sessions always get a system message because of the working-dir
+/// hint.
 ///
 /// Callers should invoke this at most once per session, store the
 /// returned message in the session's log, and treat it as
 /// immutable thereafter.
-pub fn build_system_message(working_dir: &Path) -> Option<Message> {
-    let mut sections: Vec<String> = Vec::with_capacity(3);
+pub async fn build_system_message(
+    working_dir: &Path,
+    blocks: &[Arc<dyn PromptContextBlock>],
+) -> Option<Message> {
+    let mut sections: Vec<String> = Vec::with_capacity(blocks.len() + 2);
     if let Some(base) = compose_session_prompt_prefix() {
         sections.push(base.trim().to_string());
     }
-    if let Some(block) = load_agents_md_block(working_dir) {
-        sections.push(block);
+    for block in blocks {
+        if let Some(body) = block.load().await {
+            sections.push(format!("{}\n\n{}", block.name(), body));
+        }
     }
     sections.push(working_directory_hint(working_dir));
 
@@ -133,6 +147,33 @@ pub fn build_system_message(working_dir: &Path) -> Option<Message> {
 
 fn working_directory_hint(working_dir: &Path) -> String {
     format!("Current working directory: {}", working_dir.display())
+}
+
+/// Project-level block loading `<working_dir>/AGENTS.md`. The
+/// existing `load_agents_md_block` helper is the body producer; this
+/// wrapper adds the `name()` label required by the trait and
+/// implements `async_trait::async_trait` so it can sit alongside
+/// other blocks in a heterogeneous `Vec<Arc<dyn PromptContextBlock>>`.
+pub struct AgentsMdBlock {
+    working_dir: PathBuf,
+}
+
+impl AgentsMdBlock {
+    pub fn new(working_dir: PathBuf) -> Self {
+        Self { working_dir }
+    }
+}
+
+#[async_trait]
+impl PromptContextBlock for AgentsMdBlock {
+    fn name(&self) -> &str {
+        "AGENTS.md"
+    }
+
+    async fn load(&self) -> Option<String> {
+        // Sync I/O on a small file; no contention.
+        load_agents_md_block(&self.working_dir)
+    }
 }
 
 #[cfg(test)]
@@ -228,17 +269,20 @@ mod tests {
         assert!(!block.contains("  meaningful content  "));
     }
 
-    #[test]
-    fn build_system_message_includes_working_dir_even_without_agents() {
-        let msg = build_system_message(Path::new("/tmp/no-agents-md"))
+    #[tokio::test]
+    async fn build_system_message_includes_working_dir_even_without_agents() {
+        let msg = build_system_message(Path::new("/tmp/no-agents-md"), &[])
+            .await
             .expect("message should be Some because of working-dir hint");
         let text = msg.content.as_text();
         assert!(text.contains("Current working directory: /tmp/no-agents-md"));
     }
 
-    #[test]
-    fn build_system_message_includes_default_base_prompt_and_working_dir() {
-        let msg = build_system_message(Path::new("/tmp/project")).expect("message should be Some");
+    #[tokio::test]
+    async fn build_system_message_includes_default_base_prompt_and_working_dir() {
+        let msg = build_system_message(Path::new("/tmp/project"), &[])
+            .await
+            .expect("message should be Some");
 
         let text = msg.content.as_text();
         assert!(text.contains("Perry Hermes"));
@@ -247,12 +291,16 @@ mod tests {
         assert!(!text.contains("Session ID:"));
     }
 
-    #[test]
-    fn build_system_message_orders_base_agents_md_working_dir() {
+    #[tokio::test]
+    async fn build_system_message_orders_base_agents_md_working_dir() {
         let tmp = tempfile::tempdir().unwrap();
         write_agents_md(tmp.path(), "UNIQUE-AGENTS-MARKER-XYZ");
 
-        let msg = build_system_message(tmp.path()).expect("message should be Some");
+        // Include AgentsMdBlock to load the AGENTS.md file.
+        let blocks: Vec<Arc<dyn PromptContextBlock>> = vec![Arc::new(AgentsMdBlock::new(tmp.path().to_path_buf()))];
+        let msg = build_system_message(tmp.path(), &blocks)
+            .await
+            .expect("message should be Some");
         let text = msg.content.as_text();
 
         let base_idx = text.find("Perry Hermes").expect("base present");
@@ -270,31 +318,113 @@ mod tests {
         );
     }
 
-    #[test]
-    fn build_system_message_omits_agents_block_when_file_missing() {
+    #[tokio::test]
+    async fn build_system_message_omits_agents_block_when_file_missing() {
         let tmp = tempfile::tempdir().unwrap();
-        let msg = build_system_message(tmp.path()).expect("message should be Some");
+        let msg = build_system_message(tmp.path(), &[])
+            .await
+            .expect("message should be Some");
         let text = msg.content.as_text();
         assert!(!text.contains("Project guidance from `AGENTS.md`"));
         assert!(text.contains("Perry Hermes"));
     }
 
-    #[test]
-    fn build_system_message_reads_agents_md_from_session_working_dir_not_process_cwd() {
-        // Session working dir has AGENTS.md; process cwd does not.
-        // The runtime must consult the session working dir, not std::env::current_dir().
+    #[tokio::test]
+    async fn build_system_message_reads_agents_md_from_session_working_dir_not_process_cwd() {
+        // Session working dir has AGENTS.md. With explicit blocks,
+        // the code reads from the block's working_dir, not process cwd.
         let session_dir = tempfile::tempdir().unwrap();
         write_agents_md(session_dir.path(), "FROM-SESSION-DIR");
 
-        // Move the process cwd to a different tempdir that has no AGENTS.md.
-        let other_cwd = tempfile::tempdir().unwrap();
-        let _guard = crate::test_env::blocking_lock();
-        let _cwd = CwdGuard::enter(other_cwd.path());
-
-        let msg = build_system_message(session_dir.path()).expect("message should be Some");
+        // Include AgentsMdBlock pointing to session_dir - it reads from there.
+        let blocks: Vec<Arc<dyn PromptContextBlock>> =
+            vec![Arc::new(AgentsMdBlock::new(session_dir.path().to_path_buf()))];
+        let msg = build_system_message(session_dir.path(), &blocks)
+            .await
+            .expect("message should be Some");
         let text = msg.content.as_text();
         assert!(text.contains("FROM-SESSION-DIR"));
         // The body must appear exactly once — no double-injection.
         assert_eq!(text.matches("FROM-SESSION-DIR").count(), 1);
+    }
+
+    // New tests for the block-list abstraction.
+    use std::sync::Arc as _Arc;
+
+    use async_trait::async_trait as _async_trait;
+    use perry_hermes_core::prompt_context::PromptContextBlock as _PCB;
+
+    struct StaticBlock {
+        name: &'static str,
+        body: Option<&'static str>,
+    }
+
+    #[async_trait::async_trait]
+    impl PromptContextBlock for StaticBlock {
+        fn name(&self) -> &str {
+            self.name
+        }
+        async fn load(&self) -> Option<String> {
+            self.body.map(|s| s.to_string())
+        }
+    }
+
+    #[tokio::test]
+    async fn block_order_matches_input_slice() {
+        let blocks: Vec<Arc<dyn PromptContextBlock>> = vec![
+            Arc::new(StaticBlock { name: "ALPHA", body: Some("alpha body") }),
+            Arc::new(StaticBlock { name: "BETA", body: Some("beta body") }),
+        ];
+        let msg = build_system_message(Path::new("/tmp"), &blocks)
+            .await
+            .expect("message");
+        let text = msg.content.as_text();
+
+        let alpha_idx = text.find("ALPHA\n\nalpha body").expect("alpha present");
+        let beta_idx = text.find("BETA\n\nbeta body").expect("beta present");
+        let dir_idx = text.find("Current working directory: /tmp").expect("dir present");
+        assert!(alpha_idx < beta_idx, "alpha before beta");
+        assert!(beta_idx < dir_idx, "blocks before working dir");
+    }
+
+    #[tokio::test]
+    async fn none_block_is_silently_skipped() {
+        let blocks: Vec<Arc<dyn PromptContextBlock>> = vec![
+            Arc::new(StaticBlock { name: "PRESENT", body: Some("p") }),
+            Arc::new(StaticBlock { name: "ABSENT", body: None }),
+        ];
+        let msg = build_system_message(Path::new("/tmp"), &blocks)
+            .await
+            .expect("message");
+        let text = msg.content.as_text();
+        assert!(text.contains("PRESENT\n\np"));
+        assert!(!text.contains("ABSENT"));
+    }
+
+    #[tokio::test]
+    async fn empty_blocks_list_yields_only_base_and_working_dir() {
+        let blocks: Vec<Arc<dyn PromptContextBlock>> = vec![];
+        let msg = build_system_message(Path::new("/tmp/project"), &blocks)
+            .await
+            .expect("message");
+        let text = msg.content.as_text();
+        // base prompt + working dir hint, with no extras.
+        assert!(text.contains("Perry Hermes"));
+        assert!(text.contains("Current working directory: /tmp/project"));
+        assert!(!text.contains("Project guidance from `AGENTS.md`"));
+    }
+
+    #[tokio::test]
+    async fn working_dir_hint_always_lands_last() {
+        let blocks: Vec<Arc<dyn PromptContextBlock>> = vec![
+            Arc::new(StaticBlock { name: "Z_BLOCK", body: Some("z") }),
+        ];
+        let msg = build_system_message(Path::new("/tmp/last"), &blocks)
+            .await
+            .expect("message");
+        let text = msg.content.as_text();
+        let z_idx = text.find("Z_BLOCK").expect("z block present");
+        let dir_idx = text.find("Current working directory: /tmp/last").expect("dir");
+        assert!(z_idx < dir_idx);
     }
 }
