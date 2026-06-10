@@ -10,11 +10,12 @@ description = "Skill system and built-in tools for Perry Hermes"
 perry-hermes-core.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+fs2 = "0.4"
+serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json.workspace = true
+tempfile = "3"
+thiserror = "2"
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
-
-[dev-dependencies]
-tempfile = "3"
