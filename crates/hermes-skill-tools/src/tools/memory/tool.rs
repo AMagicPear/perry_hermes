@@ -16,6 +16,10 @@ use super::store::{MemoryError, MemoryStore, MemoryTarget};
 const MEMORY_TOOL_DESCRIPTION: &str = "Save durable information to persistent memory that survives across sessions. \
 Memory is injected into future turns, so keep it compact and focused on facts that will still matter later.\n\
 \n\
+ENTRY MODEL: each `add` call stores ONE independent fact. Use multiple `add` calls for multiple facts \
+so each can be replaced or removed individually later. Bad: one `add` with 'name: X\\ntitle: Y\\nstack: Z'. \
+Good: three `add` calls, one per fact. Internal delimiter between entries is `\\n§\\n`.\n\
+\n\
 WHEN TO SAVE (do this proactively, don't wait to be asked):\n\
 - User corrects you or says 'remember this' / 'don't do that again'\n\
 - User shares a preference, habit, or personal detail (name, role, timezone, coding style)\n\
@@ -32,8 +36,13 @@ TWO TARGETS:\n\
 - 'user': who the user is -- name, role, preferences, communication style\n\
 - 'memory': your notes -- environment facts, project conventions, tool quirks, lessons learned\n\
 \n\
-ACTIONS: add (new entry), replace (update existing -- old_text identifies it), \
-remove (delete -- old_text identifies it), read (list current entries).";
+ACTIONS:\n\
+- add: store one new entry. content is the fact. Fails on empty content or exact duplicate.\n\
+- replace: update one existing entry. old_text is a short unique substring of the target; \
+content is the new text. Fails on no match, or on multiple distinct matches (be more specific).\n\
+- remove: delete one existing entry. old_text is a short unique substring of the target. \
+Fails on no match, or on multiple distinct matches.\n\
+- read: list all current entries for the target. No mutation.";
 
 pub struct MemoryTool {
     store: Arc<MemoryStore>,

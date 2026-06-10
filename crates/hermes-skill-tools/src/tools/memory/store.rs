@@ -381,9 +381,13 @@ impl FileLock {
 
 impl Drop for FileLock {
     fn drop(&mut self) {
-        // Best-effort unlock + close. The file is closed by Drop on
-        // _file; flock is released when the file descriptor closes.
-        let _ = &self.path;
+        // Drop the file fd first (drops `_file`); this releases the
+        // flock. Then remove the lock file itself. Removal is
+        // best-effort: if it fails (e.g. another process raced us to
+        // open it for the next critical section, or a sister process
+        // is mid-rotation), leave it — flock is advisory, so a stale
+        // file does not corrupt correctness.
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 
@@ -554,5 +558,22 @@ mod tests {
         );
         let on_disk = std::fs::read_to_string(dir.path().join("MEMORY.md")).unwrap();
         assert_eq!(on_disk, "one\n§\ntwo");
+    }
+
+    #[tokio::test]
+    async fn lock_file_is_removed_after_mutator_releases() {
+        // After an add() call completes, the .lock file used for
+        // flock should be cleaned up — not left behind as a 0-byte
+        // artifact on disk. Sister sessions and the next mutator
+        // re-create it on demand.
+        let (dir, cfg) = temp_cfg();
+        let store = MemoryStore::load(cfg).await.unwrap();
+        store.add(MemoryTarget::Memory, "entry".into()).await.unwrap();
+
+        let lock_path = dir.path().join("MEMORY.md.lock");
+        assert!(
+            !lock_path.exists(),
+            "lock file should be cleaned up after add completes, but {lock_path:?} still exists"
+        );
     }
 }
