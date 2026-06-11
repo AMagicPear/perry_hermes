@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 
 use perry_hermes_agent::{AgentLoop, PerryHermesConfig};
 
-mod config_path;
+mod config;
 
 #[derive(Parser)]
 #[command(
@@ -41,21 +41,45 @@ struct Args {
 enum Command {
     /// Start the interactive TUI (default when no subcommand is given).
     Tui,
-    /// Start the platform gateway: connect all configured adapters.
-    Gateway,
+    /// Manage the platform gateway.
+    Gateway {
+        #[command(subcommand)]
+        subcommand: Option<GatewayCommand>,
+    },
+}
+
+#[derive(Subcommand)]
+enum GatewayCommand {
+    /// Run the gateway in the foreground (blocking).
+    Run,
+    /// Register and start the gateway as a system service.
+    Start,
+    /// Stop the gateway system service.
+    Stop,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let config_path = config_path::resolve_config_path(args.config.as_deref())?;
+    let config_path = config::resolve_config_path(args.config.as_deref())?;
     let config = PerryHermesConfig::from_path(&config_path)
         .with_context(|| format!("failed to load config from {}", config_path.display()))?;
-    let config = apply_cli_provider_overrides(config, &args);
+    let config = config::apply_cli_provider_overrides(config, &args);
 
     match args.command.unwrap_or(Command::Tui) {
         Command::Tui => run_tui(config, &config_path).await,
-        Command::Gateway => run_gateway(config, &config_path).await,
+        Command::Gateway { subcommand } => match subcommand {
+            Some(GatewayCommand::Run) => run_gateway(config, &config_path).await,
+            Some(GatewayCommand::Start) => gateway_start(),
+            Some(GatewayCommand::Stop) => gateway_stop(),
+            None => {
+                eprintln!("Usage: perry-hermes gateway <run|start|stop>");
+                eprintln!("  run   — Run the gateway in the foreground");
+                eprintln!("  start — Register and start as a system service");
+                eprintln!("  stop  — Stop the system service");
+                Ok(())
+            }
+        },
     }
 }
 
@@ -156,165 +180,247 @@ async fn run_gateway(config: PerryHermesConfig, config_path: &Path) -> anyhow::R
     runner.run(adapters).await
 }
 
-fn apply_cli_provider_overrides(mut config: PerryHermesConfig, args: &Args) -> PerryHermesConfig {
-    if let Some(provider) = &args.provider {
-        config.agent.default_provider = provider.clone();
+/// Environment variables to capture when installing the gateway service.
+const GATEWAY_ENV_VARS: &[&str] = &[
+    "TELEGRAM_BOT_TOKEN",
+    "QQ_BOT_APP_ID",
+    "QQ_BOT_APP_SECRET",
+    "QQ_BOT_SANDBOX",
+    "TELEGRAM_ALLOWED_USERS",
+    "MINIMAX_API_KEY",
+    "MIMO_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "https_proxy",
+    "http_proxy",
+    "all_proxy",
+    "PERRY_HERMES_HOME",
+];
+
+/// Write captured env vars to `~/.perry_hermes/gateway.env` as KEY=VALUE lines.
+fn write_gateway_env_file() -> anyhow::Result<PathBuf> {
+    let home = std::env::var("HOME").context("HOME not set")?;
+    let perry_home = PathBuf::from(&home).join(".perry_hermes");
+    std::fs::create_dir_all(&perry_home)
+        .with_context(|| format!("failed to create {}", perry_home.display()))?;
+
+    let env_path = perry_home.join("gateway.env");
+    let mut lines = Vec::new();
+    for &key in GATEWAY_ENV_VARS {
+        if let Ok(val) = std::env::var(key) {
+            if !val.is_empty() {
+                lines.push(format!("{key}={val}"));
+            }
+        }
     }
-    if let Some(model) = &args.model {
-        config.agent.default_model = model.clone();
-    }
-    config
+    std::fs::write(&env_path, lines.join("\n") + "\n")
+        .with_context(|| format!("failed to write {}", env_path.display()))?;
+    Ok(env_path)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config_path::resolve_config_path;
-    use std::path::Path;
-    use std::sync::Mutex;
+fn gateway_binary_path() -> anyhow::Result<PathBuf> {
+    std::env::current_exe().context("failed to determine current executable path")
+}
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+// ── macOS (launchd) ──────────────────────────────────────────────────────────
 
-    fn make_empty_dirs() -> (PathBuf, PathBuf) {
-        let base = std::env::temp_dir().join(format!(
-            "perry-hermes-cli-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        let home = base.join("home");
-        let cwd = base.join("cwd");
-        std::fs::create_dir_all(&home).unwrap();
-        std::fs::create_dir_all(&cwd).unwrap();
-        (home, cwd)
-    }
+#[cfg(target_os = "macos")]
+fn gateway_start() -> anyhow::Result<()> {
+    let env_path = write_gateway_env_file()?;
+    let exe = gateway_binary_path()?;
+    let home = std::env::var("HOME").context("HOME not set")?;
+    let log_dir = PathBuf::from(&home).join(".perry_hermes").join("logs");
+    std::fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create {}", log_dir.display()))?;
 
-    #[test]
-    fn resolve_explicit_path_must_exist() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let result = resolve_config_path(Some(Path::new("/does/not/exist.toml")));
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("/does/not/exist.toml"), "{err}");
-    }
+    let stdout_path = log_dir.join("gateway-stdout.log");
+    let stderr_path = log_dir.join("gateway-stderr.log");
 
-    struct CwdGuard {
-        previous: PathBuf,
-    }
-    impl CwdGuard {
-        fn enter(dir: &Path) -> Self {
-            let previous = std::env::current_dir().unwrap();
-            std::env::set_current_dir(dir).unwrap();
-            Self { previous }
-        }
-    }
-    impl Drop for CwdGuard {
-        fn drop(&mut self) {
-            let _ = std::env::set_current_dir(&self.previous);
-        }
-    }
+    // Read env vars back for embedding in plist
+    let env_entries: Vec<String> = GATEWAY_ENV_VARS
+        .iter()
+        .filter_map(|&key| {
+            std::env::var(key)
+                .ok()
+                .filter(|v| !v.is_empty())
+                .map(|val| format!("        <key>{key}</key>\n        <string>{val}</string>"))
+        })
+        .collect();
 
-    #[test]
-    fn resolve_picks_cwd_perry_hermes_toml_when_no_home_config() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let (home, cwd) = make_empty_dirs();
-        let _cwd_guard = CwdGuard::enter(&cwd);
-        let config_path = cwd.join("perry_hermes.toml");
-        std::fs::write(
-            &config_path,
-            r#"
-[[providers]]
-name = "local"
-kind = "echo"
-
-[[providers.models]]
-name = "echo"
-context_window_size = 128_000
-
-[agent]
-default_provider = "local"
-default_model = "echo"
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.perry-hermes.gateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{exe}</string>
+        <string>gateway</string>
+        <string>run</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+{env_entries}
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{stdout}</string>
+    <key>StandardErrorPath</key>
+    <string>{stderr}</string>
+</dict>
+</plist>
 "#,
-        )
-        .unwrap();
+        exe = exe.display(),
+        env_entries = env_entries.join("\n"),
+        stdout = stdout_path.display(),
+        stderr = stderr_path.display(),
+    );
 
-        unsafe {
-            std::env::set_var("HOME", &home);
-        }
-        let result = resolve_config_path(None);
-        unsafe {
-            std::env::remove_var("HOME");
-        }
+    let plist_dir = PathBuf::from(&home).join("Library").join("LaunchAgents");
+    std::fs::create_dir_all(&plist_dir)
+        .with_context(|| format!("failed to create {}", plist_dir.display()))?;
+    let plist_path = plist_dir.join("com.perry-hermes.gateway.plist");
+    std::fs::write(&plist_path, &plist)
+        .with_context(|| format!("failed to write {}", plist_path.display()))?;
 
-        let resolved = result.expect("should resolve to ./perry_hermes.toml");
-        let contents =
-            std::fs::read_to_string(&resolved).expect("resolved path should be readable");
-        assert!(
-            contents.contains("echo"),
-            "resolved the wrong file: {contents}"
-        );
+    // Bootstrap (load + start) the service
+    let uid = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .context("failed to run id -u")?;
+    let uid = String::from_utf8(uid.stdout).context("invalid uid output")?;
+    let uid = uid.trim();
+    let target = format!("gui/{uid}");
+    let status = std::process::Command::new("launchctl")
+        .args(["bootstrap", &target, &plist_path.to_string_lossy()])
+        .status()
+        .context("failed to run launchctl bootstrap")?;
+
+    if status.success() {
+        println!("Gateway service started.");
+        println!("  plist: {}", plist_path.display());
+        println!("  env:   {}", env_path.display());
+        println!("  logs:  {}", log_dir.display());
+    } else {
+        // bootstrap returns non-zero if already loaded; try kickstart instead
+        let status2 = std::process::Command::new("launchctl")
+            .args([
+                "kickstart",
+                "-k",
+                &format!("{target}/com.perry-hermes.gateway"),
+            ])
+            .status()
+            .context("failed to run launchctl kickstart")?;
+        if status2.success() {
+            println!("Gateway service restarted.");
+            println!("  plist: {}", plist_path.display());
+        } else {
+            anyhow::bail!("launchctl bootstrap/kickstart failed");
+        }
     }
+    Ok(())
+}
 
-    #[test]
-    fn resolve_errors_with_message_naming_all_tried_paths() {
-        let _guard = ENV_LOCK.lock().unwrap();
-        let (home, cwd) = make_empty_dirs();
-        let _cwd_guard = CwdGuard::enter(&cwd);
-        unsafe {
-            std::env::set_var("HOME", &home);
-        }
-        let result = resolve_config_path(None);
-        unsafe {
-            std::env::remove_var("HOME");
-        }
+#[cfg(target_os = "macos")]
+fn gateway_stop() -> anyhow::Result<()> {
+    let uid = std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .context("failed to run id -u")?;
+    let uid = String::from_utf8(uid.stdout).context("invalid uid output")?;
+    let uid = uid.trim();
+    let target = format!("gui/{uid}");
+    let status = std::process::Command::new("launchctl")
+        .args(["bootout", &format!("{target}/com.perry-hermes.gateway")])
+        .status()
+        .context("failed to run launchctl bootout")?;
 
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("no Perry Hermes config found"), "{err}");
-        assert!(err.contains(".perry_hermes"), "{err}");
-        assert!(err.contains("perry_hermes.toml"), "{err}");
+    if status.success() {
+        println!("Gateway service stopped.");
+    } else {
+        eprintln!("Service was not running (or already stopped).");
     }
+    Ok(())
+}
 
-    #[test]
-    fn cli_provider_and_model_override_config_defaults() {
-        let config = PerryHermesConfig {
-            providers: vec![perry_hermes_agent::ProviderConfig {
-                name: "minimax".into(),
-                kind: perry_hermes_agent::ProviderKind::Anthropic,
-                api_key_env: Some("MINIMAX_API_KEY".into()),
-                models: vec![
-                    perry_hermes_agent::ModelConfig {
-                        name: "MiniMax-M3".into(),
-                        context_window_size: 1_000_000,
-                    },
-                    perry_hermes_agent::ModelConfig {
-                        name: "MiniMax-M2.7".into(),
-                        context_window_size: 204_800,
-                    },
-                ],
-                base_url: Some("https://api.minimaxi.com/anthropic/v1".into()),
-                api_key_header: None,
-                thinking: None,
-            }],
-            agent: perry_hermes_agent::AgentConfig {
-                default_provider: "minimax".into(),
-                default_model: "MiniMax-M3".into(),
-                ..Default::default()
-            },
-            gateway: perry_hermes_agent::GatewayTomlConfig::default(),
-        };
-        let args = Args {
-            config: None,
-            provider: Some("minimax".into()),
-            model: Some("MiniMax-M2.7".into()),
-            command: None,
-        };
+// ── Linux (systemd) ──────────────────────────────────────────────────────────
 
-        let config = apply_cli_provider_overrides(config, &args);
-        let selected = config.resolve_provider().unwrap();
+#[cfg(target_os = "linux")]
+fn gateway_start() -> anyhow::Result<()> {
+    let env_path = write_gateway_env_file()?;
+    let exe = gateway_binary_path()?;
+    let home = std::env::var("HOME").context("HOME not set")?;
 
-        assert_eq!(selected.name, "minimax");
-        assert_eq!(selected.model, "MiniMax-M2.7");
-        assert_eq!(selected.context_window_size, 204_800);
+    let service = format!(
+        r#"[Unit]
+Description=Perry Hermes Gateway
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart={exe} gateway run
+EnvironmentFile={env_path}
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"#,
+        exe = exe.display(),
+        env_path = env_path.display(),
+    );
+
+    let unit_dir = PathBuf::from(&home)
+        .join(".config")
+        .join("systemd")
+        .join("user");
+    std::fs::create_dir_all(&unit_dir)
+        .with_context(|| format!("failed to create {}", unit_dir.display()))?;
+    let unit_path = unit_dir.join("perry-hermes-gateway.service");
+    std::fs::write(&unit_path, &service)
+        .with_context(|| format!("failed to write {}", unit_path.display()))?;
+
+    // daemon-reload + enable + start
+    let run = |args: &[&str]| -> anyhow::Result<()> {
+        let status = std::process::Command::new("systemctl")
+            .arg("--user")
+            .args(args)
+            .status()
+            .with_context(|| format!("failed to run systemctl --user {}", args.join(" ")))?;
+        if !status.success() {
+            anyhow::bail!("systemctl --user {} failed", args.join(" "));
+        }
+        Ok(())
+    };
+
+    run(&["daemon-reload"])?;
+    run(&["enable", "perry-hermes-gateway"])?;
+    run(&["start", "perry-hermes-gateway"])?;
+
+    println!("Gateway service started.");
+    println!("  unit: {}", unit_path.display());
+    println!("  env:  {}", env_path.display());
+    println!("  logs: journalctl --user -u perry-hermes-gateway -f");
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn gateway_stop() -> anyhow::Result<()> {
+    let status = std::process::Command::new("systemctl")
+        .args(["--user", "stop", "perry-hermes-gateway"])
+        .status()
+        .context("failed to run systemctl --user stop")?;
+
+    if status.success() {
+        println!("Gateway service stopped.");
+    } else {
+        eprintln!("Service was not running (or already stopped).");
     }
+    Ok(())
 }
