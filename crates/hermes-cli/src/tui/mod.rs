@@ -77,13 +77,29 @@ impl GatewayEventHandler for TuiEventHandler {
 
 /// Build the `on_event` closure to pass to `AgentLoop::run_session_turn`.
 ///
-/// Each `LoopEvent` is dispatched through a [`TuiEventHandler`]
-/// (implementing [`GatewayEventHandler`]) and forwarded into the TUI's
-/// main loop as an `AppEvent::Loop`. The TUI uses the same streaming
-/// protocol as all other platform adapters.
+/// Streaming events (content deltas, tool calls, etc.) are dispatched
+/// through a [`TuiEventHandler`] implementing [`GatewayEventHandler`].
+/// Non-streaming events (`ContextUsageUpdated`, `CompressionCompleted`,
+/// `CompressionSkipped`, `CompressionFailed`, `Cancelled`, etc.) are
+/// forwarded directly so the TUI's [`loop_bridge`] can handle them.
 pub fn make_on_event(tx: mpsc::UnboundedSender<AppEvent>) -> impl FnMut(LoopEvent) + Send {
-    let mut handler = TuiEventHandler::new(tx);
+    let mut handler = TuiEventHandler::new(tx.clone());
     move |ev: LoopEvent| {
-        dispatch_loop_event(&mut handler, &ev);
+        // Events that the TUI loop_bridge needs verbatim but the
+        // GatewayEventHandler trait doesn't cover — forward directly.
+        if matches!(
+            ev,
+            LoopEvent::ContextUsageUpdated { .. }
+                | LoopEvent::CompressionCompleted { .. }
+                | LoopEvent::CompressionSkipped { .. }
+                | LoopEvent::CompressionFailed { .. }
+                | LoopEvent::LengthLimit
+                | LoopEvent::IterationsExhausted
+                | LoopEvent::Cancelled
+        ) {
+            let _ = tx.send(AppEvent::Loop(ev));
+        } else {
+            dispatch_loop_event(&mut handler, &ev);
+        }
     }
 }

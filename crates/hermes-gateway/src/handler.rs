@@ -71,6 +71,20 @@ pub trait GatewayEventHandler: Send {
     /// The agent turn completed successfully. Any remaining accumulated
     /// content should be flushed now.
     fn on_turn_completed(&mut self) {}
+
+    /// Context usage was updated after a provider response.
+    /// Used by the TUI to display the context window status bar.
+    fn on_context_usage_updated(&mut self, _used_tokens: u64) {}
+
+    /// Automatic compression completed. The TUI uses this to update
+    /// the context usage display and show a compression hint.
+    fn on_compression_completed(
+        &mut self,
+        _context_tokens: Option<u64>,
+        _compacted_tokens: Option<u64>,
+        _duration: std::time::Duration,
+    ) {
+    }
 }
 
 /// A no-op handler used for events that don't need streaming (e.g.
@@ -100,9 +114,20 @@ pub fn dispatch_loop_event(handler: &mut dyn GatewayEventHandler, event: &LoopEv
         LoopEvent::AssistantMessage(msg) => {
             handler.on_assistant_message(msg);
         }
-        // ToolCallPartial, compression events,
-        // ContextUsageUpdated, LengthLimit, IterationsExhausted,
-        // Cancelled — no handler dispatch needed.
+        LoopEvent::ContextUsageUpdated { used_tokens } => {
+            handler.on_context_usage_updated(*used_tokens);
+        }
+        LoopEvent::CompressionCompleted {
+            context_tokens,
+            compacted_tokens,
+            duration,
+            ..
+        } => {
+            handler.on_compression_completed(*context_tokens, *compacted_tokens, *duration);
+        }
+        // ToolCallPartial, LengthLimit, IterationsExhausted,
+        // Cancelled, CompressionSkipped, CompressionFailed —
+        // no handler dispatch needed.
         _ => {}
     }
 }
