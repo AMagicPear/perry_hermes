@@ -11,7 +11,7 @@ use perry_hermes_core::commands::Command;
 use crate::adapter::PlatformAdapter;
 use crate::config::GatewayConfig;
 use crate::event::GatewayEvent;
-use crate::handler::GatewayEventHandler;
+use crate::handler::{GatewayEventHandler, dispatch_loop_event};
 
 /// Build a deterministic session key from a gateway event.
 ///
@@ -210,36 +210,10 @@ impl GatewayRunner {
         let result = self
             .agent
             .run_session_turn(&event.text, &entry.session, cancel, |event| {
-                match event {
-                    LoopEvent::Thinking => handler.on_thinking(),
-                    LoopEvent::ContentDelta(ref text) => {
-                        response_empty = false;
-                        handler.on_content_delta(text);
-                    }
-                    LoopEvent::ReasoningDelta(ref text) => {
-                        handler.on_reasoning_delta(text);
-                    }
-                    LoopEvent::ToolCallStarted {
-                        ref call,
-                        iteration,
-                    } => {
-                        handler.on_tool_started(call, iteration);
-                    }
-                    LoopEvent::ToolCallFinished {
-                        ref call,
-                        ref result,
-                    } => {
-                        handler.on_tool_finished(call, result);
-                    }
-                    LoopEvent::AssistantMessage(ref msg) => {
-                        handler.on_assistant_message(msg);
-                    }
-                    // ToolCallPartial, compression events,
-                    // ContextUsageUpdated, LengthLimit, IterationsExhausted,
-                    // Cancelled — no handler dispatch needed; these are
-                    // internal lifecycle events.
-                    _ => {}
+                if matches!(event, LoopEvent::ContentDelta(_)) {
+                    response_empty = false;
                 }
+                dispatch_loop_event(handler, &event);
             })
             .await;
 
