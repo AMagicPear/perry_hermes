@@ -6,7 +6,6 @@ use perry_hermes_core::commands::Command;
 use perry_hermes_core::message::ToolCall;
 use teloxide::prelude::*;
 use teloxide::types::{BotCommand, ChatAction, ChatKind, ParseMode};
-use telegram_markdown_v2::{convert_with_strategy, UnsupportedTagsStrategy};
 use tracing::{info, warn};
 
 use crate::adapter::PlatformAdapter;
@@ -16,8 +15,11 @@ use crate::runner::GatewayRunner;
 
 /// Send a message with MarkdownV2 formatting; fall back to plain text on failure.
 async fn send_markdown(bot: &Bot, chat_id: ChatId, text: &str) {
-    let formatted = convert_with_strategy(text, UnsupportedTagsStrategy::Escape)
-        .unwrap_or_else(|_| text.to_string());
+    let formatted = telegram_markdown_v2::convert_with_strategy(
+        text,
+        telegram_markdown_v2::UnsupportedTagsStrategy::Escape,
+    )
+    .unwrap_or_else(|_| text.to_string());
     if let Err(e) = bot
         .send_message(chat_id, &formatted)
         .parse_mode(ParseMode::MarkdownV2)
