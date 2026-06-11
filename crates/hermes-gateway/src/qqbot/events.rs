@@ -6,6 +6,7 @@ use std::sync::Arc;
 use perry_hermes_core::Platform;
 use perry_hermes_core::message::ToolCall;
 use qq_bot_rs::types::message::{C2cMessage, GroupMessage, OutgoingMessage};
+use qq_bot_rs::types::payloads::MarkdownPayload;
 
 use crate::event::{ChatType, GatewayEvent};
 use crate::handler::GatewayEventHandler;
@@ -130,7 +131,7 @@ impl QqEventHandler {
         let target_id = self.target_id.clone();
         let target = self.target;
         tokio::spawn(async move {
-            let reply = OutgoingMessage::text(&text);
+            let reply = OutgoingMessage::markdown(MarkdownPayload::raw(&text));
             let result = match target {
                 QqTarget::C2c => bot.post_c2c_message(&target_id, &reply).await,
                 QqTarget::Group => bot.post_group_message(&target_id, &reply).await,
@@ -177,7 +178,7 @@ pub async fn handle_reply(
             let target_id = handler.target_id.clone();
             let target = handler.target;
             tokio::spawn(async move {
-                let reply = OutgoingMessage::text(&text);
+                let reply = OutgoingMessage::markdown(MarkdownPayload::raw(&text));
                 let result = match target {
                     QqTarget::C2c => bot.post_c2c_message(&target_id, &reply).await,
                     QqTarget::Group => bot.post_group_message(&target_id, &reply).await,
