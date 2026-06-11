@@ -133,6 +133,9 @@ the built-in compaction behavior should usually edit the summary prompt in
 
 ## Configuration
 
+See the [examples/](examples/) directory for ready-to-use templates and the
+[examples/README.md](examples/README.md) for a quick-start guide.
+
 Start from [examples/config/perry_hermes.toml](examples/config/perry_hermes.toml).
 
 ```toml

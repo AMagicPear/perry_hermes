@@ -1,24 +1,122 @@
-# Sample Perry Hermes configuration.
+# ──────────────────────────────────────────────────────────────────────
+# Perry Hermes — Main Configuration
+# ──────────────────────────────────────────────────────────────────────
 #
-# The CLI will look for config files in this order:
-#   --config <path>                (explicit)
-#   ~/.perry_hermes/config.toml    (user-global)
-#   ./perry_hermes.toml                  (project-local)
+# Copy this file to one of these locations:
+#   1. ./perry_hermes.toml               (project-local, recommended)
+#   2. ~/.perry_hermes/config.toml       (user-global)
 #
-# Copy this file to one of those locations and adjust the provider fields.
+# Then set the API key environment variable(s) and run `perry-hermes`.
+#
+# Config lookup order:
+#   --config <path>              (explicit CLI flag)
+#   ~/.perry_hermes/config.toml  (user-global)
+#   ./perry_hermes.toml          (project-local)
+# ──────────────────────────────────────────────────────────────────────
+
+
+# ── Provider: OpenAI (default) ──────────────────────────────────────
+# Works with any OpenAI-compatible API. Change `base_url` for other
+# providers (DeepSeek, Ollama, Moonshot, etc.).
 
 [[providers]]
 name = "openai-main"
 kind = "openai"
+api_key_env = "OPENAI_API_KEY"       # env var that holds your API key
 base_url = "https://api.openai.com/v1"
-api_key_env = "OPENAI_API_KEY"
 
 [[providers.models]]
 name = "gpt-4.1-mini"
-context_window_size = 1_047_576
+context_window_size = 1_047_576      # tokens; must match the model's limit
+
+
+# ── Provider: Anthropic (uncomment to use) ──────────────────────────
+# For Claude models via the Anthropic API.
+
+# [[providers]]
+# name = "anthropic-main"
+# kind = "anthropic"
+# api_key_env = "ANTHROPIC_API_KEY"
+
+# [providers.thinking]
+# mode = "adaptive"           # off | manual | adaptive
+# display = "summarized"      # how thinking blocks are shown
+# effort = "medium"           # low | medium | high
+
+# [[providers.models]]
+# name = "claude-sonnet-4-20250514"
+# context_window_size = 200_000
+
+
+# ── Provider: DeepSeek (uncomment to use) ───────────────────────────
+# DeepSeek uses an OpenAI-compatible API.
+
+# [[providers]]
+# name = "deepseek"
+# kind = "openai"
+# api_key_env = "DEEPSEEK_API_KEY"
+# base_url = "https://api.deepseek.com/v1"
+
+# [[providers.models]]
+# name = "deepseek-chat"
+# context_window_size = 128_000
+
+
+# ── Provider: Ollama local (uncomment to use) ───────────────────────
+# Run Ollama locally — no API key required.
+# Start Ollama first: `ollama serve`
+
+# [[providers]]
+# name = "ollama"
+# kind = "openai"
+# base_url = "http://localhost:11434/v1"
+
+# [[providers.models]]
+# name = "qwen3:8b"
+# context_window_size = 32_768
+
+
+# ── Provider: Echo (offline testing) ────────────────────────────────
+# Repeats your input back — useful for testing the CLI and tools
+# without an API key.
+
+# [[providers]]
+# name = "local"
+# kind = "echo"
+
+# [[providers.models]]
+# name = "echo"
+# context_window_size = 128_000
+
+
+# ── Agent ───────────────────────────────────────────────────────────
 
 [agent]
-default_provider = "openai-main"
-default_model = "gpt-4.1-mini"
-max_iterations = 10
-disabled_toolsets = []
+default_provider = "openai-main"     # must match a [[providers]].name
+default_model = "gpt-4.1-mini"       # must match a [[providers.models]].name
+max_iterations = 10                  # max tool-use rounds per turn (optional)
+disabled_toolsets = []               # e.g. ["terminal"] to disable shell access
+
+# Context compression — automatically summarize old messages when the
+# context window fills up. Enabled by default.
+# context_compression_enabled = true
+# context_compression_threshold_percent = 0.50   # trigger at 50% usage
+
+
+# ── Gateway (uncomment to enable) ───────────────────────────────────
+# Run with: perry-hermes gateway run
+#
+# Required env vars for gateway platforms:
+#   TELEGRAM_BOT_TOKEN   — from @BotFather
+#   QQ_BOT_APP_ID        — from QQ Open Platform
+#   QQ_BOT_APP_SECRET    — from QQ Open Platform
+
+# [gateway.telegram]
+# token_env = "TELEGRAM_BOT_TOKEN"   # default; override with token = "..."
+# allowed_users = []                 # empty = allow everyone
+
+# [gateway.qqbot]
+# app_id_env = "QQ_BOT_APP_ID"      # default
+# app_secret_env = "QQ_BOT_APP_SECRET"
+# sandbox = false                    # true for QQ sandbox testing
+# allowed_users = []
