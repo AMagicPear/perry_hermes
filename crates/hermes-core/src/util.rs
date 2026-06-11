@@ -22,10 +22,10 @@ pub fn truncate_output(s: &str, max_chars: usize) -> String {
 /// Resolve a user-supplied path: expand `~/` and make relative paths absolute.
 pub fn resolve_user_path(input: &str, working_dir: &Path) -> Result<PathBuf, String> {
     let expanded = if let Some(stripped) = input.strip_prefix("~/") {
-        if let Some(home) = std::env::var_os("HOME") {
+        if let Some(home) = crate::home::user_home_dir() {
             PathBuf::from(home).join(stripped)
         } else {
-            return Err("~ expansion requested but $HOME is not set".to_string());
+            return Err("~ expansion requested but $HOME/$USERPROFILE is not set".to_string());
         }
     } else {
         PathBuf::from(input)

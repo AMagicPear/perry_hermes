@@ -196,14 +196,15 @@ const GATEWAY_ENV_VARS: &[&str] = &[
     "PERRY_HERMES_HOME",
 ];
 
-/// Write captured env vars to `~/.perry_hermes/gateway.env` as KEY=VALUE lines.
+/// Write captured env vars to `$PERRY_HERMES_HOME/gateway.env` as KEY=VALUE lines.
 fn write_gateway_env_file() -> anyhow::Result<PathBuf> {
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let perry_home = PathBuf::from(&home).join(".perry_hermes");
-    std::fs::create_dir_all(&perry_home)
-        .with_context(|| format!("failed to create {}", perry_home.display()))?;
+    let env_path = perry_hermes_core::home::resolve_gateway_env_path()
+        .context("cannot resolve Perry Hermes home directory")?;
+    if let Some(parent) = env_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
 
-    let env_path = perry_home.join("gateway.env");
     let mut lines = Vec::new();
     for &key in GATEWAY_ENV_VARS {
         if let Ok(val) = std::env::var(key)
@@ -227,8 +228,8 @@ fn gateway_binary_path() -> anyhow::Result<PathBuf> {
 fn gateway_start() -> anyhow::Result<()> {
     let env_path = write_gateway_env_file()?;
     let exe = gateway_binary_path()?;
-    let home = std::env::var("HOME").context("HOME not set")?;
-    let log_dir = PathBuf::from(&home).join(".perry_hermes").join("logs");
+    let log_dir = perry_hermes_core::home::resolve_logs_dir()
+        .context("cannot resolve Perry Hermes home directory")?;
     std::fs::create_dir_all(&log_dir)
         .with_context(|| format!("failed to create {}", log_dir.display()))?;
 
@@ -281,7 +282,11 @@ fn gateway_start() -> anyhow::Result<()> {
         stderr = stderr_path.display(),
     );
 
-    let plist_dir = PathBuf::from(&home).join("Library").join("LaunchAgents");
+    let user_home =
+        perry_hermes_core::home::user_home_dir().context("cannot determine user home directory")?;
+    let plist_dir = PathBuf::from(&user_home)
+        .join("Library")
+        .join("LaunchAgents");
     std::fs::create_dir_all(&plist_dir)
         .with_context(|| format!("failed to create {}", plist_dir.display()))?;
     let plist_path = plist_dir.join("com.perry-hermes.gateway.plist");
@@ -348,13 +353,102 @@ fn gateway_stop() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Windows (schtasks) ──────────────────────────────────────────────────────
+
+#[cfg(target_os = "windows")]
+fn gateway_start() -> anyhow::Result<()> {
+    let env_path = write_gateway_env_file()?;
+    let exe = gateway_binary_path()?;
+    let log_dir = perry_hermes_core::home::resolve_logs_dir()
+        .context("cannot resolve Perry Hermes home directory")?;
+    std::fs::create_dir_all(&log_dir)
+        .with_context(|| format!("failed to create {}", log_dir.display()))?;
+
+    let stdout_path = log_dir.join("gateway-stdout.log");
+    let stderr_path = log_dir.join("gateway-stderr.log");
+
+    // Write a launcher batch script that loads env vars then runs the gateway
+    let launcher_path = perry_hermes_core::home::resolve_gateway_launcher_path()
+        .context("cannot resolve Perry Hermes home directory")?;
+    let mut script = String::from("@echo off\n");
+    // Load env vars from the env file
+    script.push_str(&format!(
+        "for /f \"usebackq tokens=* delims=\" %%a in (\"{}\") do set \"%%a\"\n",
+        env_path.display()
+    ));
+    script.push_str(&format!(
+        "\"{}\" gateway run 1>\"{}\" 2>\"{}\"\n",
+        exe.display(),
+        stdout_path.display(),
+        stderr_path.display(),
+    ));
+    std::fs::write(&launcher_path, &script)
+        .with_context(|| format!("failed to write {}", launcher_path.display()))?;
+
+    // Register a scheduled task that runs at user logon
+    let task_name = "PerryHermesGateway";
+    let status = std::process::Command::new("schtasks")
+        .args([
+            "/create",
+            "/tn",
+            task_name,
+            "/tr",
+            &launcher_path.to_string_lossy(),
+            "/sc",
+            "onlogon",
+            "/f",
+        ])
+        .status()
+        .context("failed to run schtasks /create")?;
+
+    if !status.success() {
+        anyhow::bail!("schtasks /create failed");
+    }
+
+    // Start immediately
+    let start_status = std::process::Command::new("schtasks")
+        .args(["/run", "/tn", task_name])
+        .status()
+        .context("failed to run schtasks /run")?;
+
+    if start_status.success() {
+        println!("Gateway service started.");
+        println!("  task:   {}", task_name);
+        println!("  env:    {}", env_path.display());
+        println!("  logs:   {}", log_dir.display());
+    } else {
+        eprintln!(
+            "Warning: schtasks /run failed, but task was created. It will start at next logon."
+        );
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn gateway_stop() -> anyhow::Result<()> {
+    let task_name = "PerryHermesGateway";
+    // End the task (kills the process tree)
+    let status = std::process::Command::new("schtasks")
+        .args(["/end", "/tn", task_name])
+        .status()
+        .context("failed to run schtasks /end")?;
+
+    if status.success() {
+        println!("Gateway service stopped.");
+    } else {
+        eprintln!("Service was not running (or already stopped).");
+    }
+    Ok(())
+}
+
 // ── Linux (systemd) ──────────────────────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
 fn gateway_start() -> anyhow::Result<()> {
     let env_path = write_gateway_env_file()?;
     let exe = gateway_binary_path()?;
-    let home = std::env::var("HOME").context("HOME not set")?;
+    let home =
+        perry_hermes_core::home::user_home_dir().context("cannot determine user home directory")?;
 
     let service = format!(
         r#"[Unit]

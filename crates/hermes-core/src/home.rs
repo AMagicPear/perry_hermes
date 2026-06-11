@@ -5,24 +5,39 @@
 
 use std::path::PathBuf;
 
+/// Return the user's home directory, checking `HOME` then `USERPROFILE`.
+///
+/// This is the platform-agnostic way to locate `~`.
+pub fn user_home_dir() -> Option<String> {
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        return Some(home);
+    }
+    if let Ok(profile) = std::env::var("USERPROFILE")
+        && !profile.is_empty()
+    {
+        return Some(profile);
+    }
+    None
+}
+
 /// Resolve the Perry Hermes configuration directory.
 ///
 /// Priority:
 /// 1. `PERRY_HERMES_HOME` env var (if set and non-empty)
-/// 2. `$HOME/.perry_hermes`
+/// 2. `$HOME/.perry_hermes` (or `$USERPROFILE/.perry_hermes` on Windows)
 /// 3. `./.perry_hermes` (cwd-relative fallback)
 ///
 /// Returns `None` only if all three resolution steps fail
-/// (e.g. `$HOME` is unset and `current_dir()` errors).
+/// (e.g. `$HOME`/`$USERPROFILE` is unset and `current_dir()` errors).
 pub fn resolve_home_dir() -> Option<PathBuf> {
     if let Ok(home) = std::env::var("PERRY_HERMES_HOME")
         && !home.is_empty()
     {
         return Some(PathBuf::from(home));
     }
-    if let Ok(home) = std::env::var("HOME")
-        && !home.is_empty()
-    {
+    if let Some(home) = user_home_dir() {
         return Some(PathBuf::from(home).join(".perry_hermes"));
     }
     std::env::current_dir()
@@ -36,6 +51,40 @@ pub fn resolve_home_dir() -> Option<PathBuf> {
 pub fn resolve_subdir(sub: &str) -> Option<PathBuf> {
     resolve_home_dir().map(|h| h.join(sub))
 }
+
+/// Resolve a well-known file or directory path under the Perry Hermes home.
+macro_rules! resolve_path {
+    ($name:ident, $sub:expr, $doc:expr) => {
+        #[doc = $doc]
+        pub fn $name() -> Option<PathBuf> {
+            resolve_subdir($sub)
+        }
+    };
+}
+
+resolve_path!(
+    resolve_logs_dir,
+    "logs",
+    "Resolve the logs directory (`$PERRY_HERMES_HOME/logs`)."
+);
+
+resolve_path!(
+    resolve_config_path,
+    "config.toml",
+    "Resolve the user config file (`$PERRY_HERMES_HOME/config.toml`)."
+);
+
+resolve_path!(
+    resolve_gateway_env_path,
+    "gateway.env",
+    "Resolve the gateway env file (`$PERRY_HERMES_HOME/gateway.env`)."
+);
+
+resolve_path!(
+    resolve_gateway_launcher_path,
+    "gateway-launcher.cmd",
+    "Resolve the Windows gateway launcher script (`$PERRY_HERMES_HOME/gateway-launcher.cmd`)."
+);
 
 #[cfg(test)]
 mod tests {

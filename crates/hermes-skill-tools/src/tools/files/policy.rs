@@ -294,7 +294,7 @@ fn perry_hermes_config_path() -> String {
 
 fn normalize_path_string(input: &str) -> String {
     if let Some(stripped) = input.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
+        && let Some(home) = perry_hermes_core::home::user_home_dir()
     {
         return PathBuf::from(home)
             .join(stripped)

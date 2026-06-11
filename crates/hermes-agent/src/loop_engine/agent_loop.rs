@@ -444,18 +444,10 @@ fn build_loop_for_custom_provider(
     config: &PerryHermesConfig,
     selected_provider: Option<&ResolvedProviderConfig>,
 ) -> AgentLoop {
-    let skills_dir = resolve_skills_dir().unwrap_or_else(|| {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(".perry_hermes")
-            .join("skills")
-    });
-    let memories_dir = resolve_memories_dir().unwrap_or_else(|| {
-        std::env::current_dir()
-            .unwrap_or_else(|_| PathBuf::from("."))
-            .join(".perry_hermes")
-            .join("memories")
-    });
+    let skills_dir =
+        resolve_skills_dir().unwrap_or_else(|| PathBuf::from(".perry_hermes").join("skills"));
+    let memories_dir =
+        resolve_memories_dir().unwrap_or_else(|| PathBuf::from(".perry_hermes").join("memories"));
 
     // Load the memory store synchronously. The store is small and
     // bound to disk I/O for two files; spawn a one-shot blocking
