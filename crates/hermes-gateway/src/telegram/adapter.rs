@@ -3,13 +3,77 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use perry_hermes_core::Platform;
 use perry_hermes_core::commands::Command;
+use perry_hermes_core::message::ToolCall;
 use teloxide::prelude::*;
 use teloxide::types::{BotCommand, ChatAction, ChatKind};
 use tracing::{info, warn};
 
 use crate::adapter::PlatformAdapter;
 use crate::event::{ChatType, GatewayEvent};
+use crate::handler::GatewayEventHandler;
 use crate::runner::GatewayRunner;
+
+// ── Streaming event handler ─────────────────────────────────────────
+
+/// Streams agent output to a Telegram chat, sending each content
+/// segment as a separate message.
+///
+/// Content is buffered in `content_buffer` and flushed at tool call
+/// boundaries (`on_tool_started`) and turn completion
+/// (`on_turn_completed`). Each flush sends one Telegram message.
+struct TelegramEventHandler {
+    bot: Bot,
+    chat_id: ChatId,
+    content_buffer: String,
+}
+
+impl TelegramEventHandler {
+    fn new(bot: Bot, chat_id: ChatId) -> Self {
+        Self {
+            bot,
+            chat_id,
+            content_buffer: String::new(),
+        }
+    }
+
+    /// Flush accumulated content as a Telegram message. No-op if buffer
+    /// is empty.
+    fn flush(&mut self) {
+        let text = std::mem::take(&mut self.content_buffer);
+        if text.trim().is_empty() {
+            return;
+        }
+        let bot = self.bot.clone();
+        let chat_id = self.chat_id;
+        tokio::spawn(async move {
+            if let Err(e) = bot.send_message(chat_id, &text).await {
+                warn!(error = %e, "failed to send Telegram message");
+            }
+        });
+    }
+}
+
+impl GatewayEventHandler for TelegramEventHandler {
+    fn on_content_delta(&mut self, text: &str) {
+        self.content_buffer.push_str(text);
+    }
+
+    fn on_tool_started(&mut self, _call: &ToolCall, _iteration: u32) {
+        // Flush content accumulated before this tool call.
+        self.flush();
+    }
+
+    fn on_error(&mut self, error: &str) {
+        self.content_buffer.push_str(&format!("⚠ Error: {error}"));
+    }
+
+    fn on_turn_completed(&mut self) {
+        // Flush any remaining content from the final iteration.
+        self.flush();
+    }
+}
+
+// ── Adapter ─────────────────────────────────────────────────────────
 
 /// Telegram platform adapter using teloxide long-polling.
 pub struct TelegramAdapter {
@@ -83,9 +147,6 @@ impl PlatformAdapter for TelegramAdapter {
         info!("Telegram adapter starting (long-poll)");
 
         // Register commands with Telegram so users see them in the "/" menu.
-        // Name + description come from `Command::ALL` — single source of truth
-        // shared with every other platform; this adapter doesn't need to
-        // know which specific names belong to the Telegram subset.
         let commands: Vec<BotCommand> = Command::for_platform(Platform::Telegram)
             .map(|m| BotCommand::new(m.name, m.description))
             .collect();
@@ -109,8 +170,13 @@ impl PlatformAdapter for TelegramAdapter {
                 // Send typing indicator
                 let _ = bot.send_chat_action(chat_id, ChatAction::Typing).await;
 
-                match gateway.handle_event(event).await {
-                    Ok(crate::runner::GatewayResponse::Reply(text)) => {
+                // Create a streaming handler for this message.
+                // Content segments are sent as separate Telegram messages
+                // at tool call boundaries and turn completion.
+                let mut handler = TelegramEventHandler::new(bot.clone(), chat_id);
+
+                match gateway.handle_event(event, &mut handler).await {
+                    Ok(crate::runner::GatewayResponse::CommandReply(text)) => {
                         if let Err(e) = bot.send_message(chat_id, &text).await {
                             warn!(error = %e, "failed to send Telegram reply");
                         }

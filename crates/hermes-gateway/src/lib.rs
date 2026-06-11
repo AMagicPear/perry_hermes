@@ -36,6 +36,7 @@
 pub mod adapter;
 pub mod config;
 pub mod event;
+pub mod handler;
 pub mod qqbot;
 pub mod runner;
 pub mod telegram;
@@ -43,6 +44,7 @@ pub mod telegram;
 pub use adapter::PlatformAdapter;
 pub use config::GatewayConfig;
 pub use event::{ChatType, GatewayEvent};
+pub use handler::{GatewayEventHandler, NoopHandler, dispatch_loop_event};
 // Re-export the project-wide Command enum from hermes-core.
 pub use perry_hermes_core::commands::Command;
 pub use qqbot::{QQBotAdapter, QqBotConfig};

@@ -206,10 +206,10 @@ fn write_gateway_env_file() -> anyhow::Result<PathBuf> {
     let env_path = perry_home.join("gateway.env");
     let mut lines = Vec::new();
     for &key in GATEWAY_ENV_VARS {
-        if let Ok(val) = std::env::var(key) {
-            if !val.is_empty() {
-                lines.push(format!("{key}={val}"));
-            }
+        if let Ok(val) = std::env::var(key)
+            && !val.is_empty()
+        {
+            lines.push(format!("{key}={val}"));
         }
     }
     std::fs::write(&env_path, lines.join("\n") + "\n")

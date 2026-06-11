@@ -1,10 +1,17 @@
-//! Conversion from `qq_bot_rs` events to the gateway's `GatewayEvent`.
+//! Conversion from `qq_bot_rs` events to the gateway's `GatewayEvent`,
+//! plus the [`QqEventHandler`] that streams agent output to QQ chats.
+
+use std::sync::Arc;
 
 use perry_hermes_core::Platform;
-use qq_bot_rs::types::message::{C2cMessage, GroupMessage};
+use perry_hermes_core::message::ToolCall;
+use qq_bot_rs::types::message::{C2cMessage, GroupMessage, OutgoingMessage};
 
 use crate::event::{ChatType, GatewayEvent};
+use crate::handler::GatewayEventHandler;
 use crate::runner::GatewayRunner;
+
+// ── Event conversion ────────────────────────────────────────────────
 
 /// Strip `<@!botId> ` mention prefix from group message content.
 ///
@@ -72,20 +79,113 @@ pub fn group_to_event(msg: &GroupMessage) -> Option<GatewayEvent> {
     })
 }
 
-/// Run a single `GatewayEvent` through the gateway and ship the reply
-/// back via the provided async `send` closure.
+// ── Streaming event handler ─────────────────────────────────────────
+
+/// Whether the target is a C2C (direct) or group chat.
+#[derive(Debug, Clone, Copy)]
+enum QqTarget {
+    C2c,
+    Group,
+}
+
+/// Streams agent output to a QQ chat, sending each content segment as
+/// a separate message.
 ///
-/// Failures are logged via `tracing`; the bridge does not retry.
-pub async fn handle_reply<F, Fut>(gateway: &GatewayRunner, event: &GatewayEvent, send: F)
-where
-    F: FnOnce(String) -> Fut,
-    Fut: std::future::Future<Output = anyhow::Result<()>>,
-{
-    match gateway.handle_event(event.clone()).await {
-        Ok(crate::runner::GatewayResponse::Reply(text)) => {
-            if let Err(e) = send(text).await {
-                tracing::warn!(error = %e, "qqbot: send reply failed");
+/// Content is buffered in `content_buffer` and flushed at tool call
+/// boundaries (`on_tool_started`) and turn completion
+/// (`on_turn_completed`). Each flush sends one QQ message.
+pub struct QqEventHandler {
+    bot: Arc<qq_bot_rs::Bot>,
+    target_id: String,
+    target: QqTarget,
+    content_buffer: String,
+}
+
+impl QqEventHandler {
+    pub fn new_c2c(bot: Arc<qq_bot_rs::Bot>, user_openid: String) -> Self {
+        Self {
+            bot,
+            target_id: user_openid,
+            target: QqTarget::C2c,
+            content_buffer: String::new(),
+        }
+    }
+
+    pub fn new_group(bot: Arc<qq_bot_rs::Bot>, group_openid: String) -> Self {
+        Self {
+            bot,
+            target_id: group_openid,
+            target: QqTarget::Group,
+            content_buffer: String::new(),
+        }
+    }
+
+    /// Flush accumulated content as a QQ message. No-op if buffer is empty.
+    fn flush(&mut self) {
+        let text = std::mem::take(&mut self.content_buffer);
+        if text.trim().is_empty() {
+            return;
+        }
+        let bot = Arc::clone(&self.bot);
+        let target_id = self.target_id.clone();
+        let target = self.target;
+        tokio::spawn(async move {
+            let reply = OutgoingMessage::text(&text);
+            let result = match target {
+                QqTarget::C2c => bot.post_c2c_message(&target_id, &reply).await,
+                QqTarget::Group => bot.post_group_message(&target_id, &reply).await,
+            };
+            if let Err(e) = result {
+                tracing::warn!(error = %e, "qqbot: send failed");
             }
+        });
+    }
+}
+
+impl GatewayEventHandler for QqEventHandler {
+    fn on_content_delta(&mut self, text: &str) {
+        self.content_buffer.push_str(text);
+    }
+
+    fn on_tool_started(&mut self, _call: &ToolCall, _iteration: u32) {
+        // Flush content accumulated before this tool call.
+        self.flush();
+    }
+
+    fn on_error(&mut self, error: &str) {
+        self.content_buffer.push_str(&format!("⚠ Error: {error}"));
+    }
+
+    fn on_turn_completed(&mut self) {
+        // Flush any remaining content from the final iteration.
+        self.flush();
+    }
+}
+
+// ── Handler dispatch ────────────────────────────────────────────────
+
+/// Run a single `GatewayEvent` through the gateway, streaming agent
+/// output to the QQ chat via [`QqEventHandler`].
+pub async fn handle_reply(
+    gateway: &GatewayRunner,
+    event: &GatewayEvent,
+    handler: &mut QqEventHandler,
+) {
+    match gateway.handle_event(event.clone(), handler).await {
+        Ok(crate::runner::GatewayResponse::CommandReply(text)) => {
+            let bot = Arc::clone(&handler.bot);
+            let target_id = handler.target_id.clone();
+            let target = handler.target;
+            tokio::spawn(async move {
+                let reply = OutgoingMessage::text(&text);
+                let result = match target {
+                    QqTarget::C2c => bot.post_c2c_message(&target_id, &reply).await,
+                    QqTarget::Group => bot.post_group_message(&target_id, &reply).await,
+                };
+                if let Err(e) = result {
+                    tracing::warn!(error = %e, "qqbot: send command reply failed");
+                }
+            });
         }
         Ok(crate::runner::GatewayResponse::Ignored) => {}
         Err(e) => {

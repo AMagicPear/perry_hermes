@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use perry_hermes_core::Platform;
-use qq_bot_rs::types::message::{C2cMessage, GroupMessage, OutgoingMessage};
+use qq_bot_rs::types::message::{C2cMessage, GroupMessage};
 
 use crate::adapter::PlatformAdapter;
 use crate::qqbot::QqBotConfig;
@@ -90,29 +90,21 @@ impl qq_bot_rs::EventHandler for QqEventBridge {
         let Some(ev) = super::events::c2c_to_event(&msg) else {
             return;
         };
-        let user_openid = msg.author.user_openid.clone();
-        super::events::handle_reply(&self.gateway, &ev, move |text| async move {
-            let reply = OutgoingMessage::text(text);
-            bot.post_c2c_message(&user_openid, &reply)
-                .await
-                .map(|_| ())
-                .map_err(|e| anyhow::anyhow!("{e}"))
-        })
-        .await;
+        let bot = Arc::new(bot.clone());
+        let mut handler = super::events::QqEventHandler::new_c2c(
+            Arc::clone(&bot),
+            msg.author.user_openid.clone(),
+        );
+        super::events::handle_reply(&self.gateway, &ev, &mut handler).await;
     }
 
     async fn on_group_at_message_create(&self, bot: &qq_bot_rs::Bot, msg: GroupMessage) {
         let Some(ev) = super::events::group_to_event(&msg) else {
             return;
         };
-        let group_openid = msg.group_openid.clone();
-        super::events::handle_reply(&self.gateway, &ev, move |text| async move {
-            let reply = OutgoingMessage::text(text);
-            bot.post_group_message(&group_openid, &reply)
-                .await
-                .map(|_| ())
-                .map_err(|e| anyhow::anyhow!("{e}"))
-        })
-        .await;
+        let bot = Arc::new(bot.clone());
+        let mut handler =
+            super::events::QqEventHandler::new_group(Arc::clone(&bot), msg.group_openid.clone());
+        super::events::handle_reply(&self.gateway, &ev, &mut handler).await;
     }
 }

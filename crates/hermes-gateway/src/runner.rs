@@ -11,6 +11,7 @@ use perry_hermes_core::commands::Command;
 use crate::adapter::PlatformAdapter;
 use crate::config::GatewayConfig;
 use crate::event::GatewayEvent;
+use crate::handler::GatewayEventHandler;
 
 /// Build a deterministic session key from a gateway event.
 ///
@@ -43,8 +44,9 @@ pub enum GatewayError {
 /// Response from processing a gateway event.
 #[derive(Debug)]
 pub enum GatewayResponse {
-    /// Text to send back to the user.
-    Reply(String),
+    /// A one-shot text response (e.g. slash command). For agent messages,
+    /// streaming content is delivered through [`GatewayEventHandler`].
+    CommandReply(String),
     /// The event was ignored (e.g. unauthorized user, empty text).
     Ignored,
 }
@@ -82,7 +84,14 @@ impl GatewayRunner {
     }
 
     /// Process an incoming event from any platform adapter.
-    pub async fn handle_event(&self, event: GatewayEvent) -> Result<GatewayResponse, GatewayError> {
+    ///
+    /// For normal messages, agent output is streamed through `handler`.
+    /// For slash commands, a one-shot `CommandReply` is returned.
+    pub async fn handle_event(
+        &self,
+        event: GatewayEvent,
+        handler: &mut dyn GatewayEventHandler,
+    ) -> Result<GatewayResponse, GatewayError> {
         // Authorization check — config keys on the platform's on-disk string form.
         if !self
             .config
@@ -107,7 +116,9 @@ impl GatewayRunner {
                     let key = build_key(&event);
                     self.sessions.reset(&key).await;
                     info!(session = %key, "session reset by user");
-                    Ok(GatewayResponse::Reply("Session has been reset.".into()))
+                    Ok(GatewayResponse::CommandReply(
+                        "Session has been reset.".into(),
+                    ))
                 }
                 Command::Compact => self.handle_compact(&event, parsed.arg.as_deref()).await,
                 Command::Status => self.handle_status(&event).await,
@@ -116,8 +127,8 @@ impl GatewayRunner {
             };
         }
 
-        // Normal message: run through agent
-        self.handle_message(&event).await
+        // Normal message: run through agent, streaming to handler
+        self.handle_message(&event, handler).await
     }
 
     /// Run the gateway: connect all adapters and process messages until shutdown.
@@ -181,32 +192,70 @@ impl GatewayRunner {
     }
 
     /// Process a normal user message through the agent loop.
-    async fn handle_message(&self, event: &GatewayEvent) -> Result<GatewayResponse, GatewayError> {
+    ///
+    /// Agent events are dispatched to `handler` as they arrive.
+    /// Content is delivered incrementally — the handler decides when
+    /// to flush (typically at tool call boundaries and turn completion).
+    async fn handle_message(
+        &self,
+        event: &GatewayEvent,
+        handler: &mut dyn GatewayEventHandler,
+    ) -> Result<GatewayResponse, GatewayError> {
         let entry = self.session(event).await;
         let _guard = entry.turn_lock.lock().await;
 
         let cancel = CancellationToken::new();
-        let mut response_text = String::new();
+        let mut response_empty = true;
 
         let result = self
             .agent
             .run_session_turn(&event.text, &entry.session, cancel, |event| {
-                if let LoopEvent::ContentDelta(delta) = event {
-                    response_text.push_str(&delta);
+                match event {
+                    LoopEvent::Thinking => handler.on_thinking(),
+                    LoopEvent::ContentDelta(ref text) => {
+                        response_empty = false;
+                        handler.on_content_delta(text);
+                    }
+                    LoopEvent::ReasoningDelta(ref text) => {
+                        handler.on_reasoning_delta(text);
+                    }
+                    LoopEvent::ToolCallStarted {
+                        ref call,
+                        iteration,
+                    } => {
+                        handler.on_tool_started(call, iteration);
+                    }
+                    LoopEvent::ToolCallFinished {
+                        ref call,
+                        ref result,
+                    } => {
+                        handler.on_tool_finished(call, result);
+                    }
+                    LoopEvent::AssistantMessage(ref msg) => {
+                        handler.on_assistant_message(msg);
+                    }
+                    // ToolCallPartial, compression events,
+                    // ContextUsageUpdated, LengthLimit, IterationsExhausted,
+                    // Cancelled — no handler dispatch needed; these are
+                    // internal lifecycle events.
+                    _ => {}
                 }
             })
             .await;
 
         match result {
             Ok(_) => {
-                if response_text.is_empty() {
-                    response_text = "(no response)".into();
+                if response_empty {
+                    handler.on_content_delta("(no response)");
                 }
-                Ok(GatewayResponse::Reply(response_text))
+                handler.on_turn_completed();
+                Ok(GatewayResponse::Ignored)
             }
             Err(e) => {
                 let key = build_key(event);
                 warn!(session = %key, error = %e, "agent run failed");
+                handler.on_error(&format!("{e}"));
+                handler.on_turn_completed();
                 Err(GatewayError::AgentRun(e))
             }
         }
@@ -224,13 +273,15 @@ impl GatewayRunner {
         let _guard = entry.turn_lock.lock().await;
 
         match self.agent.compact_session(&entry.session, focus).await {
-            Ok(event) => Ok(GatewayResponse::Reply(format!(
+            Ok(event) => Ok(GatewayResponse::CommandReply(format!(
                 "Compaction result: {event:?}"
             ))),
             Err(e) => {
                 let key = build_key(event);
                 warn!(session = %key, error = %e, "compaction failed");
-                Ok(GatewayResponse::Reply(format!("Compaction failed: {e}")))
+                Ok(GatewayResponse::CommandReply(format!(
+                    "Compaction failed: {e}"
+                )))
             }
         }
     }
@@ -243,7 +294,7 @@ impl GatewayRunner {
         let archive_dir = self.config.sessions_dir.join(".archive");
         let archived = count_files_in(&archive_dir).await;
 
-        Ok(GatewayResponse::Reply(format!(
+        Ok(GatewayResponse::CommandReply(format!(
             "Session: {}\nMessages: {}\nWorking dir: {}\nArchived: {}",
             key,
             messages.len(),
