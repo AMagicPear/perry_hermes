@@ -36,3 +36,16 @@ pub fn resolve_user_path(input: &str, working_dir: &Path) -> Result<PathBuf, Str
         Ok(working_dir.join(expanded))
     }
 }
+
+/// Returns `true` if `bin` is found in `PATH` (Unix only).
+pub fn which(bin: &str) -> bool {
+    let null = std::fs::OpenOptions::new()
+        .write(true)
+        .open("/dev/null")
+        .unwrap();
+    std::process::Command::new("which")
+        .arg(bin)
+        .stdout(null)
+        .status()
+        .is_ok_and(|s| s.success())
+}

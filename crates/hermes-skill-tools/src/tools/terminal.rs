@@ -10,6 +10,7 @@ use std::process::Stdio;
 use async_trait::async_trait;
 use perry_hermes_core::error::ToolError;
 use perry_hermes_core::tool::{Tool, ToolContext, ToolOutput};
+use perry_hermes_core::util;
 use serde_json::{Value, json};
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
@@ -169,7 +170,9 @@ impl Tool for BashTool {
             ));
         }
 
-        let mut child = Command::new("bash")
+        // Prefer zsh; fall back to bash if zsh is not installed.
+        let shell = if util::which("zsh") { "zsh" } else { "bash" };
+        let mut child = Command::new(shell)
             .arg("-c")
             .arg(command)
             .current_dir(cwd)
