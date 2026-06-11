@@ -86,7 +86,7 @@ pub async fn run(
     cancel: CancellationToken,
     provider_name: String,
     model_name: String,
-    max_iterations: u32,
+    max_iterations: Option<u32>,
     context_window_size: Option<u64>,
 ) -> Result<(), RunError> {
     use crossterm::event::{Event, EventStream};
@@ -206,7 +206,7 @@ pub async fn run_with_backend(
     cancel: CancellationToken,
     provider_name: String,
     model_name: String,
-    max_iterations: u32,
+    max_iterations: Option<u32>,
     context_window_size: Option<u64>,
 ) -> Result<(), RunError> {
     let backend = WideCellSafeBackend::new(SharedTestBackend { inner: backend });

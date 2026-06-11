@@ -112,7 +112,7 @@ async fn content_delta_is_written_to_terminal_history_before_completion() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
-        10,
+        Some(10),
         None,
     )
     .await
@@ -151,7 +151,7 @@ async fn assistant_message_flushes_stream_to_terminal_history() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
-        10,
+        Some(10),
         None,
     )
     .await
@@ -190,7 +190,7 @@ async fn cjk_history_text_reads_without_inserted_spaces() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
-        10,
+        Some(10),
         None,
     )
     .await
@@ -237,7 +237,7 @@ async fn tool_call_events_are_written_to_terminal_history() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
-        10,
+        Some(10),
         None,
     )
     .await

@@ -167,7 +167,7 @@ async fn user_message_then_assistant_reply_appears_in_scrollback() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
-        10,
+        Some(10),
         None,
     )
     .await;
@@ -214,7 +214,7 @@ async fn user_message_appears_in_terminal_scrollback() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
-        10,
+        Some(10),
         None,
     )
     .await
@@ -265,7 +265,7 @@ async fn compact_command_emits_compress_request() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
-        10,
+        Some(10),
         None,
     )
     .await;
@@ -301,7 +301,7 @@ async fn unknown_slash_command_is_rendered_to_scrollback() {
         cancel,
         "echo".to_string(),
         "test-model".to_string(),
-        10,
+        Some(10),
         None,
     )
     .await
@@ -329,7 +329,7 @@ async fn cancelled_turn_does_not_block_following_submit() {
             cancel,
             "echo".to_string(),
             "test-model".to_string(),
-            10,
+            Some(10),
             None,
         )
         .await;

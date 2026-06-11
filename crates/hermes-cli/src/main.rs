@@ -90,7 +90,7 @@ async fn run_tui(config: PerryHermesConfig, config_path: &Path) -> anyhow::Resul
     let provider_name = selected_provider.name.clone();
     let model_name = selected_provider.model.clone();
 
-    let max_iterations = config.agent.max_iterations.unwrap_or(10);
+    let max_iterations = config.agent.max_iterations;
     let context_window_size = Some(selected_provider.context_window_size);
 
     let agent = Arc::new(

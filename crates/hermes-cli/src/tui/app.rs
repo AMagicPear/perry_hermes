@@ -27,7 +27,7 @@ pub struct App {
     /// Current iteration number (0 = none yet).
     pub iteration: u32,
     /// Configured max iterations.
-    pub max_iterations: u32,
+    pub max_iterations: Option<u32>,
     /// Display hint shown briefly after a compression event.
     pub compression_hint: Option<String>,
     /// `Some(Instant)` while a turn is in flight (`AppMode::AwaitingModel`).
@@ -67,7 +67,7 @@ impl App {
     pub fn new(
         provider_name: String,
         model_name: String,
-        max_iterations: u32,
+        max_iterations: Option<u32>,
         context_window_size: Option<u64>,
     ) -> Self {
         Self {
@@ -205,7 +205,7 @@ impl Default for App {
             provider_name: None,
             model_name: None,
             iteration: 0,
-            max_iterations: 0,
+            max_iterations: None,
             compression_hint: None,
             turn_started_at: None,
             chat_scroll: 0,
