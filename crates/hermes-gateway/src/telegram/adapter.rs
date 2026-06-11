@@ -5,13 +5,30 @@ use perry_hermes_core::Platform;
 use perry_hermes_core::commands::Command;
 use perry_hermes_core::message::ToolCall;
 use teloxide::prelude::*;
-use teloxide::types::{BotCommand, ChatAction, ChatKind};
+use teloxide::types::{BotCommand, ChatAction, ChatKind, ParseMode};
+use telegram_markdown_v2::{convert_with_strategy, UnsupportedTagsStrategy};
 use tracing::{info, warn};
 
 use crate::adapter::PlatformAdapter;
 use crate::event::{ChatType, GatewayEvent};
 use crate::handler::GatewayEventHandler;
 use crate::runner::GatewayRunner;
+
+/// Send a message with MarkdownV2 formatting; fall back to plain text on failure.
+async fn send_markdown(bot: &Bot, chat_id: ChatId, text: &str) {
+    let formatted = convert_with_strategy(text, UnsupportedTagsStrategy::Escape)
+        .unwrap_or_else(|_| text.to_string());
+    if let Err(e) = bot
+        .send_message(chat_id, &formatted)
+        .parse_mode(ParseMode::MarkdownV2)
+        .await
+    {
+        warn!(error = %e, "MarkdownV2 send failed, falling back to plain text");
+        if let Err(e2) = bot.send_message(chat_id, text).await {
+            warn!(error = %e2, "plain text fallback also failed");
+        }
+    }
+}
 
 // ── Streaming event handler ─────────────────────────────────────────
 
@@ -46,9 +63,7 @@ impl TelegramEventHandler {
         let bot = self.bot.clone();
         let chat_id = self.chat_id;
         tokio::spawn(async move {
-            if let Err(e) = bot.send_message(chat_id, &text).await {
-                warn!(error = %e, "failed to send Telegram message");
-            }
+            send_markdown(&bot, chat_id, &text).await;
         });
     }
 }
@@ -177,14 +192,12 @@ impl PlatformAdapter for TelegramAdapter {
 
                 match gateway.handle_event(event, &mut handler).await {
                     Ok(crate::runner::GatewayResponse::CommandReply(text)) => {
-                        if let Err(e) = bot.send_message(chat_id, &text).await {
-                            warn!(error = %e, "failed to send Telegram reply");
-                        }
+                        send_markdown(&bot, chat_id, &text).await;
                     }
                     Ok(crate::runner::GatewayResponse::Ignored) => {}
                     Err(e) => {
                         warn!(error = %e, "gateway error");
-                        let _ = bot.send_message(chat_id, format!("Error: {e}")).await;
+                        let _ = bot.send_message(chat_id, format!("⚠ Error: {e}")).await;
                     }
                 }
 

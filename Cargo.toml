@@ -51,6 +51,9 @@ bytes = "1"
 # Telegram bot
 teloxide = { version = "0.17", features = ["macros"] }
 
+# Telegram MarkdownV2 conversion
+telegram-markdown-v2 = "0.2"
+
 # Concurrent map
 dashmap = "6"
 
