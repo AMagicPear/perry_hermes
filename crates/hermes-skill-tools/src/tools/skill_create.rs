@@ -186,10 +186,10 @@ impl Tool for SkillCreateTool {
         }
 
         // Step 9: atomic write.
-        if let Some(parent) = target.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                return Ok(failure(format!("create_dir_all failed: {e}"), None));
-            }
+        if let Some(parent) = target.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            return Ok(failure(format!("create_dir_all failed: {e}"), None));
         }
         let write_result = (|| -> std::io::Result<()> {
             let tmp = tempfile::NamedTempFile::new_in(target.parent().unwrap())?;
