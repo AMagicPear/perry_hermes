@@ -227,7 +227,11 @@ mod tests {
     use perry_hermes_core::message::{Content, Message, Role, ToolCall};
     use serde_json::json;
 
-    fn assistant_with(content: &str, reasoning: Option<&str>, tool_calls: Vec<ToolCall>) -> Message {
+    fn assistant_with(
+        content: &str,
+        reasoning: Option<&str>,
+        tool_calls: Vec<ToolCall>,
+    ) -> Message {
         Message {
             role: Role::Assistant,
             content: Content::Text(content.into()),
