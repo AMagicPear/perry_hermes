@@ -177,6 +177,18 @@ pub(super) fn to_anthropic_messages(
                     }
                 }
 
+                // Drop "thought-only" assistant turns: an assistant message
+                // with no visible text and no tool calls would serialize to
+                // `content: []`, which the API rejects. If the LLM produced
+                // any reasoning this turn it was not visible to the user and
+                // we cannot round-trip it as a thinking block (the API
+                // requires a `signature` we do not have), so the safe move
+                // is to skip the message entirely. Drop it before it can
+                // become a wire-format error on the next request.
+                if blocks.is_empty() {
+                    continue;
+                }
+
                 wire.push(AnthropicMessage {
                     role: "assistant".into(),
                     content: AnthropicMessageContent::Blocks(blocks),
@@ -266,5 +278,82 @@ fn build_output_config(thinking: &Option<AnthropicThinking>) -> Option<Anthropic
             effort: effort.clone(),
         }),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use perry_hermes_core::message::{Message, Role, ToolCall};
+    use serde_json::json;
+
+    fn assistant_with(content: &str, tool_calls: Vec<ToolCall>) -> Message {
+        Message {
+            role: Role::Assistant,
+            content: Content::Text(content.into()),
+            reasoning: None,
+            tool_call_id: None,
+            tool_calls: if tool_calls.is_empty() {
+                None
+            } else {
+                Some(tool_calls)
+            },
+        }
+    }
+
+    fn user_with(content: &str) -> Message {
+        Message {
+            role: Role::User,
+            content: Content::Text(content.into()),
+            reasoning: None,
+            tool_call_id: None,
+            tool_calls: None,
+        }
+    }
+
+    #[test]
+    fn to_anthropic_messages_drops_empty_assistant_turns() {
+        // Reproduces the same bug as the OpenAI adapter regression
+        // test, but for the Anthropic wire format. An assistant turn
+        // with no visible text and no tool calls used to serialize to
+        // `content: []`, which the API rejects. It must be dropped
+        // before hitting the wire.
+        let messages = vec![
+            user_with("hi"),
+            assistant_with("hello!", vec![]),
+            user_with("how are you?"),
+            // The bad message: empty content, no tool calls.
+            assistant_with("", vec![]),
+        ];
+
+        let (system, wire) = to_anthropic_messages(&messages);
+        assert!(system.is_none());
+        // Only user + assistant + user should remain; the empty
+        // assistant is dropped.
+        assert_eq!(wire.len(), 3);
+        assert_eq!(wire[0].role, "user");
+        assert_eq!(wire[1].role, "assistant");
+        assert_eq!(wire[2].role, "user");
+    }
+
+    #[test]
+    fn to_anthropic_messages_keeps_assistant_with_tool_calls_only() {
+        // An assistant turn that produced only a tool call (no
+        // visible text) is legitimate — the ToolUse block carries
+        // the information. We must not drop it.
+        let call = ToolCall::new("call_1", "terminal", json!({"command": "ls"}));
+        let messages = vec![user_with("list files"), assistant_with("", vec![call])];
+
+        let (_, wire) = to_anthropic_messages(&messages);
+        assert_eq!(wire.len(), 2);
+        assert_eq!(wire[1].role, "assistant");
+        // The assistant has exactly one ToolUse block and no Text.
+        match &wire[1].content {
+            AnthropicMessageContent::Blocks(blocks) => {
+                assert_eq!(blocks.len(), 1);
+                assert!(matches!(blocks[0], AnthropicContentBlock::ToolUse { .. }));
+            }
+            other => panic!("expected Blocks content, got {other:?}"),
+        }
     }
 }
