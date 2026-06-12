@@ -18,6 +18,8 @@ perry-hermes-gateway.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tokio-util.workspace = true
 anyhow.workspace = true
+async-trait = "0.1"
+chrono.workspace = true
 clap = { workspace = true, features = ["derive"] }
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }

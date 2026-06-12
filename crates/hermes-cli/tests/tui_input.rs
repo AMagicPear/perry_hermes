@@ -47,8 +47,11 @@ fn enter_in_awaiting_model_does_not_submit_parallel_turn() {
 
     let ev = handle_key(&mut app, key(KeyCode::Enter));
 
-    assert!(matches!(ev, AppEvent::Tick));
-    assert_eq!(app.input, "queued thought");
+    // Submit is emitted so the main loop can enqueue; the test verifies
+    // that input is cleared (queueing drains the buffer) and the
+    // intent-to-submit is preserved as AppEvent::Submit.
+    assert!(matches!(ev, AppEvent::Submit(text) if text == "queued thought"));
+    assert_eq!(app.input, "");
 }
 
 #[test]

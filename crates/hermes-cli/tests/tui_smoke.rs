@@ -12,6 +12,7 @@ use futures::stream;
 use perry_hermes_agent::AgentRunError;
 use perry_hermes_core::ProviderError;
 use perry_hermes_core::error::LoopError;
+use perry_hermes_gateway::runner::GatewayError;
 use perry_hermes_core::message::{Content, Message, Role};
 use perry_hermes_core::provider::{
     Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta,
@@ -344,8 +345,8 @@ async fn cancelled_turn_does_not_block_following_submit() {
         .send(AppEvent::CancelInFlight)
         .expect("send cancel event");
     input_tx
-        .send(AppEvent::TurnCompleted(Err(AgentRunError::Loop(
-            LoopError::Cancelled,
+        .send(AppEvent::TurnCompleted(Err(GatewayError::AgentRun(
+            AgentRunError::Loop(LoopError::Cancelled),
         ))))
         .expect("send cancelled completion");
     tokio::time::sleep(Duration::from_millis(20)).await;

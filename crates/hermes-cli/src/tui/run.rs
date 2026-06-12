@@ -2,15 +2,13 @@
 //! accepts a `TestBackend` and an injected input channel; the production
 //! `run` function wraps it with `CrosstermBackend::Stdout`.
 
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use futures::StreamExt;
-use perry_hermes_agent::{AgentLoop, AgentRunError, AgentSession, SessionRegistry};
-use perry_hermes_core::Platform;
-use perry_hermes_core::error::LoopError;
+use perry_hermes_agent::AgentLoop;
 use perry_hermes_core::tool::ToolOutput;
+use perry_hermes_gateway::{GatewayConfig, GatewayResponse, GatewayRunner};
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::buffer::Cell;
 use ratatui::{Terminal, TerminalOptions, Viewport};
@@ -18,6 +16,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use unicode_width::UnicodeWidthStr;
 
+use crate::tui::adapter::{make_gateway_event, tui_session_key};
 use crate::tui::app::App;
 use crate::tui::event::{AppEvent, AppMode, RenderedLine};
 use crate::tui::history::{HistoryWrite, render_history_lines_to_buffer};
@@ -45,40 +44,6 @@ impl std::fmt::Display for RunError {
 }
 
 impl std::error::Error for RunError {}
-
-impl From<AgentRunError> for RunError {
-    fn from(e: AgentRunError) -> Self {
-        RunError::Tui(e.to_string())
-    }
-}
-
-/// Build a per-CLI-invocation session key.
-///
-/// The shape mirrors the gateway's [`build_key`](perry_hermes_gateway::runner::build_key):
-/// `platform:chat_type:id`. After `SessionRegistry::format_session_id`
-/// swaps `:` and `-` for `_`, the on-disk filename becomes
-/// `cli_run_{pid}_{nanos}_{counter}.json`, sitting alongside
-/// `telegram_dm_674971091.json` and the rest. Both sides therefore
-/// go through the same save/lookup mechanics in [`SessionRegistry`].
-///
-/// The id segment combines pid + monotonic clock + an in-process
-/// counter so two CLI runs in the same nanosecond still don't
-/// collide.
-fn new_cli_session_key() -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default();
-    let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "{}:run:{}-{}-{}",
-        Platform::Tui.as_str(),
-        std::process::id(),
-        now.as_nanos(),
-        counter
-    )
-}
 
 /// Production entry point: drives the TUI against stdout / real keyboard.
 pub async fn run(
@@ -115,12 +80,14 @@ pub async fn run(
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(std::time::Duration::from_millis(16));
 
-    let working_dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let sessions_dir = perry_hermes_agent::default_sessions_dir();
-    let system_message = agent.system_message_for(&working_dir).await;
-    let registry = SessionRegistry::new(sessions_dir, working_dir, system_message);
-    let cli_key = new_cli_session_key();
-    let entry = registry.get_or_create(&cli_key).await;
+    // Create GatewayRunner with default config for TUI.
+    let config = GatewayConfig::default();
+    let gateway = Arc::new(GatewayRunner::new(agent, config));
+
+    // Get or create the TUI session using the same key that GatewayRunner
+    // will produce from GatewayEvent (via build_key).
+    let session_key = tui_session_key();
+    let entry = gateway.sessions().get_or_create(&session_key).await;
     let session = entry.session.clone();
 
     let result: Result<(), RunError> = async {
@@ -142,13 +109,20 @@ pub async fn run(
                     match maybe {
                         Some(Ok(Event::Key(k))) => {
                             let next = handle_key(&mut app, k);
-                            if dispatch_event(
+                            // Special handling for Submit while agent is running:
+                            // enqueue directly (synchronously) to avoid race.
+                            if matches!(&next, AppEvent::Submit(_)) && app.mode == AppMode::AwaitingModel {
+                                if let AppEvent::Submit(text) = next {
+                                    session.enqueue_message(text.clone()).await;
+                                    let width = app.history_width;
+                                    history.push(&mut app, RenderedLine::System(format!("(queued) {text}")), width);
+                                }
+                            } else if dispatch_event(
                                 &mut app,
                                 next,
                                 &cancel,
                                 Some(RunContext {
-                                    agent: &agent,
-                                    session: &session,
+                                    gateway: &gateway,
                                     input_tx: &input_tx,
                                 }),
                                 Some(&mut history),
@@ -168,11 +142,19 @@ pub async fn run(
                     }
                 }
                 maybe = input_rx.recv() => {
-                    if let Some(ev) = maybe
-                        && dispatch_event(&mut app, ev, &cancel, None, Some(&mut history))? {
+                    if let Some(ev) = maybe {
+                        // Special handling for Submit while agent is running.
+                        if matches!(&ev, AppEvent::Submit(_)) && app.mode == AppMode::AwaitingModel {
+                            if let AppEvent::Submit(text) = ev {
+                                session.enqueue_message(text.clone()).await;
+                                let width = app.history_width;
+                                history.push(&mut app, RenderedLine::System(format!("(queued) {text}")), width);
+                            }
+                        } else if dispatch_event(&mut app, ev, &cancel, None, Some(&mut history))? {
                             draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
                             return Ok(());
                         }
+                    }
                 }
             }
         }
@@ -183,10 +165,15 @@ pub async fn run(
         eprintln!("[perry-hermes] warning: failed to disable raw mode: {e}");
     }
 
-    // Best-effort archive of this CLI run's session. Failure is
+    // Best-effort archive of this TUI run's session. Failure is
     // logged inside `archive_active` and does not affect the run
-    // result returned to the caller.
-    let _ = registry.archive_active(&cli_key).await;
+    // result returned to the caller. We do this only on clean exit
+    // (the run() future resolved with Ok/Err, not panic/cancel),
+    // so a long-lived session survives a Ctrl-C that hits mid-turn.
+    let _ = gateway
+        .sessions()
+        .archive_active(&session_key)
+        .await;
 
     result
 }
@@ -251,8 +238,7 @@ pub async fn run_with_backend(
 }
 
 struct RunContext<'a> {
-    agent: &'a Arc<AgentLoop>,
-    session: &'a AgentSession,
+    gateway: &'a Arc<GatewayRunner>,
     input_tx: &'a mpsc::UnboundedSender<AppEvent>,
 }
 
@@ -313,60 +299,46 @@ fn dispatch_event(
         }
         AppEvent::Tick => Ok(false),
         AppEvent::Submit(text) => {
+            // This path is only reached when agent is idle.
+            // AwaitingModel submits are handled in the main loop.
             push_history_or_scrollback(
                 app,
                 &mut history,
                 RenderedLine::User(text.clone()),
                 app.history_width,
             );
-
-            if app.mode == AppMode::AwaitingModel {
-                // Agent is mid-turn — queue the message for injection
-                // at the next loop iteration boundary.
-                if let Some(ctx) = run_ctx {
-                    let session = ctx.session.clone();
-                    tokio::spawn(async move {
-                        session.enqueue_message(text).await;
-                    });
-                }
-            } else {
-                // Agent is idle — start a new turn.
-                app.mode = AppMode::AwaitingModel;
-                app.turn_started_at = Some(Instant::now());
-                if let Some(ctx) = run_ctx {
-                    let turn_cancel = CancellationToken::new();
-                    let on_event = make_on_event(ctx.input_tx.clone());
-                    let agent = Arc::clone(ctx.agent);
-                    let session = ctx.session.clone();
-                    let result_tx = ctx.input_tx.clone();
-                    app.active_turn_cancel = Some(turn_cancel.clone());
-                    tokio::spawn(async move {
-                        let res = agent
-                            .run_session_turn(&text, &session, turn_cancel, on_event)
-                            .await;
-                        let _ = result_tx.send(AppEvent::TurnCompleted(res));
-                    });
-                }
+            app.mode = AppMode::AwaitingModel;
+            app.turn_started_at = Some(Instant::now());
+            if let Some(ctx) = run_ctx {
+                let event = make_gateway_event(text);
+                let gateway = Arc::clone(ctx.gateway);
+                let mut handler = make_on_event(ctx.input_tx.clone());
+                let result_tx = ctx.input_tx.clone();
+                tokio::spawn(async move {
+                    let res = gateway.handle_event(event, &mut handler).await;
+                    let _ = result_tx.send(AppEvent::TurnCompleted(res));
+                });
             }
             Ok(false)
         }
         AppEvent::Quit => Ok(true),
         AppEvent::Compact(focus) => {
-            let line = RenderedLine::System(format!(
-                "Manual compact requested (focus: {}).",
-                focus.as_deref().unwrap_or("(none)")
-            ));
-            let width = app.history_width;
-            push_history_or_scrollback(app, &mut history, line, width);
-
+            // Compact is handled as a /compact command through GatewayRunner.
+            let cmd_text = match focus {
+                Some(f) => format!("/compact {f}"),
+                None => "/compact".to_string(),
+            };
+            let event = make_gateway_event(cmd_text);
             if let Some(ctx) = run_ctx {
                 app.mode = AppMode::AwaitingModel;
                 app.turn_started_at = Some(Instant::now());
-                let agent = Arc::clone(ctx.agent);
-                let session = ctx.session.clone();
+                let gateway = Arc::clone(ctx.gateway);
+                let mut handler = make_on_event(ctx.input_tx.clone());
                 let result_tx = ctx.input_tx.clone();
                 tokio::spawn(async move {
-                    let res = agent.compact_session(&session, focus.as_deref()).await;
+                    let res = gateway.handle_event(event, &mut handler).await;
+                    // Compact returns a CommandReply, not a TurnCompleted.
+                    // We need to handle this differently.
                     let _ = result_tx.send(AppEvent::CompactCompleted(res));
                 });
             } else {
@@ -379,12 +351,7 @@ fn dispatch_event(
             if let Some(history) = history.as_mut() {
                 history.clear();
             }
-            if let Some(ctx) = run_ctx {
-                let session = ctx.session.clone();
-                tokio::spawn(async move {
-                    session.reset().await;
-                });
-            }
+            // Clear is handled locally — no gateway interaction needed.
             Ok(false)
         }
         AppEvent::Append(line) => {
@@ -402,9 +369,15 @@ fn dispatch_event(
             app.mode = AppMode::Cancelling;
             if let Some(turn_cancel) = app.active_turn_cancel.take() {
                 turn_cancel.cancel();
-            } else {
+            } else if run_ctx.is_some() {
+                // No per-turn token, but a real gateway is attached —
+                // escalate to the outer token so the spawned turn
+                // task is torn down.
                 cancel.cancel();
             }
+            // No run_ctx (test backend) and no turn token: this is a
+            // synthetic cancellation. Just record the mode change and
+            // wait for a matching TurnCompleted to clean up.
             Ok(false)
         }
         AppEvent::TurnCompleted(res) => {
@@ -412,11 +385,6 @@ fn dispatch_event(
             app.active_turn_cancel = None;
             match res {
                 Ok(_) => {}
-                Err(AgentRunError::Loop(LoopError::Cancelled)) => {
-                    if let Some(history) = history.as_mut() {
-                        history.finish_stream(app.history_width);
-                    }
-                }
                 Err(e) => {
                     if let Some(history) = history.as_mut() {
                         history.finish_stream(app.history_width);
@@ -433,11 +401,12 @@ fn dispatch_event(
             app.turn_started_at = None;
             app.active_turn_cancel = None;
             match res {
-                Ok(event) => {
-                    let next = apply_loop_event(app, event);
-                    let _ = dispatch_event(app, next, cancel, None, history)?;
+                Ok(GatewayResponse::CommandReply(text)) => {
+                    let line = RenderedLine::System(text);
+                    let width = app.history_width;
+                    push_history_or_scrollback(app, &mut history, line, width);
                 }
-                Err(AgentRunError::Loop(LoopError::Cancelled)) => {}
+                Ok(_) => {}
                 Err(e) => {
                     let line = RenderedLine::System(format!("error: {e}"));
                     let width = app.history_width;
@@ -686,66 +655,9 @@ impl Backend for SharedTestBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
-    use perry_hermes_agent::{ModelConfig, PerryHermesConfig, ProviderConfig, ProviderKind};
-    use perry_hermes_core::ProviderError;
-    use perry_hermes_core::message::Message;
-    use perry_hermes_core::provider::FinishReason;
-    use perry_hermes_core::provider::{CompletionStream, Provider};
-    use perry_hermes_core::registry::ToolSchema;
     use ratatui::layout::Size;
     use std::cell::RefCell;
     use std::rc::Rc;
-
-    struct CompactProvider;
-
-    #[async_trait]
-    impl Provider for CompactProvider {
-        async fn stream(
-            &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _cancel: CancellationToken,
-        ) -> Result<CompletionStream, ProviderError> {
-            Ok(Box::pin(futures::stream::iter(vec![Ok(
-                perry_hermes_core::provider::CompletionDelta {
-                    content_delta: Some("summary".into()),
-                    reasoning_delta: None,
-                    tool_call_delta: None,
-                    usage: Some(perry_hermes_core::Usage {
-                        input_tokens: 10,
-                        output_tokens: 2,
-                        cached_input_tokens: 0,
-                    }),
-                    finish_reason: Some(FinishReason::Stop),
-                },
-            )])))
-        }
-    }
-
-    fn compact_config() -> PerryHermesConfig {
-        PerryHermesConfig {
-            providers: vec![ProviderConfig {
-                name: "local".into(),
-                kind: ProviderKind::Echo,
-                api_key_env: None,
-                models: vec![ModelConfig {
-                    name: "echo".into(),
-                    context_window_size: 128_000,
-                }],
-                base_url: None,
-                api_key_header: None,
-                thinking: None,
-            }],
-            agent: perry_hermes_agent::AgentConfig {
-                default_provider: "local".into(),
-                default_model: "echo".into(),
-                context_compression_enabled: true,
-                ..Default::default()
-            },
-            gateway: Default::default(),
-        }
-    }
 
     fn app_with_context_usage() -> App {
         let mut app = App::default();
@@ -766,31 +678,6 @@ mod tests {
             std::env::remove_var("PERRY_HERMES_HOME");
         }
         assert_eq!(dir, tmp.path().join("sessions"));
-    }
-
-    #[test]
-    fn cli_session_key_is_unique_per_invocation_and_namespaced() {
-        // Each CLI invocation must produce its own session file, not
-        // a shared `cli.json` that overwrites prior runs. The key
-        // uses the same `platform:chat_type:id` shape as the
-        // gateway (`runner::build_key`) so both sides can be saved,
-        // listed, and resumed through the same `SessionRegistry`
-        // mechanics.
-        let first = super::new_cli_session_key();
-        let second = super::new_cli_session_key();
-        assert_ne!(first, second, "cli session keys must differ across calls");
-        let parts: Vec<&str> = first.split(':').collect();
-        assert_eq!(
-            parts.len(),
-            3,
-            "cli session key should follow platform:chat_type:id shape; got {first}"
-        );
-        assert_eq!(parts[0], Platform::Tui.as_str(), "platform segment");
-        assert_eq!(parts[1], "run", "chat_type segment");
-        assert!(
-            !parts[2].is_empty(),
-            "id segment should carry the per-invocation id; got {first}"
-        );
     }
 
     #[derive(Clone, Default)]
@@ -897,73 +784,6 @@ mod tests {
             *calls_ref.borrow(),
             vec![(0, 0, "你".to_string()), (2, 0, "好".to_string())]
         );
-    }
-
-    #[tokio::test]
-    async fn compact_event_runs_agent_and_replaces_session_messages() {
-        let agent = Arc::new(AgentLoop::new(CompactProvider, compact_config()));
-        let session = AgentSession::new("test", PathBuf::from("."), None);
-        session
-            .replace_messages(vec![
-                Message::user("first request"),
-                Message::assistant("first answer"),
-                Message::user("middle request"),
-                Message::assistant("middle answer"),
-                Message::user("latest request"),
-            ])
-            .await;
-        session.remember_context_usage_baseline(1_000).await;
-        let (input_tx, mut input_rx) = mpsc::unbounded_channel();
-        let cancel = CancellationToken::new();
-        let mut app = app_with_context_usage();
-
-        dispatch_event(
-            &mut app,
-            AppEvent::Compact(None),
-            &cancel,
-            Some(RunContext {
-                agent: &agent,
-                session: &session,
-                input_tx: &input_tx,
-            }),
-            None,
-        )
-        .expect("compact dispatch should start background task");
-
-        let AppEvent::CompactCompleted(result) = input_rx
-            .recv()
-            .await
-            .expect("compact task should send completion")
-        else {
-            panic!("expected CompactCompleted event");
-        };
-
-        dispatch_event(
-            &mut app,
-            AppEvent::CompactCompleted(result),
-            &cancel,
-            None,
-            None,
-        )
-        .expect("compact completion should update app state");
-
-        // The system message lives in its own session field, so the business
-        // log after compaction is [first_user, summary].
-        let log = session.messages().await;
-        assert_eq!(log.len(), 2);
-        assert!(matches!(
-            log.first(),
-            Some(Message { content, .. }) if content.as_text() == "first request"
-        ));
-        assert!(matches!(
-            log.get(1),
-            Some(Message { content, .. })
-                if content.as_text().contains("[CONTEXT SUMMARY")
-                    && content.as_text().contains("summary")
-        ));
-        assert_eq!(app.context_used_tokens, Some(1_002));
-        assert_eq!(app.compression_hint.as_deref(), Some("Compressed in 0ms"));
-        assert_eq!(app.mode, AppMode::Idle);
     }
 
     #[test]

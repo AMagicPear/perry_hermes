@@ -1925,6 +1925,7 @@ version = "0.4.7"
 dependencies = [
  "anyhow",
  "async-trait",
+ "chrono",
  "clap",
  "crossterm",
  "futures",

@@ -1,6 +1,7 @@
 //! Internal event types flowing through the TUI's main loop.
 
-use perry_hermes_agent::{AgentRunError, LoopEvent, RunResult};
+use perry_hermes_agent::LoopEvent;
+use perry_hermes_gateway::{GatewayError, GatewayResponse};
 
 /// A single event consumed by the `App` from any of its event sources.
 #[derive(Debug)]
@@ -30,11 +31,11 @@ pub enum AppEvent {
     /// A spawned agent turn completed. Sent by the background task spawned
     /// in response to a `Submit`. The `AgentSession` already owns the
     /// updated message history; the TUI only resets presentation state.
-    TurnCompleted(Result<RunResult, AgentRunError>),
+    TurnCompleted(Result<GatewayResponse, GatewayError>),
     /// A spawned manual compaction completed. The `AgentSession` already
     /// owns the compacted message history; the TUI applies the event to
     /// update user-facing status.
-    CompactCompleted(Result<LoopEvent, AgentRunError>),
+    CompactCompleted(Result<GatewayResponse, GatewayError>),
 }
 
 /// A single line in the chat scrollback.

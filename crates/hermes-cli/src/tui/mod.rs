@@ -1,5 +1,6 @@
 //! `ratatui`-based TUI. Replaces the legacy REPL.
 
+pub mod adapter;
 pub mod app;
 pub mod event;
 pub mod history;
@@ -9,7 +10,10 @@ pub mod render;
 pub mod run;
 
 use perry_hermes_agent::LoopEvent;
-use perry_hermes_gateway::{GatewayEventHandler, dispatch_loop_event};
+use perry_hermes_core::error::ToolError;
+use perry_hermes_core::message::{Message, ToolCall};
+use perry_hermes_core::tool::ToolOutput;
+use perry_hermes_gateway::GatewayEventHandler;
 use tokio::sync::mpsc;
 
 pub use app::App;
@@ -23,12 +27,12 @@ pub use run::{run, run_with_backend};
 /// platform adapter — it uses the same streaming protocol as QQ and
 /// Telegram, but delivers events to the ratatui rendering pipeline
 /// instead of a messaging API.
-struct TuiEventHandler {
+pub struct TuiEventHandler {
     tx: mpsc::UnboundedSender<AppEvent>,
 }
 
 impl TuiEventHandler {
-    fn new(tx: mpsc::UnboundedSender<AppEvent>) -> Self {
+    pub fn new(tx: mpsc::UnboundedSender<AppEvent>) -> Self {
         Self { tx }
     }
 }
@@ -50,56 +54,40 @@ impl GatewayEventHandler for TuiEventHandler {
             .send(AppEvent::Loop(LoopEvent::ReasoningDelta(text.to_string())));
     }
 
-    fn on_tool_started(&mut self, call: &perry_hermes_core::message::ToolCall, iteration: u32) {
+    fn on_tool_started(&mut self, call: &ToolCall, iteration: u32) {
         let _ = self.tx.send(AppEvent::Loop(LoopEvent::ToolCallStarted {
             call: call.clone(),
             iteration,
         }));
     }
 
-    fn on_tool_finished(
-        &mut self,
-        call: &perry_hermes_core::message::ToolCall,
-        result: &Result<perry_hermes_core::tool::ToolOutput, perry_hermes_core::error::ToolError>,
-    ) {
+    fn on_tool_finished(&mut self, call: &ToolCall, result: &Result<ToolOutput, ToolError>) {
         let _ = self.tx.send(AppEvent::Loop(LoopEvent::ToolCallFinished {
             call: call.clone(),
             result: result.clone(),
         }));
     }
 
-    fn on_assistant_message(&mut self, message: &perry_hermes_core::message::Message) {
+    fn on_assistant_message(&mut self, message: &Message) {
         let _ = self
             .tx
             .send(AppEvent::Loop(LoopEvent::AssistantMessage(message.clone())));
     }
+
+    fn on_error(&mut self, error: &str) {
+        let _ = self
+            .tx
+            .send(AppEvent::Loop(LoopEvent::Cancelled)); // Reuse Cancelled for errors
+        // Error text will be displayed via TurnCompleted error handling
+        let _ = error; // Suppress unused warning
+    }
+
+    fn on_turn_completed(&mut self) {
+        // TurnCompleted is sent via the result channel, not here.
+    }
 }
 
-/// Build the `on_event` closure to pass to `AgentLoop::run_session_turn`.
-///
-/// Streaming events (content deltas, tool calls, etc.) are dispatched
-/// through a [`TuiEventHandler`] implementing [`GatewayEventHandler`].
-/// Non-streaming events (`ContextUsageUpdated`, `CompressionCompleted`,
-/// `CompressionSkipped`, `CompressionFailed`, `Cancelled`, etc.) are
-/// forwarded directly so the TUI's [`loop_bridge`] can handle them.
-pub fn make_on_event(tx: mpsc::UnboundedSender<AppEvent>) -> impl FnMut(LoopEvent) + Send {
-    let mut handler = TuiEventHandler::new(tx.clone());
-    move |ev: LoopEvent| {
-        // Events that the TUI loop_bridge needs verbatim but the
-        // GatewayEventHandler trait doesn't cover — forward directly.
-        if matches!(
-            ev,
-            LoopEvent::ContextUsageUpdated { .. }
-                | LoopEvent::CompressionCompleted { .. }
-                | LoopEvent::CompressionSkipped { .. }
-                | LoopEvent::CompressionFailed { .. }
-                | LoopEvent::LengthLimit
-                | LoopEvent::IterationsExhausted
-                | LoopEvent::Cancelled
-        ) {
-            let _ = tx.send(AppEvent::Loop(ev));
-        } else {
-            dispatch_loop_event(&mut handler, &ev);
-        }
-    }
+/// Build a `TuiEventHandler` for use with `GatewayRunner::handle_event`.
+pub fn make_on_event(tx: mpsc::UnboundedSender<AppEvent>) -> TuiEventHandler {
+    TuiEventHandler::new(tx)
 }

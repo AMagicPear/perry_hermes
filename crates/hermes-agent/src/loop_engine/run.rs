@@ -133,7 +133,16 @@ pub(crate) async fn run(
         )
         .await?
         {
-            Some(result) => return Ok(result),
+            Some(result) => {
+                // Before returning, check if there are pending user
+                // messages. If so, continue the loop instead of
+                // returning, so the next LLM turn sees them.
+                if session.has_pending_messages().await {
+                    inject_process_notifications(&mut messages).await;
+                    continue;
+                }
+                return Ok(result);
+            }
             None => {
                 // After tool dispatch, drain background process
                 // completion notifications and inject them as

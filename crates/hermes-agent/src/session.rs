@@ -209,6 +209,11 @@ impl AgentSession {
         Some(Message::user(collected.join("\n\n")))
     }
 
+    /// Check if there are pending user messages without draining them.
+    pub async fn has_pending_messages(&self) -> bool {
+        !self.pending_messages.read().await.is_empty()
+    }
+
     pub async fn replace_messages(&self, messages: Vec<Message>) {
         *self.messages.write().await = messages;
         self.persist().await;
