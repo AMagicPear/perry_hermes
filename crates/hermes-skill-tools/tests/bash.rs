@@ -177,3 +177,51 @@ async fn process_tool_wait_returns_output() {
     assert!(wait_out.content.contains("timed_out"));
     assert!(wait_out.content.contains("false"));
 }
+
+#[tokio::test]
+async fn process_tool_kill_terminates_entire_process_group() {
+    // The background shell is started in a new process group, so killing
+    // the session must also kill any children it forked. We verify by
+    // asking the shell to background a `sleep` and only have that child
+    // create a marker file — if process-group kill works, the child dies
+    // before it touches the marker.
+    let bash = BashTool::new();
+    let process = ProcessTool::new();
+    let cancel = CancellationToken::new();
+
+    let marker = std::env::temp_dir().join("perry_hermes_kill_pgroup_marker.txt");
+    let _ = std::fs::remove_file(&marker);
+
+    let cmd = format!("(sleep 5; touch {}) & wait", marker.display());
+    let out = bash
+        .execute(
+            json!({ "command": cmd, "background": true }),
+            ctx(),
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&out.content).unwrap();
+    let session_id = parsed["session_id"].as_str().unwrap().to_string();
+
+    // Give the shell a moment to fork the sleep child.
+    tokio::time::sleep(Duration::from_millis(400)).await;
+
+    let kill_out = process
+        .execute(
+            json!({ "action": "kill", "session_id": session_id }),
+            ctx(),
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(kill_out.content.to_lowercase().contains("killed"));
+
+    // Wait past the 5s sleep deadline; if the child survived, the marker
+    // would exist by now.
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    assert!(
+        !marker.exists(),
+        "child process survived after kill — process group was not terminated"
+    );
+}
