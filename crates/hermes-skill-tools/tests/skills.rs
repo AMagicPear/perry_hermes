@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use perry_hermes_core::tool::{Tool, ToolContext, ToolPermissions};
-use perry_hermes_skill_tools::tools::{SkillListTool, SkillViewTool};
+use perry_hermes_skill_tools::tools::{SkillCreateTool, SkillListTool, SkillViewTool};
 use serde_json::json;
 use tempfile::TempDir;
 use tokio_util::sync::CancellationToken;
@@ -373,4 +373,63 @@ async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
             .iter()
             .any(|x| x == "scripts/file.py")
     );
+}
+
+// ---------------------------------------------------------------------------
+// SkillCreateTool
+// ---------------------------------------------------------------------------
+
+fn read_skill_md(dir: &std::path::Path, name: &str) -> String {
+    let path = dir.join(name).join("SKILL.md");
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("read {:?} failed: {e}", path))
+}
+
+fn err(out: &perry_hermes_core::tool::ToolOutput) -> serde_json::Value {
+    let v = parse(out);
+    assert_eq!(
+        v["success"].as_bool(),
+        Some(false),
+        "expected success=false, got: {v}"
+    );
+    v
+}
+
+#[tokio::test]
+async fn skill_create_writes_a_valid_skill_md_to_disk() {
+    let dir = TempDir::new().unwrap();
+    let skills_dir = dir.path().join("skills");
+    let tool = SkillCreateTool::new(skills_dir.clone());
+
+    let body = "# Rust error formatting\n\n## Overview\nUse thiserror for libraries, anyhow for apps.\n";
+    let content = format!(
+        "---\nname: rust-error-formatting\ndescription: Use when formatting errors in Rust crates.\n---\n\n{body}"
+    );
+
+    let out = tool
+        .execute(
+            json!({ "name": "rust-error-formatting", "content": content }),
+            ctx(),
+            CancellationToken::new(),
+        )
+        .await
+        .expect("create should succeed");
+    let v = parse(&out);
+    assert_eq!(v["success"].as_bool(), Some(true));
+    assert_eq!(v["name"].as_str(), Some("rust-error-formatting"));
+    assert_eq!(v["qualified_name"].as_str(), Some("rust-error-formatting"));
+    assert!(v["category"].is_null());
+    assert_eq!(
+        v["description"].as_str(),
+        Some("Use when formatting errors in Rust crates.")
+    );
+    assert!(v["path"]
+        .as_str()
+        .unwrap()
+        .ends_with("rust-error-formatting/SKILL.md"));
+    assert_eq!(v["size_bytes"].as_u64(), Some(content.len() as u64));
+    assert!(v["note"].as_str().unwrap().contains("next session"));
+
+    let on_disk = read_skill_md(&skills_dir, "rust-error-formatting");
+    assert_eq!(on_disk, content, "on-disk file should equal input content");
 }
