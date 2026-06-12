@@ -25,6 +25,7 @@ use perry_hermes_core::error::{LoopError, ProviderError, ToolError};
 use perry_hermes_core::message::{Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason, StreamAccumulator};
 use perry_hermes_core::tool::ToolContext;
+use perry_hermes_skill_tools::tools::process_registry::{PROCESS_REGISTRY, ProcessNotification};
 
 use super::agent_loop::{AgentLoop, AgentRunError, FailedTurn, LoopEvent, LoopMetrics, RunResult};
 use super::metrics::{prompt_context_tokens_from_usage, validate_args};
@@ -128,7 +129,14 @@ pub(crate) async fn run(
         .await?
         {
             Some(result) => return Ok(result),
-            None => continue,
+            None => {
+                // After tool dispatch, drain background process
+                // completion notifications and inject them as
+                // synthetic user messages so the next LLM turn
+                // sees them.
+                inject_process_notifications(&mut messages).await;
+                continue;
+            }
         }
     }
 }
@@ -402,5 +410,29 @@ fn build_failed_turn_or_plain(
         }
     } else {
         AgentRunError::Loop(error)
+    }
+}
+
+/// Drain the process registry's notification queue and inject
+/// `[IMPORTANT: ...]` messages into the conversation so the LLM
+/// learns about background process completions.
+async fn inject_process_notifications(messages: &mut Vec<Message>) {
+    for notification in PROCESS_REGISTRY.drain_notifications().await {
+        match notification {
+            ProcessNotification::Completed {
+                session_id,
+                exit_code,
+                command,
+                output_tail,
+            } => {
+                let text = format!(
+                    "[IMPORTANT: Background process {session_id} completed \
+                     (exit code {exit_code}).\n\
+                     Command: {command}\n\
+                     Output:\n{output_tail}]"
+                );
+                messages.push(Message::user(text));
+            }
+        }
     }
 }

@@ -4,7 +4,8 @@ use std::sync::Arc;
 use perry_hermes_core::registry::InMemoryRegistry;
 
 use perry_hermes_skill_tools::tools::{
-    BashTool, PatchTool, ReadFileTool, SearchFilesTool, SkillListTool, SkillViewTool, WriteFileTool,
+    BashTool, PatchTool, ProcessTool, ReadFileTool, SearchFilesTool, SkillListTool, SkillViewTool,
+    WriteFileTool,
 };
 
 /// Wire all built-in tools into a fresh registry.
@@ -26,6 +27,7 @@ pub fn build_registry(
         .any(|s| s == "terminal" || s == "core")
     {
         reg = reg.register(Arc::new(BashTool::new()));
+        reg = reg.register(Arc::new(ProcessTool::new()));
     }
     if !disabled_toolsets.iter().any(|s| s == "file") {
         reg = reg.register(Arc::new(ReadFileTool::new()));
@@ -62,6 +64,7 @@ mod tests {
         let registry = build_registry(&["terminal".to_string()], &test_skills_dir(), None);
         let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
         assert!(!names.iter().any(|n| n == "terminal"));
+        assert!(!names.iter().any(|n| n == "process"));
     }
 
     #[test]
@@ -69,6 +72,7 @@ mod tests {
         let registry = build_registry(&["core".to_string()], &test_skills_dir(), None);
         let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
         assert!(!names.iter().any(|n| n == "terminal"));
+        assert!(!names.iter().any(|n| n == "process"));
     }
 
     #[test]
@@ -90,10 +94,11 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_includes_all_seven_tools() {
+    fn default_registry_includes_all_tools() {
         let registry = build_registry(&[], &test_skills_dir(), None);
         let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
         assert!(names.iter().any(|n| n == "terminal"));
+        assert!(names.iter().any(|n| n == "process"));
         assert!(names.iter().any(|n| n == "read_file"));
         assert!(names.iter().any(|n| n == "write_file"));
         assert!(names.iter().any(|n| n == "patch"));

@@ -145,19 +145,13 @@ impl Tool for BashTool {
             .map(std::path::PathBuf::from);
         let cwd = workdir.as_ref().unwrap_or(&ctx.working_dir);
 
-        if args.get("background").and_then(|v| v.as_bool()) == Some(true) {
-            return Err(ToolError::InvalidArgs(
-                "background=true is not supported in this Rust runtime yet".into(),
-            ));
-        }
+        let is_background = args.get("background").and_then(|v| v.as_bool()) == Some(true);
+        let notify_on_complete =
+            args.get("notify_on_complete").and_then(|v| v.as_bool()) == Some(true);
+
         if args.get("pty").and_then(|v| v.as_bool()) == Some(true) {
             return Err(ToolError::InvalidArgs(
                 "pty=true is not supported in this Rust runtime yet".into(),
-            ));
-        }
-        if args.get("notify_on_complete").and_then(|v| v.as_bool()) == Some(true) {
-            return Err(ToolError::InvalidArgs(
-                "notify_on_complete is not supported in this Rust runtime yet".into(),
             ));
         }
         if args
@@ -168,6 +162,37 @@ impl Tool for BashTool {
             return Err(ToolError::InvalidArgs(
                 "watch_patterns is not supported in this Rust runtime yet".into(),
             ));
+        }
+
+        // ── Background mode ──────────────────────────────────────────
+        if is_background {
+            use super::process_registry::PROCESS_REGISTRY;
+            let session_id = PROCESS_REGISTRY
+                .spawn(command, cwd.clone(), notify_on_complete)
+                .await
+                .map_err(ToolError::Execution)?;
+            let mut msg = format!(
+                "Background process started.\n\
+                 session_id: {session_id}\n\
+                 command: {command}"
+            );
+            if notify_on_complete {
+                msg.push_str("\nnotify_on_complete: true — you will be notified when it exits.");
+            } else {
+                msg.push_str(
+                    "\nnotify_on_complete: false — use process(action='poll') to check status.",
+                );
+            }
+            return Ok(ToolOutput {
+                content: serde_json::to_string_pretty(&serde_json::json!({
+                    "session_id": session_id,
+                    "status": "started",
+                    "command": command,
+                    "notify_on_complete": notify_on_complete,
+                    "message": msg,
+                }))
+                .unwrap_or(msg),
+            });
         }
 
         // Prefer zsh; fall back to bash if zsh is not installed.

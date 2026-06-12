@@ -1,7 +1,9 @@
 use std::path::PathBuf;
+use std::time::Duration;
 
 use perry_hermes_core::tool::{Tool, ToolContext, ToolPermissions};
 use perry_hermes_skill_tools::tools::BashTool;
+use perry_hermes_skill_tools::tools::process::ProcessTool;
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
 
@@ -50,17 +52,128 @@ async fn bash_tool_rejects_missing_command_arg() {
 }
 
 #[tokio::test]
-async fn bash_tool_rejects_unimplemented_background_mode() {
+async fn bash_tool_background_spawns_and_returns_session_id() {
     let tool = BashTool::new();
     let cancel = CancellationToken::new();
-    let err = tool
+    let out = tool
         .execute(
-            json!({ "command": "echo hello", "background": true }),
+            json!({ "command": "echo bg-hello", "background": true }),
             ctx(),
             cancel,
         )
         .await
-        .expect_err("background mode should be rejected explicitly");
+        .expect("background mode should succeed");
 
-    assert!(err.to_string().contains("background=true"));
+    assert!(out.content.contains("session_id"));
+    assert!(out.content.contains("proc_"));
+    assert!(out.content.contains("started"));
+}
+
+#[tokio::test]
+async fn bash_tool_background_with_notify_on_complete() {
+    let tool = BashTool::new();
+    let cancel = CancellationToken::new();
+    let out = tool
+        .execute(
+            json!({
+                "command": "echo notify-test",
+                "background": true,
+                "notify_on_complete": true
+            }),
+            ctx(),
+            cancel,
+        )
+        .await
+        .expect("background with notify should succeed");
+
+    assert!(out.content.contains("notify_on_complete"));
+    assert!(out.content.contains("true"));
+}
+
+#[tokio::test]
+async fn process_tool_poll_after_background_spawn() {
+    let bash = BashTool::new();
+    let process = ProcessTool::new();
+    let cancel = CancellationToken::new();
+
+    // Spawn a background process.
+    let out = bash
+        .execute(
+            json!({ "command": "echo poll-test-output", "background": true }),
+            ctx(),
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&out.content).unwrap();
+    let session_id = parsed["session_id"].as_str().unwrap().to_string();
+
+    // Wait for it to finish.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Poll for status.
+    let poll_out = process
+        .execute(
+            json!({ "action": "poll", "session_id": session_id }),
+            ctx(),
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(poll_out.content.contains("finished"));
+    assert!(poll_out.content.contains("poll-test-output"));
+}
+
+#[tokio::test]
+async fn process_tool_list_shows_background_process() {
+    let bash = BashTool::new();
+    let process = ProcessTool::new();
+    let cancel = CancellationToken::new();
+
+    let out = bash
+        .execute(
+            json!({ "command": "echo list-test", "background": true }),
+            ctx(),
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&out.content).unwrap();
+    let session_id = parsed["session_id"].as_str().unwrap().to_string();
+
+    let list_out = process
+        .execute(json!({ "action": "list" }), ctx(), cancel.clone())
+        .await
+        .unwrap();
+    assert!(list_out.content.contains(&session_id));
+}
+
+#[tokio::test]
+async fn process_tool_wait_returns_output() {
+    let bash = BashTool::new();
+    let process = ProcessTool::new();
+    let cancel = CancellationToken::new();
+
+    let out = bash
+        .execute(
+            json!({ "command": "echo wait-test-output", "background": true }),
+            ctx(),
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+    let parsed: serde_json::Value = serde_json::from_str(&out.content).unwrap();
+    let session_id = parsed["session_id"].as_str().unwrap().to_string();
+
+    let wait_out = process
+        .execute(
+            json!({ "action": "wait", "session_id": session_id, "timeout": 5 }),
+            ctx(),
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+    assert!(wait_out.content.contains("wait-test-output"));
+    assert!(wait_out.content.contains("timed_out"));
+    assert!(wait_out.content.contains("false"));
 }

@@ -57,6 +57,9 @@ telegram-markdown-v2 = "0.2"
 # Concurrent map
 dashmap = "6"
 
+# libc for kill(2) syscall
+libc = "0.2"
+
 # HTTP mock server (dev-dep on perry-hermes-providers)
 httpmock = "0.8"
 

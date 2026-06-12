@@ -11,6 +11,7 @@ perry-hermes-core.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
 fs2 = "0.4"
+libc.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 serde_json.workspace = true
