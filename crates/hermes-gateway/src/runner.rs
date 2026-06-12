@@ -202,14 +202,25 @@ impl GatewayRunner {
         handler: &mut dyn GatewayEventHandler,
     ) -> Result<GatewayResponse, GatewayError> {
         let entry = self.session(event).await;
+
+        // Enqueue the message first so concurrent arrivals while we
+        // wait for the lock are batched into a single turn.
+        entry.session.enqueue_message(event.text.clone()).await;
+
         let _guard = entry.turn_lock.lock().await;
+
+        // Drain all queued messages (may include messages that arrived
+        // while we were waiting for the lock).
+        let user_text = entry.session.drain_pending_messages().await
+            .map(|m| m.content.as_text().to_string())
+            .unwrap_or_default();
 
         let cancel = CancellationToken::new();
         let mut response_empty = true;
 
         let result = self
             .agent
-            .run_session_turn(&event.text, &entry.session, cancel, |event| {
+            .run_session_turn(&user_text, &entry.session, cancel, |event| {
                 if matches!(event, LoopEvent::ContentDelta(_)) {
                     response_empty = false;
                 }

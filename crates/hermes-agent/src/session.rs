@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -79,6 +80,10 @@ pub struct AgentSession {
     pub parent_session_id: Option<Arc<str>>,
     pub role: SessionRole,
     messages: Arc<RwLock<Vec<Message>>>,
+    /// Pending user messages queued while the agent is mid-turn.
+    /// Drained at the start of each loop iteration so the LLM sees
+    /// them before the next provider call.
+    pending_messages: Arc<RwLock<VecDeque<String>>>,
     /// First non-zero provider-reported prompt context usage observed for
     /// this session. In the initial turn, this usually includes the system
     /// prompt and the first user message. For providers with prompt caching,
@@ -107,6 +112,7 @@ impl AgentSession {
             parent_session_id: None,
             role: SessionRole::Root,
             messages: Arc::new(RwLock::new(Vec::with_capacity(8))),
+            pending_messages: Arc::new(RwLock::new(VecDeque::new())),
             context_usage_baseline_tokens: Arc::new(RwLock::new(None)),
             store: None,
         }
@@ -150,6 +156,7 @@ impl AgentSession {
             parent_session_id: snapshot.parent_session_id.map(Arc::from),
             role: snapshot.role,
             messages: Arc::new(RwLock::new(snapshot.messages)),
+            pending_messages: Arc::new(RwLock::new(VecDeque::new())),
             context_usage_baseline_tokens: Arc::new(RwLock::new(
                 snapshot.context_usage_baseline_tokens,
             )),
@@ -185,6 +192,23 @@ impl AgentSession {
         self.persist().await;
     }
 
+    /// Queue a user message for injection at the next loop iteration.
+    /// Used when the user sends a message while the agent is mid-turn.
+    pub async fn enqueue_message(&self, text: String) {
+        self.pending_messages.write().await.push_back(text);
+    }
+
+    /// Drain all pending user messages and return them as a single
+    /// combined `Message::user`. Returns `None` if the queue is empty.
+    pub async fn drain_pending_messages(&self) -> Option<Message> {
+        let mut queue = self.pending_messages.write().await;
+        if queue.is_empty() {
+            return None;
+        }
+        let collected: Vec<String> = queue.drain(..).collect();
+        Some(Message::user(collected.join("\n\n")))
+    }
+
     pub async fn replace_messages(&self, messages: Vec<Message>) {
         *self.messages.write().await = messages;
         self.persist().await;
@@ -195,6 +219,7 @@ impl AgentSession {
     /// the on-disk file out of the way and must not recreate it).
     async fn clear_in_memory_only(&self) {
         self.messages.write().await.clear();
+        self.pending_messages.write().await.clear();
         self.reset_token_facts().await;
     }
 

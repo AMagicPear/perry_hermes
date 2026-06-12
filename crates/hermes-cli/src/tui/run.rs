@@ -319,24 +319,34 @@ fn dispatch_event(
                 RenderedLine::User(text.clone()),
                 app.history_width,
             );
-            app.mode = AppMode::AwaitingModel;
-            app.turn_started_at = Some(Instant::now());
-            if app.active_turn_cancel.is_none() {
-                app.active_turn_cancel = Some(CancellationToken::new());
-            }
-            if let Some(ctx) = run_ctx {
-                let turn_cancel = CancellationToken::new();
-                let on_event = make_on_event(ctx.input_tx.clone());
-                let agent = Arc::clone(ctx.agent);
-                let session = ctx.session.clone();
-                let result_tx = ctx.input_tx.clone();
-                app.active_turn_cancel = Some(turn_cancel.clone());
-                tokio::spawn(async move {
-                    let res = agent
-                        .run_session_turn(&text, &session, turn_cancel, on_event)
-                        .await;
-                    let _ = result_tx.send(AppEvent::TurnCompleted(res));
-                });
+
+            if app.mode == AppMode::AwaitingModel {
+                // Agent is mid-turn — queue the message for injection
+                // at the next loop iteration boundary.
+                if let Some(ctx) = run_ctx {
+                    let session = ctx.session.clone();
+                    tokio::spawn(async move {
+                        session.enqueue_message(text).await;
+                    });
+                }
+            } else {
+                // Agent is idle — start a new turn.
+                app.mode = AppMode::AwaitingModel;
+                app.turn_started_at = Some(Instant::now());
+                if let Some(ctx) = run_ctx {
+                    let turn_cancel = CancellationToken::new();
+                    let on_event = make_on_event(ctx.input_tx.clone());
+                    let agent = Arc::clone(ctx.agent);
+                    let session = ctx.session.clone();
+                    let result_tx = ctx.input_tx.clone();
+                    app.active_turn_cancel = Some(turn_cancel.clone());
+                    tokio::spawn(async move {
+                        let res = agent
+                            .run_session_turn(&text, &session, turn_cancel, on_event)
+                            .await;
+                        let _ = result_tx.send(AppEvent::TurnCompleted(res));
+                    });
+                }
             }
             Ok(false)
         }

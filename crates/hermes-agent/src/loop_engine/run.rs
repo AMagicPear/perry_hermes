@@ -52,6 +52,11 @@ pub(crate) async fn run(
     }
 
     loop {
+        // Inject any user messages that arrived mid-turn.
+        if let Some(injected) = session.drain_pending_messages().await {
+            messages.push(injected);
+        }
+
         if cancel.is_cancelled() {
             on_event(LoopEvent::Cancelled);
             return Err(build_failed_turn_or_plain(
