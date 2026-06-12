@@ -24,6 +24,12 @@ use perry_hermes_gateway::{GatewayRunner, PlatformAdapter};
 /// [`TuiEventHandler`]: super::TuiEventHandler
 pub struct TuiAdapter;
 
+impl Default for TuiAdapter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TuiAdapter {
     pub fn new() -> Self {
         Self
