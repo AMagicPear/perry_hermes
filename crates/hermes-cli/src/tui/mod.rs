@@ -75,9 +75,7 @@ impl GatewayEventHandler for TuiEventHandler {
     }
 
     fn on_error(&mut self, error: &str) {
-        let _ = self
-            .tx
-            .send(AppEvent::Loop(LoopEvent::Cancelled)); // Reuse Cancelled for errors
+        let _ = self.tx.send(AppEvent::Loop(LoopEvent::Cancelled)); // Reuse Cancelled for errors
         // Error text will be displayed via TurnCompleted error handling
         let _ = error; // Suppress unused warning
     }
@@ -87,9 +85,9 @@ impl GatewayEventHandler for TuiEventHandler {
     }
 
     fn on_user_message_injected(&mut self, text: &str) {
-        let _ = self
-            .tx
-            .send(AppEvent::Loop(LoopEvent::UserMessageInjected(text.to_string())));
+        let _ = self.tx.send(AppEvent::Loop(LoopEvent::UserMessageInjected(
+            text.to_string(),
+        )));
     }
 }
 

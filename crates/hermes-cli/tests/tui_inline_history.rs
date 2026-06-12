@@ -173,6 +173,13 @@ async fn cjk_history_text_reads_without_inserted_spaces() {
     input_tx
         .send(AppEvent::Submit("你好".to_string()))
         .expect("send submit");
+    // User line lands in the chat surfaces via the gateway's
+    // `UserMessageInjected` signal, not via Submit.
+    input_tx
+        .send(AppEvent::Loop(LoopEvent::UserMessageInjected(
+            "你好".to_string(),
+        )))
+        .expect("send injected event");
     input_tx
         .send(AppEvent::Loop(LoopEvent::ContentDelta("世界".to_string())))
         .expect("send content delta");

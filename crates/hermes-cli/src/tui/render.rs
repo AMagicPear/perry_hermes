@@ -765,7 +765,8 @@ mod tests {
 
     #[test]
     fn truncate_for_status_handles_cjk_boundaries() {
-        let truncated = truncate_for_status("你好世界这是一句长长长长长长长长长长长长长长长的话", 6);
+        let truncated =
+            truncate_for_status("你好世界这是一句长长长长长长长长长长长长长长长的话", 6);
         assert!(
             truncated.ends_with('…'),
             "CJK input longer than max should be truncated: {truncated:?}"

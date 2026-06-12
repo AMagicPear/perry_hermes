@@ -12,13 +12,13 @@ use futures::stream;
 use perry_hermes_agent::AgentRunError;
 use perry_hermes_core::ProviderError;
 use perry_hermes_core::error::LoopError;
-use perry_hermes_gateway::runner::GatewayError;
 use perry_hermes_core::message::{Content, Message, Role};
 use perry_hermes_core::provider::{
     Completion, CompletionDelta, CompletionStream, FinishReason, Provider, ToolCallDelta,
 };
 use perry_hermes_core::registry::ToolSchema;
 use perry_hermes_core::usage::Usage;
+use perry_hermes_gateway::runner::GatewayError;
 use ratatui::backend::TestBackend;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -156,9 +156,18 @@ async fn user_message_then_assistant_reply_appears_in_scrollback() {
     let (input_tx, input_rx) = mpsc::unbounded_channel::<AppEvent>();
 
     // Drive the TUI: enqueue a Submit event, then a Quit, then drop the tx.
+    // In the no-gateway test harness, the user line only enters the
+    // chat surfaces through the `UserMessageInjected` signal that
+    // `run_session_turn` would fire in a real gateway path. Send it
+    // explicitly to simulate that event arriving.
     input_tx
         .send(AppEvent::Submit("hi".to_string()))
         .expect("send submit");
+    input_tx
+        .send(AppEvent::Loop(
+            perry_hermes_agent::LoopEvent::UserMessageInjected("hi".to_string()),
+        ))
+        .expect("send injected event");
     input_tx.send(AppEvent::Quit).expect("send quit");
     drop(input_tx);
 
@@ -206,6 +215,14 @@ async fn user_message_appears_in_terminal_scrollback() {
     input_tx
         .send(AppEvent::Submit("hi".to_string()))
         .expect("send submit");
+    // Simulate the gateway firing `UserMessageInjected` after draining
+    // the queue. This is the only path that writes the user line into
+    // the chat surfaces.
+    input_tx
+        .send(AppEvent::Loop(
+            perry_hermes_agent::LoopEvent::UserMessageInjected("hi".to_string()),
+        ))
+        .expect("send injected event");
     input_tx.send(AppEvent::Quit).expect("send quit");
     drop(input_tx);
 
@@ -342,6 +359,11 @@ async fn cancelled_turn_does_not_block_following_submit() {
         .send(AppEvent::Submit("first".to_string()))
         .expect("send first submit");
     input_tx
+        .send(AppEvent::Loop(
+            perry_hermes_agent::LoopEvent::UserMessageInjected("first".to_string()),
+        ))
+        .expect("send injected event for first");
+    input_tx
         .send(AppEvent::CancelInFlight)
         .expect("send cancel event");
     input_tx
@@ -358,6 +380,11 @@ async fn cancelled_turn_does_not_block_following_submit() {
     input_tx
         .send(AppEvent::Submit("second".to_string()))
         .expect("send second submit");
+    input_tx
+        .send(AppEvent::Loop(
+            perry_hermes_agent::LoopEvent::UserMessageInjected("second".to_string()),
+        ))
+        .expect("send injected event for second");
     input_tx.send(AppEvent::Quit).expect("send quit");
     drop(input_tx);
 

@@ -106,12 +106,11 @@ pub fn apply_loop_event(app: &mut App, ev: LoopEvent) -> AppEvent {
             // Terminal event — could set a hint but keep it minimal
             AppEvent::Tick
         }
-        LoopEvent::UserMessageInjected(text) => {
-            // A queued user message has been drained from the session's
-            // pending queue and is now part of the active turn. Render
-            // it as a real user line in the scrollback; the status-bar
-            // "queued: ..." preview will clear on the next tick.
-            app.push_line(RenderedLine::User(text));
+        LoopEvent::UserMessageInjected(_) => {
+            // The user-message rendering is owned by `dispatch_event`
+            // in `run.rs`, which writes both to terminal scrollback
+            // and to `app.scrollback` in one place. Nothing to do
+            // here — keep the match exhaustive.
             AppEvent::Tick
         }
     }
@@ -197,24 +196,22 @@ fn format_tokens(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tui::app::App;
-    use crate::tui::event::RenderedLine;
 
     #[test]
-    fn user_message_injected_pushes_user_line_to_scrollback() {
+    fn user_message_injected_does_not_fall_through_to_chat() {
+        // The user-message rendering is owned by `dispatch_event` in
+        // `run.rs`. `apply_loop_event` is a no-op for this event —
+        // it must not double-push a line into `app.scrollback`.
         let mut app = App::default();
         let scrollback_before = app.scrollback.len();
-        assert!(matches!(app.mode, AppMode::Idle));
 
         let next = apply_loop_event(&mut app, LoopEvent::UserMessageInjected("可以了".into()));
 
-        // The event translates into a Tick; the scrollback mutation
-        // is the visible side effect.
         assert!(matches!(next, AppEvent::Tick));
-        assert_eq!(app.scrollback.len(), scrollback_before + 1);
-        match app.scrollback.last().expect("new line") {
-            RenderedLine::User(text) => assert_eq!(text, "可以了"),
-            other => panic!("expected User line; got {other:?}"),
-        }
+        assert_eq!(
+            app.scrollback.len(),
+            scrollback_before,
+            "apply_loop_event must not push user lines — dispatch_event does"
+        );
     }
 }

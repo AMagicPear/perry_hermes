@@ -176,10 +176,7 @@ pub async fn run(
     // result returned to the caller. We do this only on clean exit
     // (the run() future resolved with Ok/Err, not panic/cancel),
     // so a long-lived session survives a Ctrl-C that hits mid-turn.
-    let _ = gateway
-        .sessions()
-        .archive_active(&session_key)
-        .await;
+    let _ = gateway.sessions().archive_active(&session_key).await;
 
     result
 }
@@ -297,18 +294,19 @@ fn dispatch_event(
                         return Ok(false);
                     }
                     perry_hermes_agent::LoopEvent::UserMessageInjected(text) => {
-                        // Mirror the Submit (Idle) path: write the user
-                        // line into terminal scrollback so the queued
-                        // message becomes a visible chat line the moment
-                        // the agent actually sees it. `apply_loop_event`
-                        // below mirrors it into `app.scrollback` for
-                        // scroll-back navigation.
+                        // The agent has consumed a user message from the
+                        // session's queue and is now driving a turn with
+                        // it. This is the *only* place where a user line
+                        // gets written into the chat surfaces — Submit
+                        // (Idle) does not eagerly render, so the line
+                        // appears here for the first time regardless of
+                        // whether the user typed-and-Entered (Idle) or
+                        // submitted while busy (AwaitingModel).
+                        let line = RenderedLine::User(text.clone());
                         history.finish_stream(app.history_width);
-                        history.push(
-                            app,
-                            RenderedLine::User(text.clone()),
-                            app.history_width,
-                        );
+                        history.push(app, line.clone(), app.history_width);
+                        app.push_line(line);
+                        return Ok(false);
                     }
                     _ => {}
                 }
@@ -321,12 +319,10 @@ fn dispatch_event(
         AppEvent::Submit(text) => {
             // This path is only reached when agent is idle.
             // AwaitingModel submits are handled in the main loop.
-            push_history_or_scrollback(
-                app,
-                &mut history,
-                RenderedLine::User(text.clone()),
-                app.history_width,
-            );
+            // The user line itself is rendered later by the
+            // `UserMessageInjected` event once the gateway has
+            // started the turn — we deliberately do not render
+            // eagerly here.
             app.mode = AppMode::AwaitingModel;
             app.turn_started_at = Some(Instant::now());
             if let Some(ctx) = run_ctx {

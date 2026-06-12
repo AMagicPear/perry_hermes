@@ -211,7 +211,10 @@ impl GatewayRunner {
 
         // Drain all queued messages (may include messages that arrived
         // while we were waiting for the lock).
-        let user_text = entry.session.drain_pending_messages().await
+        let user_text = entry
+            .session
+            .drain_pending_messages()
+            .await
             .map(|m| m.content.as_text().to_string())
             .unwrap_or_default();
 
