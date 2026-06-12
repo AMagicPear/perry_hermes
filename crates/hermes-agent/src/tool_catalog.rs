@@ -4,8 +4,8 @@ use std::sync::Arc;
 use perry_hermes_core::registry::InMemoryRegistry;
 
 use perry_hermes_skill_tools::tools::{
-    BashTool, PatchTool, ProcessTool, ReadFileTool, SearchFilesTool, SkillListTool, SkillViewTool,
-    WriteFileTool,
+    BashTool, PatchTool, ProcessTool, ReadFileTool, SearchFilesTool, SkillCreateTool,
+    SkillListTool, SkillViewTool, WriteFileTool,
 };
 
 /// Wire all built-in tools into a fresh registry.
@@ -38,6 +38,7 @@ pub fn build_registry(
     if !disabled_toolsets.iter().any(|s| s == "skills") {
         reg = reg.register(Arc::new(SkillListTool::new(skills_dir.to_path_buf())));
         reg = reg.register(Arc::new(SkillViewTool::new(skills_dir.to_path_buf())));
+        reg = reg.register(Arc::new(SkillCreateTool::new(skills_dir.to_path_buf())));
     }
 
     if !disabled_toolsets.iter().any(|s| s == "memory")
@@ -105,6 +106,17 @@ mod tests {
         assert!(names.iter().any(|n| n == "search_files"));
         assert!(names.iter().any(|n| n == "skills_list"));
         assert!(names.iter().any(|n| n == "skill_view"));
+        assert!(names.iter().any(|n| n == "skill_create"));
+    }
+
+    #[test]
+    fn skills_toolset_disables_skill_create() {
+        let registry = build_registry(&["skills".to_string()], &test_skills_dir(), None);
+        let names: Vec<_> = registry.schemas().into_iter().map(|s| s.name).collect();
+        assert!(
+            !names.iter().any(|n| n == "skill_create"),
+            "skill_create should be removed when skills toolset is disabled, got: {names:?}"
+        );
     }
 
     #[test]
