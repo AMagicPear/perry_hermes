@@ -92,7 +92,8 @@ async fn main() {
                 | LoopEvent::Cancelled
                 | LoopEvent::CompressionCompleted { .. }
                 | LoopEvent::CompressionSkipped { .. }
-                | LoopEvent::CompressionFailed { .. } => {}
+                | LoopEvent::CompressionFailed { .. }
+                | LoopEvent::UserMessageInjected(_) => {}
             }),
         )
         .await;

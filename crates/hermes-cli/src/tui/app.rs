@@ -30,6 +30,11 @@ pub struct App {
     pub max_iterations: Option<u32>,
     /// Display hint shown briefly after a compression event.
     pub compression_hint: Option<String>,
+    /// Snapshot of the session's pending user-message queue, refreshed
+    /// on each main-loop tick. Surfaced in the status bar instead of the
+    /// scrollback so a queued message does not visually interrupt the
+    /// streaming agent output.
+    pub pending_queue: Vec<String>,
     /// `Some(Instant)` while a turn is in flight (`AppMode::AwaitingModel`).
     /// `None` when idle or cancelling. Drives the elapsed-time readout in
     /// the status bar.
@@ -214,6 +219,7 @@ impl Default for App {
             history_width: 80,
             active_turn_cancel: None,
             scrollback_revision: 0,
+            pending_queue: Vec::new(),
             cached_chat_lines: Vec::new(),
             cached_chat_width: None,
             cached_chat_revision: 0,

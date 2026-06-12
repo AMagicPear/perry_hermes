@@ -85,6 +85,12 @@ pub trait GatewayEventHandler: Send {
         _duration: std::time::Duration,
     ) {
     }
+
+    /// A queued user message was just drained from the session's
+    /// pending queue and is now part of the active turn. Adapters
+    /// should display it as a normal user message at this point —
+    /// the message is no longer transient, the agent has it.
+    fn on_user_message_injected(&mut self, _text: &str) {}
 }
 
 /// A no-op handler used for events that don't need streaming (e.g.
@@ -124,6 +130,9 @@ pub fn dispatch_loop_event(handler: &mut dyn GatewayEventHandler, event: &LoopEv
             ..
         } => {
             handler.on_compression_completed(*context_tokens, *compacted_tokens, *duration);
+        }
+        LoopEvent::UserMessageInjected(text) => {
+            handler.on_user_message_injected(text);
         }
         // ToolCallPartial, LengthLimit, IterationsExhausted,
         // Cancelled, CompressionSkipped, CompressionFailed —

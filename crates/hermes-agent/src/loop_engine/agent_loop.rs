@@ -146,6 +146,12 @@ pub enum LoopEvent {
     ReasoningDelta(String),
     ToolCallPartial(ToolCallDelta),
     AssistantMessage(Message),
+    /// A queued user message was just drained from the session's
+    /// pending queue and injected into the active turn. Surfaces in
+    /// the TUI scrollback so a mid-stream enqueue appears as a real
+    /// user line once the agent actually sees it, instead of staying
+    /// in the transient "queued" status-bar slot.
+    UserMessageInjected(String),
     ToolCallStarted {
         call: ToolCall,
         iteration: u32,
@@ -272,8 +278,17 @@ impl AgentLoop {
         user_text: &str,
         session: &AgentSession,
         cancel: CancellationToken,
-        on_event: impl FnMut(LoopEvent) + Send,
+        mut on_event: impl FnMut(LoopEvent) + Send,
     ) -> Result<RunResult, AgentRunError> {
+        // Notify the UI / downstream handlers that a user message is
+        // about to enter the active turn. Fires for every run_session_turn
+        // call — whether the message came from a fresh submit, a
+        // gateway-drained queued message, or a mid-turn injection —
+        // so any path that ends with `user_text` reaching the agent
+        // is observable as a normal user message in the TUI scrollback.
+        if !user_text.is_empty() {
+            on_event(LoopEvent::UserMessageInjected(user_text.to_string()));
+        }
         session.append_message(Message::user(user_text)).await;
         self.run_current_session(session, cancel, on_event).await
     }

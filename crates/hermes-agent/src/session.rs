@@ -214,6 +214,14 @@ impl AgentSession {
         !self.pending_messages.read().await.is_empty()
     }
 
+    /// Peek at pending user messages without draining. Returns a copy
+    /// of the queue contents in enqueue order, so callers (e.g. the
+    /// TUI status bar) can display what the user has queued while a
+    /// turn is in flight.
+    pub async fn peek_pending_messages(&self) -> Vec<String> {
+        self.pending_messages.read().await.iter().cloned().collect()
+    }
+
     pub async fn replace_messages(&self, messages: Vec<Message>) {
         *self.messages.write().await = messages;
         self.persist().await;

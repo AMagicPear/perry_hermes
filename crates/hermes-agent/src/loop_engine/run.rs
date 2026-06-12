@@ -54,7 +54,9 @@ pub(crate) async fn run(
     loop {
         // Inject any user messages that arrived mid-turn.
         if let Some(injected) = session.drain_pending_messages().await {
+            let preview = injected.content.as_text().to_string();
             messages.push(injected);
+            on_event(LoopEvent::UserMessageInjected(preview));
         }
 
         if cancel.is_cancelled() {

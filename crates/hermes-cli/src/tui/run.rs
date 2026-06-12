@@ -92,6 +92,12 @@ pub async fn run(
 
     let result: Result<(), RunError> = async {
         loop {
+            // Refresh the queued-message snapshot from the session on
+            // every iteration so the status bar reflects what the
+            // agent loop will pick up next. Cheap (async read lock,
+            // 16 ms tick rate).
+            app.pending_queue = session.peek_pending_messages().await;
+
             draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
 
             tokio::select! {
@@ -111,11 +117,13 @@ pub async fn run(
                             let next = handle_key(&mut app, k);
                             // Special handling for Submit while agent is running:
                             // enqueue directly (synchronously) to avoid race.
+                            // The next tick will surface the message in the
+                            // status bar; we deliberately do not push anything
+                            // to the scrollback so the streaming agent output
+                            // is not visually interrupted.
                             if matches!(&next, AppEvent::Submit(_)) && app.mode == AppMode::AwaitingModel {
                                 if let AppEvent::Submit(text) = next {
                                     session.enqueue_message(text.clone()).await;
-                                    let width = app.history_width;
-                                    history.push(&mut app, RenderedLine::System(format!("(queued) {text}")), width);
                                 }
                             } else if dispatch_event(
                                 &mut app,
@@ -147,8 +155,6 @@ pub async fn run(
                         if matches!(&ev, AppEvent::Submit(_)) && app.mode == AppMode::AwaitingModel {
                             if let AppEvent::Submit(text) = ev {
                                 session.enqueue_message(text.clone()).await;
-                                let width = app.history_width;
-                                history.push(&mut app, RenderedLine::System(format!("(queued) {text}")), width);
                             }
                         } else if dispatch_event(&mut app, ev, &cancel, None, Some(&mut history))? {
                             draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
@@ -289,6 +295,20 @@ fn dispatch_event(
                         };
                         history.push(app, line, app.history_width);
                         return Ok(false);
+                    }
+                    perry_hermes_agent::LoopEvent::UserMessageInjected(text) => {
+                        // Mirror the Submit (Idle) path: write the user
+                        // line into terminal scrollback so the queued
+                        // message becomes a visible chat line the moment
+                        // the agent actually sees it. `apply_loop_event`
+                        // below mirrors it into `app.scrollback` for
+                        // scroll-back navigation.
+                        history.finish_stream(app.history_width);
+                        history.push(
+                            app,
+                            RenderedLine::User(text.clone()),
+                            app.history_width,
+                        );
                     }
                     _ => {}
                 }

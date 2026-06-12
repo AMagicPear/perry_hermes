@@ -402,7 +402,30 @@ fn build_status_line_1(app: &App) -> Line<'static> {
         spans.push(Span::raw(hint.clone()));
     }
 
+    if !app.pending_queue.is_empty() {
+        let total = app.pending_queue.len();
+        let last = app.pending_queue.last().map(String::as_str).unwrap_or("");
+        let preview = truncate_for_status(last, 40);
+        spans.push(Span::raw(" · "));
+        if total == 1 {
+            spans.push(Span::raw(format!("queued: {preview}")));
+        } else {
+            spans.push(Span::raw(format!("queued ({total}): {preview}")));
+        }
+    }
+
     Line::from(spans)
+}
+
+/// Truncate a string to at most `max_chars` characters, appending an
+/// ellipsis when the original was longer. Operates on char boundaries
+/// so CJK input is not split mid-codepoint.
+fn truncate_for_status(s: &str, max_chars: usize) -> String {
+    let mut out: String = s.chars().take(max_chars).collect();
+    if s.chars().count() > max_chars {
+        out.push('…');
+    }
+    out
 }
 
 /// Build the activity line shown while a turn is in flight or being cancelled.
@@ -685,5 +708,70 @@ mod tests {
             s.contains("Compressed in 1200ms"),
             "expected compression hint in status; got {s:?}"
         );
+    }
+
+    #[test]
+    fn status_line_shows_queued_messages_without_touching_scrollback() {
+        let mut app = App::default();
+        let scrollback_before = app.scrollback.len();
+        app.pending_queue = vec!["可以了".to_string(), "再加一条".to_string()];
+
+        let line = build_status_line_1(&app);
+        let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+        assert!(
+            s.contains("queued (2):"),
+            "expected queued count prefix; got {s:?}"
+        );
+        // The most recent message is shown as a preview; older ones
+        // do not appear in the status line.
+        assert!(
+            s.contains("再加一条"),
+            "expected latest queued message in status; got {s:?}"
+        );
+        assert!(
+            !s.contains("可以了"),
+            "older queued messages should not be in the status line; got {s:?}"
+        );
+        // Scrollback must not have grown — queued messages are
+        // surfaced in the status bar only.
+        assert_eq!(
+            app.scrollback.len(),
+            scrollback_before,
+            "scrollback must not receive queued messages"
+        );
+    }
+
+    #[test]
+    fn status_line_truncates_long_queued_previews() {
+        let mut app = App::default();
+        app.pending_queue = vec!["a".repeat(80)];
+
+        let line = build_status_line_1(&app);
+        let s: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+
+        assert!(
+            s.contains('…'),
+            "long queued message should be truncated with ellipsis; got {s:?}"
+        );
+        // The 41st 'a' (index 40) is the last kept, and an ellipsis
+        // follows. So 40 a's in total appear, not 80.
+        let a_count = s.chars().filter(|c| *c == 'a').count();
+        assert!(
+            a_count <= 40,
+            "truncated preview should keep at most 40 chars of body; got {a_count}"
+        );
+    }
+
+    #[test]
+    fn truncate_for_status_handles_cjk_boundaries() {
+        let truncated = truncate_for_status("你好世界这是一句长长长长长长长长长长长长长长长的话", 6);
+        assert!(
+            truncated.ends_with('…'),
+            "CJK input longer than max should be truncated: {truncated:?}"
+        );
+        // The body before the ellipsis must be at most max_chars chars.
+        let body = truncated.trim_end_matches('…');
+        assert!(body.chars().count() <= 6);
     }
 }

@@ -57,6 +57,7 @@ async fn main() {
             LoopEvent::CompressionCompleted { .. } => {}
             LoopEvent::CompressionSkipped { .. } => {}
             LoopEvent::CompressionFailed { .. } => {}
+            LoopEvent::UserMessageInjected(_) => {}
         }),
     )
     .await;

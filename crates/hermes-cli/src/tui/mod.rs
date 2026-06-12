@@ -85,6 +85,12 @@ impl GatewayEventHandler for TuiEventHandler {
     fn on_turn_completed(&mut self) {
         // TurnCompleted is sent via the result channel, not here.
     }
+
+    fn on_user_message_injected(&mut self, text: &str) {
+        let _ = self
+            .tx
+            .send(AppEvent::Loop(LoopEvent::UserMessageInjected(text.to_string())));
+    }
 }
 
 /// Build a `TuiEventHandler` for use with `GatewayRunner::handle_event`.

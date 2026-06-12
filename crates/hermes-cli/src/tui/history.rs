@@ -14,10 +14,28 @@ use ratatui::widgets::Widget;
 pub struct HistoryWrite {
     pub lines: Vec<Line<'static>>,
     active_stream: Option<ActiveStream>,
+    /// Most recent `RenderedLine::User(text)` that `push` actually
+    /// wrote into the buffered lines. Used to deduplicate the user
+    /// line when both the Submit handler and the `UserMessageInjected`
+    /// event path race to display the same text.
+    last_pushed_user_line: Option<String>,
 }
 
 impl HistoryWrite {
     pub fn push(&mut self, _app: &mut App, line: RenderedLine, width: u16) {
+        // De-dupe: the same user text can arrive here from two paths:
+        //   1. `Submit` (Idle) writes it eagerly so the line is visible
+        //      before the agent responds.
+        //   2. `LoopEvent::UserMessageInjected` fires once the gateway
+        //      has drained the queue and is about to feed the agent.
+        // For queued submits path (1) is skipped, but the event still
+        // arrives — so we must accept the first push and ignore repeats.
+        if let RenderedLine::User(ref text) = line {
+            if self.last_pushed_user_line.as_deref() == Some(text.as_str()) {
+                return;
+            }
+            self.last_pushed_user_line = Some(text.clone());
+        }
         self.finish_stream(width);
         self.lines.extend(format_history_line(&line, width));
     }
@@ -29,6 +47,7 @@ impl HistoryWrite {
     pub fn clear(&mut self) {
         self.lines.clear();
         self.active_stream = None;
+        self.last_pushed_user_line = None;
     }
 
     pub fn push_assistant_delta(&mut self, text: &str, width: u16) {
@@ -369,4 +388,52 @@ fn fit_line_to_width(mut s: String, width: usize, suffix: &str) -> String {
 
 fn visible_width(text: &str) -> usize {
     text.width()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn push_dedupes_repeated_user_lines() {
+        let mut app = App::default();
+        let mut history = HistoryWrite::default();
+
+        // First push: writes the line, records it.
+        history.push(&mut app, RenderedLine::User("可以了".into()), 80);
+        let after_first = history.lines.len();
+        assert!(after_first > 0, "first push should buffer lines");
+
+        // Second push with the same text: deduped, no new lines.
+        history.push(&mut app, RenderedLine::User("可以了".into()), 80);
+        assert_eq!(
+            history.lines.len(),
+            after_first,
+            "repeated user line should be deduped"
+        );
+
+        // Different user text: should be buffered.
+        history.push(&mut app, RenderedLine::User("再加一条".into()), 80);
+        assert!(
+            history.lines.len() > after_first,
+            "different user line should pass through"
+        );
+    }
+
+    #[test]
+    fn clear_resets_user_line_dedup_state() {
+        let mut app = App::default();
+        let mut history = HistoryWrite::default();
+
+        history.push(&mut app, RenderedLine::User("可以了".into()), 80);
+        let after_first = history.lines.len();
+        history.clear();
+        // After clear, the same text must be pushable again.
+        history.push(&mut app, RenderedLine::User("可以了".into()), 80);
+        assert!(
+            history.lines.len() > 0,
+            "clear should reset dedup state so the line can be re-pushed"
+        );
+        let _ = after_first;
+    }
 }
