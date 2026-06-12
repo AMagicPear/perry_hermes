@@ -111,7 +111,10 @@ impl Tool for SkillCreateTool {
         // Step 3: content size.
         if content.len() > MAX_CONTENT_CHARS {
             return Ok(failure(
-                format!("content length {} exceeds {MAX_CONTENT_CHARS}", content.len()),
+                format!(
+                    "content length {} exceeds {MAX_CONTENT_CHARS}",
+                    content.len()
+                ),
                 Some("content"),
             ));
         }
@@ -127,7 +130,10 @@ impl Tool for SkillCreateTool {
             return Ok(failure("frontmatter is not valid YAML", Some("content")));
         }
         if !fm.is_mapping() {
-            return Ok(failure("frontmatter must be a YAML mapping", Some("content")));
+            return Ok(failure(
+                "frontmatter must be a YAML mapping",
+                Some("content"),
+            ));
         }
 
         // Step 5: frontmatter `name` matches the directory name.

@@ -381,8 +381,7 @@ async fn skill_view_linked_files_lists_references_templates_assets_scripts() {
 
 fn read_skill_md(dir: &std::path::Path, name: &str) -> String {
     let path = dir.join(name).join("SKILL.md");
-    std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {:?} failed: {e}", path))
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {:?} failed: {e}", path))
 }
 
 fn err(out: &perry_hermes_core::tool::ToolOutput) -> serde_json::Value {
@@ -401,7 +400,8 @@ async fn skill_create_writes_a_valid_skill_md_to_disk() {
     let skills_dir = dir.path().join("skills");
     let tool = SkillCreateTool::new(skills_dir.clone());
 
-    let body = "# Rust error formatting\n\n## Overview\nUse thiserror for libraries, anyhow for apps.\n";
+    let body =
+        "# Rust error formatting\n\n## Overview\nUse thiserror for libraries, anyhow for apps.\n";
     let content = format!(
         "---\nname: rust-error-formatting\ndescription: Use when formatting errors in Rust crates.\n---\n\n{body}"
     );
@@ -423,10 +423,12 @@ async fn skill_create_writes_a_valid_skill_md_to_disk() {
         v["description"].as_str(),
         Some("Use when formatting errors in Rust crates.")
     );
-    assert!(v["path"]
-        .as_str()
-        .unwrap()
-        .ends_with("rust-error-formatting/SKILL.md"));
+    assert!(
+        v["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("rust-error-formatting/SKILL.md")
+    );
     assert_eq!(v["size_bytes"].as_u64(), Some(content.len() as u64));
     assert!(v["note"].as_str().unwrap().contains("next session"));
 
@@ -450,13 +452,43 @@ async fn skill_create_rejects_argument_and_name_violations() {
     );
     let cases: Vec<(String, String, &'static str, Option<&'static str>)> = vec![
         // Missing args
-        (String::new(), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "missing 'name'", None),
-        (String::from("foo"), String::new(), "missing 'content'", None),
+        (
+            String::new(),
+            String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"),
+            "missing 'name'",
+            None,
+        ),
+        (
+            String::from("foo"),
+            String::new(),
+            "missing 'content'",
+            None,
+        ),
         // Name shape
-        (String::from("Foo"), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "name", Some("name")),
-        (String::from(".."), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "'..'", Some("name")),
-        (String::from("a<b"), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "name", Some("name")),
-        ("a".repeat(65), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "name", Some("name")),
+        (
+            String::from("Foo"),
+            String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"),
+            "name",
+            Some("name"),
+        ),
+        (
+            String::from(".."),
+            String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"),
+            "'..'",
+            Some("name"),
+        ),
+        (
+            String::from("a<b"),
+            String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"),
+            "name",
+            Some("name"),
+        ),
+        (
+            "a".repeat(65),
+            String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"),
+            "name",
+            Some("name"),
+        ),
         // Content size
         (String::from("foo"), big_content, "100000", Some("content")),
     ];
@@ -500,7 +532,12 @@ async fn skill_create_rejects_frontmatter_violations() {
         "x".repeat(1025)
     );
     let cases: Vec<(&str, String, &'static str, Option<&'static str>)> = vec![
-        ("foo", String::from("no fence here"), "frontmatter", Some("content")),
+        (
+            "foo",
+            String::from("no fence here"),
+            "frontmatter",
+            Some("content"),
+        ),
         (
             "foo",
             String::from("---\nname: [unclosed\ndescription: x\n---\nbody\n"),
@@ -525,12 +562,7 @@ async fn skill_create_rejects_frontmatter_violations() {
             "description",
             Some("description"),
         ),
-        (
-            "foo",
-            oversize_desc,
-            "description",
-            Some("description"),
-        ),
+        ("foo", oversize_desc, "description", Some("description")),
         (
             "foo",
             String::from("---\nname: foo\ndescription: x\n---\n   \n  \n"),
@@ -577,7 +609,11 @@ async fn skill_create_rejects_collision_and_leaves_no_tempfile() {
 
     let content = "---\nname: foo\ndescription: new desc\n---\nnew body\n";
     let out = tool
-        .execute(json!({ "name": "foo", "content": content }), ctx_.clone(), cancel.clone())
+        .execute(
+            json!({ "name": "foo", "content": content }),
+            ctx_.clone(),
+            cancel.clone(),
+        )
         .await
         .expect("tool should not error");
     let v = err(&out);
@@ -603,7 +639,11 @@ async fn skill_create_rejects_collision_and_leaves_no_tempfile() {
     // only SKILL.md in the skill directory (no temp files).
     let content2 = "---\nname: bar\ndescription: x\n---\nbody\n";
     let out2 = tool
-        .execute(json!({ "name": "bar", "content": content2 }), ctx_.clone(), cancel.clone())
+        .execute(
+            json!({ "name": "bar", "content": content2 }),
+            ctx_.clone(),
+            cancel.clone(),
+        )
         .await
         .expect("create should succeed");
     assert_eq!(parse(&out2)["success"].as_bool(), Some(true));
@@ -630,7 +670,11 @@ async fn skill_create_creates_skills_dir_when_missing() {
 
     let content = "---\nname: foo\ndescription: x\n---\nbody\n";
     let out = tool
-        .execute(json!({ "name": "foo", "content": content }), ctx(), CancellationToken::new())
+        .execute(
+            json!({ "name": "foo", "content": content }),
+            ctx(),
+            CancellationToken::new(),
+        )
         .await
         .expect("create should succeed");
     assert_eq!(parse(&out)["success"].as_bool(), Some(true));
