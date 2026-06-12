@@ -88,11 +88,13 @@ impl Tool for SkillCreateTool {
         _cancel: CancellationToken,
     ) -> Result<ToolOutput, ToolError> {
         // Step 1: pull out the two required args.
-        let Some(name) = args.get("name").and_then(|v| v.as_str()) else {
-            return Ok(failure("missing 'name'", None));
+        let name = match args.get("name").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => return Ok(failure("missing 'name'", None)),
         };
-        let Some(content) = args.get("content").and_then(|v| v.as_str()) else {
-            return Ok(failure("missing 'content'", None));
+        let content = match args.get("content").and_then(|v| v.as_str()) {
+            Some(s) if !s.is_empty() => s,
+            _ => return Ok(failure("missing 'content'", None)),
         };
 
         // Step 2: name shape (1..=64 chars, [a-z0-9-], no XML brackets, no "..").

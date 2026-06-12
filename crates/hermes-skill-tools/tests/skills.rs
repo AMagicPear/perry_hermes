@@ -433,3 +433,210 @@ async fn skill_create_writes_a_valid_skill_md_to_disk() {
     let on_disk = read_skill_md(&skills_dir, "rust-error-formatting");
     assert_eq!(on_disk, content, "on-disk file should equal input content");
 }
+
+#[tokio::test]
+async fn skill_create_rejects_argument_and_name_violations() {
+    let dir = TempDir::new().unwrap();
+    let tool = SkillCreateTool::new(dir.path().join("skills"));
+    let ctx_ = ctx();
+    let cancel = CancellationToken::new();
+
+    // Each row: (name, content, expected_error_substring, expected_field_or_None).
+    // Use owned String for `name` and `content` so we can build cases with
+    // computed values without leaking or temporary-lifetime errors.
+    let big_content = format!(
+        "---\nname: foo\ndescription: x\n---\n{}",
+        "x".repeat(100_001)
+    );
+    let cases: Vec<(String, String, &'static str, Option<&'static str>)> = vec![
+        // Missing args
+        (String::new(), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "missing 'name'", None),
+        (String::from("foo"), String::new(), "missing 'content'", None),
+        // Name shape
+        (String::from("Foo"), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "name", Some("name")),
+        (String::from(".."), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "'..'", Some("name")),
+        (String::from("a<b"), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "name", Some("name")),
+        ("a".repeat(65), String::from("---\nname: PLACEHOLDER\ndescription: x\n---\nbody\n"), "name", Some("name")),
+        // Content size
+        (String::from("foo"), big_content, "100000", Some("content")),
+    ];
+
+    for (name, content, err_substr, field) in cases {
+        let out = tool
+            .execute(
+                json!({ "name": name, "content": content }),
+                ctx_.clone(),
+                cancel.clone(),
+            )
+            .await
+            .expect("tool should not error");
+        let v = err(&out);
+        let err_str = v["error"].as_str().unwrap_or("");
+        assert!(
+            err_str.contains(err_substr),
+            "case {name:?} expected error containing {err_substr:?}, got {err_str:?}"
+        );
+        if let Some(f) = field {
+            assert_eq!(
+                v["field"].as_str(),
+                Some(f),
+                "case {name:?} expected field={f:?}, got {v}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn skill_create_rejects_frontmatter_violations() {
+    let dir = TempDir::new().unwrap();
+    let tool = SkillCreateTool::new(dir.path().join("skills"));
+    let ctx_ = ctx();
+    let cancel = CancellationToken::new();
+
+    // (name, content, expected_error_substring, expected_field_or_None)
+    // Use owned Strings to keep test inputs alive for the iteration.
+    let oversize_desc = format!(
+        "---\nname: foo\ndescription: {}\n---\nbody\n",
+        "x".repeat(1025)
+    );
+    let cases: Vec<(&str, String, &'static str, Option<&'static str>)> = vec![
+        ("foo", String::from("no fence here"), "frontmatter", Some("content")),
+        (
+            "foo",
+            String::from("---\nname: [unclosed\ndescription: x\n---\nbody\n"),
+            "YAML",
+            Some("content"),
+        ),
+        (
+            "foo",
+            String::from("---\njust-a-string\n---\nbody\n"),
+            "mapping",
+            Some("content"),
+        ),
+        (
+            "foo",
+            String::from("---\nname: bar\ndescription: x\n---\nbody\n"),
+            "does not match",
+            Some("name"),
+        ),
+        (
+            "foo",
+            String::from("---\nname: foo\n---\nbody\n"),
+            "description",
+            Some("description"),
+        ),
+        (
+            "foo",
+            oversize_desc,
+            "description",
+            Some("description"),
+        ),
+        (
+            "foo",
+            String::from("---\nname: foo\ndescription: x\n---\n   \n  \n"),
+            "body",
+            None,
+        ),
+    ];
+
+    for (name, content, err_substr, field) in cases {
+        let out = tool
+            .execute(
+                json!({ "name": name, "content": content }),
+                ctx_.clone(),
+                cancel.clone(),
+            )
+            .await
+            .expect("tool should not error");
+        let v = err(&out);
+        let err_str = v["error"].as_str().unwrap_or("");
+        assert!(
+            err_str.contains(err_substr),
+            "case name={name:?} expected error containing {err_substr:?}, got {err_str:?}"
+        );
+        if let Some(f) = field {
+            assert_eq!(
+                v["field"].as_str(),
+                Some(f),
+                "case name={name:?} expected field={f:?}, got {v}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn skill_create_rejects_collision_and_leaves_no_tempfile() {
+    let dir = TempDir::new().unwrap();
+    let skills_dir = dir.path().join("skills");
+    let tool = SkillCreateTool::new(skills_dir.clone());
+    let ctx_ = ctx();
+    let cancel = CancellationToken::new();
+
+    // Pre-seed an existing skill with the same name.
+    write_skill(&skills_dir, "foo", "old", "old body");
+
+    let content = "---\nname: foo\ndescription: new desc\n---\nnew body\n";
+    let out = tool
+        .execute(json!({ "name": "foo", "content": content }), ctx_.clone(), cancel.clone())
+        .await
+        .expect("tool should not error");
+    let v = err(&out);
+    assert!(v["error"].as_str().unwrap().contains("already exists"));
+    assert!(v["error"].as_str().unwrap().contains("write_file or patch"));
+    assert_eq!(
+        v["existing_path"].as_str().unwrap(),
+        skills_dir.join("foo").join("SKILL.md").to_string_lossy()
+    );
+
+    // Pre-existing SKILL.md must be byte-for-byte unchanged.
+    let on_disk = read_skill_md(&skills_dir, "foo");
+    assert!(
+        on_disk.contains("description: old"),
+        "pre-existing skill must be preserved, got: {on_disk}"
+    );
+    assert!(
+        !on_disk.contains("new body"),
+        "collision must not overwrite, got: {on_disk}"
+    );
+
+    // Now a fresh create against a non-existing skill — atomic write should leave
+    // only SKILL.md in the skill directory (no temp files).
+    let content2 = "---\nname: bar\ndescription: x\n---\nbody\n";
+    let out2 = tool
+        .execute(json!({ "name": "bar", "content": content2 }), ctx_.clone(), cancel.clone())
+        .await
+        .expect("create should succeed");
+    assert_eq!(parse(&out2)["success"].as_bool(), Some(true));
+
+    let skill_dir = skills_dir.join("bar");
+    let mut entries: Vec<_> = std::fs::read_dir(&skill_dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.sort();
+    assert_eq!(
+        entries,
+        vec!["SKILL.md".to_string()],
+        "atomic write should leave only SKILL.md, got: {entries:?}"
+    );
+}
+
+#[tokio::test]
+async fn skill_create_creates_skills_dir_when_missing() {
+    let dir = TempDir::new().unwrap();
+    let skills_dir = dir.path().join("skills");
+    assert!(!skills_dir.exists(), "precondition: skills dir absent");
+    let tool = SkillCreateTool::new(skills_dir.clone());
+
+    let content = "---\nname: foo\ndescription: x\n---\nbody\n";
+    let out = tool
+        .execute(json!({ "name": "foo", "content": content }), ctx(), CancellationToken::new())
+        .await
+        .expect("create should succeed");
+    assert_eq!(parse(&out)["success"].as_bool(), Some(true));
+    assert!(skills_dir.is_dir(), "skills dir should be created");
+    assert!(
+        skills_dir.join("foo").join("SKILL.md").is_file(),
+        "SKILL.md should exist"
+    );
+}
