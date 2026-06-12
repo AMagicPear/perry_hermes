@@ -61,7 +61,7 @@ impl Tool for ProcessTool {
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Line offset for 'log' action (default: last 200 lines)"
+                    "description": "Starting line number for 'log' action. Default: shows the LAST N lines (tail behavior). Pass 0 to start from the beginning."
                 },
                 "limit": {
                     "type": "integer",
