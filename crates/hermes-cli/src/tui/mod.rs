@@ -89,9 +89,9 @@ impl GatewayEventHandler for TuiEventHandler {
     // │ context segment never appears. See commit 7d427ea for history.  │
     // └─────────────────────────────────────────────────────────────────┘
     fn on_context_usage_updated(&mut self, used_tokens: u64) {
-        let _ = self
-            .tx
-            .send(AppEvent::Loop(LoopEvent::ContextUsageUpdated { used_tokens }));
+        let _ = self.tx.send(AppEvent::Loop(LoopEvent::ContextUsageUpdated {
+            used_tokens,
+        }));
     }
 
     fn on_compression_completed(
@@ -100,12 +100,14 @@ impl GatewayEventHandler for TuiEventHandler {
         compacted_tokens: Option<u64>,
         duration: std::time::Duration,
     ) {
-        let _ = self.tx.send(AppEvent::Loop(LoopEvent::CompressionCompleted {
-            trigger: CompressionTrigger::PostTurn,
-            context_tokens,
-            compacted_tokens,
-            duration,
-        }));
+        let _ = self
+            .tx
+            .send(AppEvent::Loop(LoopEvent::CompressionCompleted {
+                trigger: CompressionTrigger::PostTurn,
+                context_tokens,
+                compacted_tokens,
+                duration,
+            }));
     }
 
     fn on_turn_completed(&mut self) {
