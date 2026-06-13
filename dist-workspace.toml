@@ -14,4 +14,4 @@ targets = ["aarch64-apple-darwin", "x86_64-apple-darwin", "x86_64-unknown-linux-
 # Where to host releases
 hosting = "github"
 # Extra static files to include in each release archive
-include = ["examples/**"]
+include = ["examples/config/perry_hermes.toml", "examples/README.md", "examples/skills/rust-core-style/SKILL.md"]
