@@ -43,7 +43,8 @@ pub fn render_system_prompt_block(skills: &[Skill]) -> String {
     let mut out = String::new();
     out.push_str(
         "The following skills are available. Each skill is a directory containing a SKILL.md file with detailed instructions.\n\
-         Use the `skill_view` tool (or read the file directly with bash) to load a skill's body when it is relevant to the user's request.\n\n\
+         Use the `skill_view` tool (or read the file directly with bash) to load a skill's body when it is relevant to the user's request.\n\
+         Use the `skill_create` tool to record a successful workflow as a new SKILL.md. Skills created in the current session are not visible to `skills_list` / `skill_view` until the next session starts.\n\n\
          Available skills:\n",
     );
 
@@ -478,6 +479,20 @@ mod tests {
         assert!(
             block.contains("skill_view"),
             "should reference skill_view tool for Phase 12"
+        );
+    }
+
+    #[test]
+    fn render_block_mentions_skill_create_tool() {
+        let skills = vec![make_skill("foo", None, "x")];
+        let block = render_system_prompt_block(&skills);
+        assert!(
+            block.contains("skill_create"),
+            "system prompt block should advertise skill_create, got: {block}"
+        );
+        assert!(
+            block.contains("next session"),
+            "system prompt should mention next-session limitation, got: {block}"
         );
     }
 }
