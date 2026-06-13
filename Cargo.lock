@@ -1898,7 +1898,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "perry-hermes-agent"
-version = "0.4.8"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1921,7 +1921,7 @@ dependencies = [
 
 [[package]]
 name = "perry-hermes-cli"
-version = "0.4.8"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1942,7 +1942,7 @@ dependencies = [
 
 [[package]]
 name = "perry-hermes-core"
-version = "0.4.8"
+version = "0.5.0"
 dependencies = [
  "async-trait",
  "futures",
@@ -1956,7 +1956,7 @@ dependencies = [
 
 [[package]]
 name = "perry-hermes-gateway"
-version = "0.4.8"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1979,7 +1979,7 @@ dependencies = [
 
 [[package]]
 name = "perry-hermes-providers"
-version = "0.4.8"
+version = "0.5.0"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -1996,7 +1996,7 @@ dependencies = [
 
 [[package]]
 name = "perry-hermes-skill-tools"
-version = "0.4.8"
+version = "0.5.0"
 dependencies = [
  "anyhow",
  "async-trait",
