@@ -10,6 +10,7 @@ pub mod render;
 pub mod run;
 
 use perry_hermes_agent::LoopEvent;
+use perry_hermes_core::compaction_strategy::CompressionTrigger;
 use perry_hermes_core::error::ToolError;
 use perry_hermes_core::message::{Message, ToolCall};
 use perry_hermes_core::tool::ToolOutput;
@@ -78,6 +79,33 @@ impl GatewayEventHandler for TuiEventHandler {
         let _ = self.tx.send(AppEvent::Loop(LoopEvent::Cancelled)); // Reuse Cancelled for errors
         // Error text will be displayed via TurnCompleted error handling
         let _ = error; // Suppress unused warning
+    }
+
+    // ┌─────────────────────────────────────────────────────────────────┐
+    // │ IMPORTANT: on_context_usage_updated and on_compression_completed │
+    // │ are REQUIRED by the TUI. Without them, the agent loop fires     │
+    // │ ContextUsageUpdated / CompressionCompleted but the events are   │
+    // │ silently dropped (default trait no-op), so the status bar       │
+    // │ context segment never appears. See commit 7d427ea for history.  │
+    // └─────────────────────────────────────────────────────────────────┘
+    fn on_context_usage_updated(&mut self, used_tokens: u64) {
+        let _ = self
+            .tx
+            .send(AppEvent::Loop(LoopEvent::ContextUsageUpdated { used_tokens }));
+    }
+
+    fn on_compression_completed(
+        &mut self,
+        context_tokens: Option<u64>,
+        compacted_tokens: Option<u64>,
+        duration: std::time::Duration,
+    ) {
+        let _ = self.tx.send(AppEvent::Loop(LoopEvent::CompressionCompleted {
+            trigger: CompressionTrigger::PostTurn,
+            context_tokens,
+            compacted_tokens,
+            duration,
+        }));
     }
 
     fn on_turn_completed(&mut self) {
