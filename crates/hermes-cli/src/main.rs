@@ -44,7 +44,7 @@ enum Command {
     /// Manage the platform gateway.
     Gateway {
         #[command(subcommand)]
-        subcommand: Option<GatewayCommand>,
+        subcommand: GatewayCommand,
     },
 }
 
@@ -69,16 +69,9 @@ async fn main() -> anyhow::Result<()> {
     match args.command.unwrap_or(Command::Tui) {
         Command::Tui => run_tui(config, &config_path).await,
         Command::Gateway { subcommand } => match subcommand {
-            Some(GatewayCommand::Run) => run_gateway(config, &config_path).await,
-            Some(GatewayCommand::Start) => gateway_start(),
-            Some(GatewayCommand::Stop) => gateway_stop(),
-            None => {
-                eprintln!("Usage: perry-hermes gateway <run|start|stop>");
-                eprintln!("  run   — Run the gateway in the foreground");
-                eprintln!("  start — Register and start as a system service");
-                eprintln!("  stop  — Stop the system service");
-                Ok(())
-            }
+            GatewayCommand::Run => run_gateway(config, &config_path).await,
+            GatewayCommand::Start => gateway_start(),
+            GatewayCommand::Stop => gateway_stop(),
         },
     }
 }
