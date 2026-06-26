@@ -22,7 +22,7 @@ use tokio_util::sync::CancellationToken;
 
 use perry_hermes_core::compaction_strategy::CompressionTrigger;
 use perry_hermes_core::error::{LoopError, ProviderError, ToolError};
-use perry_hermes_core::message::{Message, Role, ToolCall};
+use perry_hermes_core::message::{Content, Message, Role, ToolCall};
 use perry_hermes_core::provider::{Completion, FinishReason, StreamAccumulator};
 use perry_hermes_core::tool::ToolContext;
 use perry_hermes_skill_tools::tools::process_registry::{PROCESS_REGISTRY, ProcessNotification};
@@ -386,7 +386,7 @@ fn build_failed_turn(
     initial_len: usize,
     error: ProviderError,
 ) -> AgentRunError {
-    if let Some(msg) = partial_assistant {
+    if let Some(msg) = partial_assistant.filter(partial_assistant_is_safe_to_preserve) {
         messages.push(msg);
     }
     if messages.len() > initial_len {
@@ -402,6 +402,19 @@ fn build_failed_turn(
     } else {
         AgentRunError::Loop(LoopError::Provider(error))
     }
+}
+
+fn partial_assistant_is_safe_to_preserve(message: &Message) -> bool {
+    let has_content = match &message.content {
+        Content::Text(text) => !text.is_empty(),
+        Content::Parts(parts) => !parts.is_empty(),
+    };
+    let has_reasoning = message
+        .reasoning
+        .as_deref()
+        .is_some_and(|text| !text.is_empty());
+
+    has_content || has_reasoning || message.tool_calls.is_none()
 }
 
 /// Like `build_failed_turn` but for non-provider loop errors (Timeout,

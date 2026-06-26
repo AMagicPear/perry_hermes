@@ -7,7 +7,8 @@
 //!
 //! # Architecture
 //!
-//! - [`GatewayRunner`] — central orchestrator: owns the [`AgentLoop`] and
+//! - [`GatewayRunner`] — central orchestrator: owns the
+//!   [`AgentLoop`](perry_hermes_agent::AgentLoop) and
 //!   [`SessionRegistry`], dispatches incoming events.
 //! - [`PlatformAdapter`] — trait for platform-specific adapters.
 //! - [`SessionRegistry`] — concurrent session store keyed by

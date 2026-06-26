@@ -217,6 +217,9 @@ impl GatewayRunner {
             .await
             .map(|m| m.content.as_text().to_string())
             .unwrap_or_default();
+        if user_text.is_empty() {
+            return Ok(GatewayResponse::Ignored);
+        }
 
         let cancel = CancellationToken::new();
         let mut response_empty = true;

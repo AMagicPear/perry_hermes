@@ -339,3 +339,70 @@ async fn loop_keeps_partial_streamed_assistant_text_on_provider_failure() {
         other => panic!("expected FailedTurn, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn loop_drops_unexecuted_partial_tool_call_on_provider_failure() {
+    use perry_hermes_core::provider::{CompletionDelta, ToolCallDelta};
+
+    let provider = ScriptedProvider::from_steps(vec![
+        ScriptedStep::DeltasThenError(
+            vec![CompletionDelta {
+                content_delta: None,
+                reasoning_delta: None,
+                tool_call_delta: Some(ToolCallDelta {
+                    index: 0,
+                    id: Some("call_1".into()),
+                    name: Some("terminal".into()),
+                    arguments_fragment: Some(r#"{"command":"echo should-not-run"}"#.into()),
+                }),
+                usage: None,
+                finish_reason: None,
+            }],
+            perry_hermes_core::ProviderError::Transport("stream dropped before finish".into()),
+        ),
+        ScriptedStep::Deltas(support::completion_to_deltas(&Completion {
+            message: assistant_text("recovered"),
+            usage: perry_hermes_core::Usage::default(),
+            finish_reason: FinishReason::Stop,
+        })),
+    ]);
+    let registry = Arc::new(InMemoryRegistry::new().register(Arc::new(BashTool::new())));
+    let loop_ = AgentLoop::from_parts(
+        Arc::new(provider),
+        registry,
+        LoopConfig {
+            max_iterations: 5,
+            ..Default::default()
+        },
+    );
+
+    let session = test_session();
+    let err = loop_
+        .run_session_turn("run something", &session, CancellationToken::new(), |_| {})
+        .await
+        .expect_err("loop should surface provider failure");
+
+    assert!(matches!(
+        err,
+        AgentRunError::Loop(perry_hermes_core::LoopError::Provider(
+            perry_hermes_core::ProviderError::Transport(_)
+        ))
+    ));
+
+    let messages = session.messages().await;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].role, Role::User);
+    assert!(
+        messages.iter().all(|message| message.tool_calls.is_none()),
+        "failed turn history must not preserve an assistant tool_call that has no tool result"
+    );
+
+    let recovered = loop_
+        .run_session_turn("continue", &session, CancellationToken::new(), |_| {})
+        .await
+        .expect("next turn should not be poisoned by a dangling tool call");
+    let Content::Text(final_text) = &recovered.final_message.content else {
+        panic!("expected recovered text")
+    };
+    assert_eq!(final_text, "recovered");
+}

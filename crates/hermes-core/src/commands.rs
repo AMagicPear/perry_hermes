@@ -12,7 +12,7 @@ use crate::platform::Platform;
 ///
 /// Variants are paired with their metadata in [`Command::ALL`], which
 /// is the single source of truth for names, descriptions, and platform
-/// availability. [`Command::parse`] and the [`Display`] impl both go
+/// availability. [`Command::parse`] and the [`std::fmt::Display`] impl both go
 /// through that dictionary rather than re-encoding name strings locally.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Command {
