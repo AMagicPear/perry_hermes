@@ -195,17 +195,29 @@ impl Tool for BashTool {
             });
         }
 
-        // Prefer zsh; fall back to bash if zsh is not installed.
-        let shell = if util::which("zsh") { "zsh" } else { "bash" };
-        let mut child = Command::new(shell)
-            .arg("-c")
-            .arg(command)
+        // Pick the right shell for this platform. On Windows this returns
+        // `pwsh` / `powershell` / `cmd`; on Unix it returns `zsh` / `bash` /
+        // `sh`. Critically, we close stdin (`Stdio::null()`) — without
+        // this, shells like bash/zsh/PowerShell can read from the
+        // inherited stdin pipe and block forever, which is the most
+        // common cause of the terminal tool "hanging" on Windows and
+        // in CI environments where stdin is connected to a waiting
+        // parent process.
+        let (shell_program, shell_args) = util::shell_invocation(command);
+        let mut cmd = Command::new(&shell_program);
+        for arg in &shell_args {
+            cmd.arg(arg);
+        }
+        let mut child = cmd
             .current_dir(cwd)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
-            .map_err(|e| ToolError::Execution(e.to_string()))?;
+            .map_err(|e| {
+                ToolError::Execution(format!("failed to spawn shell '{shell_program}': {e}"))
+            })?;
 
         let timeout = Duration::from_secs(timeout_secs);
         tokio::select! {

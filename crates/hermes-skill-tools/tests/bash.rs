@@ -108,20 +108,39 @@ async fn process_tool_poll_after_background_spawn() {
     let parsed: serde_json::Value = serde_json::from_str(&out.content).unwrap();
     let session_id = parsed["session_id"].as_str().unwrap().to_string();
 
-    // Wait for it to finish.
-    tokio::time::sleep(Duration::from_millis(500)).await;
-
-    // Poll for status.
-    let poll_out = process
-        .execute(
-            json!({ "action": "poll", "session_id": session_id }),
-            ctx(),
-            cancel.clone(),
-        )
-        .await
-        .unwrap();
-    assert!(poll_out.content.contains("finished"));
-    assert!(poll_out.content.contains("poll-test-output"));
+    // Poll for completion instead of relying on a fixed sleep. PowerShell
+    // startup on Windows is significantly slower than bash on Unix, so
+    // a hard 500ms wait is not portable. Poll repeatedly, accumulating
+    // output across calls, until the process reports "finished" or we
+    // hit a generous wall-clock cap.
+    let mut accumulated_output = String::new();
+    let mut saw_finished = false;
+    for _ in 0..100 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let poll_out = process
+            .execute(
+                json!({ "action": "poll", "session_id": session_id }),
+                ctx(),
+                cancel.clone(),
+            )
+            .await
+            .unwrap();
+        // Parse the JSON to accumulate the actual output field across polls.
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&poll_out.content) {
+            if let Some(s) = parsed.get("output").and_then(|v| v.as_str()) {
+                accumulated_output.push_str(s);
+            }
+            if parsed.get("status").and_then(|v| v.as_str()) == Some("finished") {
+                saw_finished = true;
+                break;
+            }
+        }
+    }
+    assert!(saw_finished, "process did not finish within 10s");
+    assert!(
+        accumulated_output.contains("poll-test-output"),
+        "poll output missing expected content: {accumulated_output:?}"
+    );
 }
 
 #[tokio::test]

@@ -153,11 +153,19 @@ impl ProcessRegistry {
     ) -> Result<String, String> {
         let id = format!("proc_{}", NEXT_ID.fetch_add(1, Ordering::Relaxed));
 
-        let shell = if util::which("zsh") { "zsh" } else { "bash" };
-        let mut cmd = Command::new(shell);
-        cmd.arg("-c")
-            .arg(command)
-            .current_dir(&cwd)
+        // Pick a platform-appropriate shell. On Windows this is PowerShell
+        // (or `cmd` as a last resort); on Unix it is `zsh` / `bash` / `sh`.
+        // We MUST close stdin — otherwise shells that read from stdin
+        // (bash, zsh, PowerShell) can block forever waiting for input,
+        // which is the most common cause of background processes "hanging"
+        // on Windows and in CI environments.
+        let (shell_program, shell_args) = util::shell_invocation(command);
+        let mut cmd = Command::new(&shell_program);
+        for arg in &shell_args {
+            cmd.arg(arg);
+        }
+        cmd.current_dir(&cwd)
+            .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .kill_on_drop(true);
@@ -165,7 +173,9 @@ impl ProcessRegistry {
         // the entire subtree (shell + children).
         #[cfg(unix)]
         set_process_group(&mut cmd);
-        let mut child = cmd.spawn().map_err(|e| format!("failed to spawn: {e}"))?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("failed to spawn shell '{shell_program}': {e}"))?;
 
         let pid = child.id();
         let session = ProcessSession {
@@ -545,15 +555,27 @@ mod tests {
     async fn notification_sent_when_notify_on_complete() {
         let _guard = NOTIFY_TEST_LOCK.lock().await;
 
+        // Use the OS-correct temp dir — `/tmp` is Unix-only and will
+        // fail to spawn on Windows with ERROR_DIRECTORY.
+        let cwd = std::env::temp_dir();
         let id = PROCESS_REGISTRY
-            .spawn("echo notified", PathBuf::from("/tmp"), true)
+            .spawn("echo notified", cwd, true)
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let notifications = PROCESS_REGISTRY.drain_notifications().await;
-        let found = notifications.iter().any(|n| match n {
-            ProcessNotification::Completed { session_id, .. } => session_id == &id,
-        });
+        // Poll for the completion notification rather than relying on a
+        // fixed sleep. PowerShell startup on Windows is significantly
+        // slower than bash on Unix, so a hard 500ms wait would flake.
+        let mut found = false;
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let notifications = PROCESS_REGISTRY.drain_notifications().await;
+            found = notifications.iter().any(|n| match n {
+                ProcessNotification::Completed { session_id, .. } => session_id == &id,
+            });
+            if found {
+                break;
+            }
+        }
         assert!(found, "expected completion notification for {id}");
     }
 }
