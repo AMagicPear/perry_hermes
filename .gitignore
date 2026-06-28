@@ -1,5 +1,5 @@
 /target
-/.envrc
+/.env
 hermes.toml
 rust_out
 .DS_Store

@@ -60,6 +60,9 @@ enum GatewayCommand {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load .env file if present (cross-platform alternative to direnv)
+    let _ = dotenv::dotenv();
+
     let args = Args::parse();
     let config_path = config::resolve_config_path(args.config.as_deref())?;
     let config = PerryHermesConfig::from_path(&config_path)

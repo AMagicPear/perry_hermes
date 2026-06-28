@@ -179,6 +179,38 @@ The config lookup order is:
 2. `~/.perry_hermes/config.toml`
 3. `./perry_hermes.toml`
 
+## Environment Variables
+
+Perry Hermes reads API keys and tokens from a `.env` file in the project root.
+
+### Setup
+
+1. Copy `.env.example` to `.env`:
+
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Fill in your real values:
+   - `MINIMAX_API_KEY`
+   - `MIMO_API_KEY`
+   - `TELEGRAM_BOT_TOKEN`
+   - `QQ_BOT_APP_ID` / `QQ_BOT_APP_SECRET`
+
+3. The application automatically loads `.env` on startup.
+
+### Proxy Settings (Optional)
+
+If Telegram is blocked in your region, set proxy environment variables in `.env`:
+
+```env
+https_proxy=http://127.0.0.1:7890
+http_proxy=http://127.0.0.1:7890
+all_proxy=socks5://127.0.0.1:7890
+```
+
+The `reqwest` HTTP client (used by `teloxide` and `qq-bot-rs`) picks these up automatically.
+
 ## CLI
 
 ```bash
