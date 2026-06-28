@@ -5,6 +5,7 @@
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use crossterm::event::KeyEventKind;
 use futures::StreamExt;
 use perry_hermes_agent::AgentLoop;
 use perry_hermes_core::tool::ToolOutput;
@@ -114,6 +115,19 @@ pub async fn run(
                 maybe = events.next() => {
                     match maybe {
                         Some(Ok(Event::Key(k))) => {
+                            // Windows console reports both Press and Release
+                            // events for every key, so without this filter
+                            // typing a single character inserts it twice
+                            // (e.g. `h` becomes `hh`). On Unix/macOS the
+                            // kind field is reported as `Press` by default,
+                            // so this filter is a no-op there.
+                            //
+                            // We accept `Press` and `Repeat` so holding a
+                            // key still produces repeating input, but drop
+                            // `Release` events which carry the same code.
+                            if !is_typing_key_event(k.kind) {
+                                continue;
+                            }
                             let next = handle_key(&mut app, k);
                             // Special handling for Submit while agent is running:
                             // enqueue directly (synchronously) to avoid race.
@@ -243,6 +257,19 @@ pub async fn run_with_backend(
 struct RunContext<'a> {
     gateway: &'a Arc<GatewayRunner>,
     input_tx: &'a mpsc::UnboundedSender<AppEvent>,
+}
+
+/// Decide whether a `KeyEvent` should be applied to the input buffer.
+///
+/// On Windows, crossterm reports both `Press` and `Release` events for
+/// each key the user presses, which causes every typed character to be
+/// inserted twice (e.g. `h` becomes `hh`). Dropping `Release` events
+/// here restores the expected one-character-per-press semantics.
+///
+/// On Unix/macOS the `kind` field is reported as `Press` by default, so
+/// this filter is effectively a no-op there.
+fn is_typing_key_event(kind: KeyEventKind) -> bool {
+    matches!(kind, KeyEventKind::Press | KeyEventKind::Repeat)
 }
 
 fn dispatch_event(
@@ -815,5 +842,23 @@ mod tests {
             app.compression_hint.as_deref(),
             Some("No agent attached for compact")
         );
+    }
+
+    #[test]
+    fn is_typing_key_event_accepts_press_and_repeat() {
+        use crossterm::event::KeyEventKind;
+
+        assert!(is_typing_key_event(KeyEventKind::Press));
+        assert!(is_typing_key_event(KeyEventKind::Repeat));
+    }
+
+    #[test]
+    fn is_typing_key_event_drops_release_events() {
+        use crossterm::event::KeyEventKind;
+
+        // Regression test for the Windows input-doubling bug: crossterm
+        // emits a Release event after every Press, which used to make
+        // typing `h` produce `hh`. The filter must drop Release.
+        assert!(!is_typing_key_event(KeyEventKind::Release));
     }
 }
