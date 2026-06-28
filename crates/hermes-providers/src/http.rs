@@ -2,25 +2,37 @@ use std::error::Error;
 use std::time::Duration;
 
 pub(crate) fn streaming_client() -> reqwest::Client {
-    let mut builder = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(20))
         .read_timeout(Duration::from_secs(300))
         .no_gzip()
         .no_brotli()
         .no_zstd()
-        .no_deflate();
+        .no_deflate()
+        .apply_android_tls_backend();
 
+    builder.build().expect("reqwest client")
+}
+
+trait ApplyAndroidTls {
+    fn apply_android_tls_backend(self) -> Self;
+}
+
+impl ApplyAndroidTls for reqwest::ClientBuilder {
     // On Android (Termux), reqwest 0.13's default rustls feature enables
     // `rustls-platform-verifier`, which calls into Android's JVM to verify
     // certificates. Termux has no JVM, so the verifier panics on the first
     // handshake ("Expect rustls-platform-verifier to be initialized"). We
     // bypass it by preconfiguring rustls with Mozilla's bundled root CAs.
     #[cfg(target_os = "android")]
-    {
-        builder = builder.tls_backend_preconfigured(build_webpki_client_config());
+    fn apply_android_tls_backend(self) -> Self {
+        self.tls_backend_preconfigured(build_webpki_client_config())
     }
 
-    builder.build().expect("reqwest client")
+    #[cfg(not(target_os = "android"))]
+    fn apply_android_tls_backend(self) -> Self {
+        self
+    }
 }
 
 #[cfg(target_os = "android")]
