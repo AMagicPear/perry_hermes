@@ -1995,10 +1995,12 @@ dependencies = [
  "httpmock",
  "perry-hermes-core",
  "reqwest 0.13.4",
+ "rustls",
  "serde",
  "serde_json",
  "tokio",
  "tokio-util",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -2512,6 +2514,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "rustls-pki-types",
  "rustls-webpki",

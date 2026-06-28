@@ -18,6 +18,12 @@ serde_json.workspace = true
 reqwest.workspace = true
 bytes.workspace = true
 
+# Direct rustls + webpki-roots are only used on Android (Termux) to avoid the
+# `rustls-platform-verifier` panic. Both deps stay in the graph so the build
+# is uniform across platforms.
+rustls = "0.23"
+webpki-roots.workspace = true
+
 [dev-dependencies]
 httpmock.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }

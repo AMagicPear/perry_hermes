@@ -177,6 +177,7 @@ async fn run_gateway(config: PerryHermesConfig, config_path: &Path) -> anyhow::R
 }
 
 /// Environment variables to capture when installing the gateway service.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 const GATEWAY_ENV_VARS: &[&str] = &[
     "TELEGRAM_BOT_TOKEN",
     "QQ_BOT_APP_ID",
@@ -193,6 +194,7 @@ const GATEWAY_ENV_VARS: &[&str] = &[
 ];
 
 /// Write captured env vars to `$PERRY_HERMES_HOME/gateway.env` as KEY=VALUE lines.
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn write_gateway_env_file() -> anyhow::Result<PathBuf> {
     let env_path = perry_hermes_core::home::resolve_gateway_env_path()
         .context("cannot resolve Perry Hermes home directory")?;
@@ -214,6 +216,7 @@ fn write_gateway_env_file() -> anyhow::Result<PathBuf> {
     Ok(env_path)
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn gateway_binary_path() -> anyhow::Result<PathBuf> {
     std::env::current_exe().context("failed to determine current executable path")
 }
@@ -513,4 +516,26 @@ fn gateway_stop() -> anyhow::Result<()> {
         eprintln!("Service was not running (or already stopped).");
     }
     Ok(())
+}
+
+// ── Unsupported platforms (e.g. Android/Termux) ─────────────────────────────
+//
+// The gateway service install relies on a platform service manager
+// (launchd / schtasks / systemd). Android has none of those, so the
+// `gateway start` / `gateway stop` subcommands are unavailable. The
+// `gateway run` subcommand still works for foreground execution.
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn gateway_start() -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Installing the gateway as a background service is not supported on this platform. \
+         Use `perry-hermes gateway run` to run it in the foreground."
+    )
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
+fn gateway_stop() -> anyhow::Result<()> {
+    anyhow::bail!(
+        "Installing the gateway as a background service is not supported on this platform."
+    )
 }
