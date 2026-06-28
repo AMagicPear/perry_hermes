@@ -7,7 +7,7 @@ use std::time::Instant;
 
 use crossterm::event::KeyEventKind;
 use futures::StreamExt;
-use perry_hermes_agent::AgentLoop;
+use perry_hermes_agent::{AgentLoop, AgentSession};
 use perry_hermes_core::tool::ToolOutput;
 use perry_hermes_gateway::{GatewayConfig, GatewayResponse, GatewayRunner};
 use ratatui::backend::{Backend, CrosstermBackend};
@@ -91,12 +91,13 @@ pub async fn run(
     let entry = gateway.sessions().get_or_create(&session_key).await;
     let session = entry.session.clone();
 
+    let run_ctx = RunContext {
+        gateway: &gateway,
+        input_tx: &input_tx,
+    };
+
     let result: Result<(), RunError> = async {
         loop {
-            // Refresh the queued-message snapshot from the session on
-            // every iteration so the status bar reflects what the
-            // agent loop will pick up next. Cheap (async read lock,
-            // 16 ms tick rate).
             app.pending_queue = session.peek_pending_messages().await;
 
             draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
@@ -104,10 +105,7 @@ pub async fn run(
             tokio::select! {
                 biased;
                 _ = cancel.cancelled() => {
-                    let width = app.history_width;
-                    history.push(&mut app, RenderedLine::System("⚠ cancelled".to_string()), width);
-                    draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
-                    return Ok(());
+                    return finish_with_cancelled(&mut terminal, &mut app, &mut history);
                 }
                 _ = tick.tick() => {
                     // Periodic redraw keeps the display fresh while streaming.
@@ -115,42 +113,12 @@ pub async fn run(
                 maybe = events.next() => {
                     match maybe {
                         Some(Ok(Event::Key(k))) => {
-                            // Windows console reports both Press and Release
-                            // events for every key, so without this filter
-                            // typing a single character inserts it twice
-                            // (e.g. `h` becomes `hh`). On Unix/macOS the
-                            // kind field is reported as `Press` by default,
-                            // so this filter is a no-op there.
-                            //
-                            // We accept `Press` and `Repeat` so holding a
-                            // key still produces repeating input, but drop
-                            // `Release` events which carry the same code.
                             if !is_typing_key_event(k.kind) {
                                 continue;
                             }
-                            let next = handle_key(&mut app, k);
-                            // Special handling for Submit while agent is running:
-                            // enqueue directly (synchronously) to avoid race.
-                            // The next tick will surface the message in the
-                            // status bar; we deliberately do not push anything
-                            // to the scrollback so the streaming agent output
-                            // is not visually interrupted.
-                            if matches!(&next, AppEvent::Submit(_)) && app.mode == AppMode::AwaitingModel {
-                                if let AppEvent::Submit(text) = next {
-                                    session.enqueue_message(text.clone()).await;
-                                }
-                            } else if dispatch_event(
-                                &mut app,
-                                next,
-                                &cancel,
-                                Some(RunContext {
-                                    gateway: &gateway,
-                                    input_tx: &input_tx,
-                                }),
-                                Some(&mut history),
-                            )? {
-                                draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
-                                return Ok(());
+                            let ev = handle_key(&mut app, k);
+                            if handle_tui_event(&mut app, ev, &cancel, Some(run_ctx), &session, &mut history).await? {
+                                return finish_with_redraw(&mut terminal, &mut app, &mut history);
                             }
                         }
                         Some(Ok(Event::Resize(_, _))) => {
@@ -164,16 +132,9 @@ pub async fn run(
                     }
                 }
                 maybe = input_rx.recv() => {
-                    if let Some(ev) = maybe {
-                        // Special handling for Submit while agent is running.
-                        if matches!(&ev, AppEvent::Submit(_)) && app.mode == AppMode::AwaitingModel {
-                            if let AppEvent::Submit(text) = ev {
-                                session.enqueue_message(text.clone()).await;
-                            }
-                        } else if dispatch_event(&mut app, ev, &cancel, None, Some(&mut history))? {
-                            draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
-                            return Ok(());
-                        }
+                    if let Some(ev) = maybe
+                        && handle_tui_event(&mut app, ev, &cancel, None, &session, &mut history).await? {
+                        return finish_with_redraw(&mut terminal, &mut app, &mut history);
                     }
                 }
             }
@@ -233,12 +194,9 @@ pub async fn run_with_backend(
         draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
 
         tokio::select! {
-                biased;
-                _ = cancel.cancelled() => {
-                let width = app.history_width;
-                history.push(&mut app, RenderedLine::System("⚠ cancelled".to_string()), width);
-                draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
-                return Ok(());
+            biased;
+            _ = cancel.cancelled() => {
+                return finish_with_cancelled(&mut terminal, &mut app, &mut history);
             }
             maybe = input_rx.recv() => {
                 let Some(ev) = maybe else {
@@ -246,17 +204,64 @@ pub async fn run_with_backend(
                     return Ok(());
                 };
                 if dispatch_event(&mut app, ev, &cancel, None, Some(&mut history))? {
-                    draw_inline_bottom(&mut terminal, &mut app, &mut history)?;
-                    return Ok(());
+                    return finish_with_redraw(&mut terminal, &mut app, &mut history);
                 }
             }
         }
     }
 }
 
+#[derive(Clone, Copy)]
 struct RunContext<'a> {
     gateway: &'a Arc<GatewayRunner>,
     input_tx: &'a mpsc::UnboundedSender<AppEvent>,
+}
+
+async fn handle_tui_event(
+    app: &mut App,
+    ev: AppEvent,
+    cancel: &CancellationToken,
+    run_ctx: Option<RunContext<'_>>,
+    session: &AgentSession,
+    history: &mut HistoryWrite,
+) -> Result<bool, RunError> {
+    if app.mode == AppMode::AwaitingModel
+        && let AppEvent::Submit(text) = ev
+    {
+        session.enqueue_message(text).await;
+        return Ok(false);
+    }
+
+    if dispatch_event(app, ev, cancel, run_ctx, Some(history))? {
+        return Ok(true);
+    }
+
+    Ok(false)
+}
+
+fn finish_with_cancelled<B>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    history: &mut HistoryWrite,
+) -> Result<(), RunError>
+where
+    B: Backend,
+{
+    let width = app.history_width;
+    history.push(app, RenderedLine::System("⚠ cancelled".to_string()), width);
+    finish_with_redraw(terminal, app, history)
+}
+
+fn finish_with_redraw<B>(
+    terminal: &mut Terminal<B>,
+    app: &mut App,
+    history: &mut HistoryWrite,
+) -> Result<(), RunError>
+where
+    B: Backend,
+{
+    draw_inline_bottom(terminal, app, history)?;
+    Ok(())
 }
 
 /// Decide whether a `KeyEvent` should be applied to the input buffer.
@@ -344,46 +349,22 @@ fn dispatch_event(
         }
         AppEvent::Tick => Ok(false),
         AppEvent::Submit(text) => {
-            // This path is only reached when agent is idle.
-            // AwaitingModel submits are handled in the main loop.
-            // The user line itself is rendered later by the
-            // `UserMessageInjected` event once the gateway has
-            // started the turn — we deliberately do not render
-            // eagerly here.
-            app.mode = AppMode::AwaitingModel;
-            app.turn_started_at = Some(Instant::now());
             if let Some(ctx) = run_ctx {
-                let event = make_gateway_event(text);
-                let gateway = Arc::clone(ctx.gateway);
-                let mut handler = make_on_event(ctx.input_tx.clone());
-                let result_tx = ctx.input_tx.clone();
-                tokio::spawn(async move {
-                    let res = gateway.handle_event(event, &mut handler).await;
-                    let _ = result_tx.send(AppEvent::TurnCompleted(res));
-                });
+                start_gateway_request(app, ctx, text, AppEvent::TurnCompleted);
+            } else {
+                app.mode = AppMode::AwaitingModel;
+                app.turn_started_at = Some(Instant::now());
             }
             Ok(false)
         }
         AppEvent::Quit => Ok(true),
         AppEvent::Compact(focus) => {
-            // Compact is handled as a /compact command through GatewayRunner.
             let cmd_text = match focus {
                 Some(f) => format!("/compact {f}"),
                 None => "/compact".to_string(),
             };
-            let event = make_gateway_event(cmd_text);
             if let Some(ctx) = run_ctx {
-                app.mode = AppMode::AwaitingModel;
-                app.turn_started_at = Some(Instant::now());
-                let gateway = Arc::clone(ctx.gateway);
-                let mut handler = make_on_event(ctx.input_tx.clone());
-                let result_tx = ctx.input_tx.clone();
-                tokio::spawn(async move {
-                    let res = gateway.handle_event(event, &mut handler).await;
-                    // Compact returns a CommandReply, not a TurnCompleted.
-                    // We need to handle this differently.
-                    let _ = result_tx.send(AppEvent::CompactCompleted(res));
-                });
+                start_gateway_request(app, ctx, cmd_text, AppEvent::CompactCompleted);
             } else {
                 app.compression_hint = Some("No agent attached for compact".to_string());
             }
@@ -424,42 +405,60 @@ fn dispatch_event(
             Ok(false)
         }
         AppEvent::TurnCompleted(res) => {
-            app.turn_started_at = None;
-            app.active_turn_cancel = None;
-            match res {
-                Ok(_) => {}
-                Err(e) => {
-                    if let Some(history) = history.as_mut() {
-                        history.finish_stream(app.history_width);
-                    }
-                    let line = RenderedLine::System(format!("error: {e}"));
-                    let width = app.history_width;
-                    push_history_or_scrollback(app, &mut history, line, width);
+            finish_turn(app);
+            if let Err(e) = res {
+                if let Some(history) = history.as_mut() {
+                    history.finish_stream(app.history_width);
                 }
+                push_system_line(app, &mut history, format!("error: {e}"));
             }
-            app.mode = AppMode::Idle;
             Ok(false)
         }
         AppEvent::CompactCompleted(res) => {
-            app.turn_started_at = None;
-            app.active_turn_cancel = None;
             match res {
                 Ok(GatewayResponse::CommandReply(text)) => {
-                    let line = RenderedLine::System(text);
-                    let width = app.history_width;
-                    push_history_or_scrollback(app, &mut history, line, width);
+                    push_system_line(app, &mut history, text);
                 }
                 Ok(_) => {}
                 Err(e) => {
-                    let line = RenderedLine::System(format!("error: {e}"));
-                    let width = app.history_width;
-                    push_history_or_scrollback(app, &mut history, line, width);
+                    push_system_line(app, &mut history, format!("error: {e}"));
                 }
             }
-            app.mode = AppMode::Idle;
+            finish_turn(app);
             Ok(false)
         }
     }
+}
+
+fn start_gateway_request(
+    app: &mut App,
+    ctx: RunContext<'_>,
+    text: String,
+    completed: fn(Result<GatewayResponse, perry_hermes_gateway::GatewayError>) -> AppEvent,
+) {
+    app.mode = AppMode::AwaitingModel;
+    app.turn_started_at = Some(Instant::now());
+
+    let event = make_gateway_event(text);
+    let gateway = Arc::clone(ctx.gateway);
+    let mut handler = make_on_event(ctx.input_tx.clone());
+    let result_tx = ctx.input_tx.clone();
+
+    tokio::spawn(async move {
+        let res = gateway.handle_event(event, &mut handler).await;
+        let _ = result_tx.send(completed(res));
+    });
+}
+
+fn finish_turn(app: &mut App) {
+    app.turn_started_at = None;
+    app.active_turn_cancel = None;
+    app.mode = AppMode::Idle;
+}
+
+fn push_system_line(app: &mut App, history: &mut Option<&mut HistoryWrite>, text: String) {
+    let width = app.history_width;
+    push_history_or_scrollback(app, history, RenderedLine::System(text), width);
 }
 
 fn summarize_tool_output_for_history(tool_name: &str, output: &ToolOutput) -> String {
